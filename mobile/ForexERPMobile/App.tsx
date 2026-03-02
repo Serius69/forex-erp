@@ -1,66 +1,38 @@
-import React, { useEffect } from 'react';
-import { StatusBar, LogBox } from 'react-native';
+import React from 'react';
+import { StatusBar } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
-import { Provider } from 'react-redux';
-import { QueryClient, QueryClientProvider } from 'react-query';
-import { PaperProvider } from 'react-native-paper';
-import SplashScreen from 'react-native-splash-screen';
-import Toast from 'react-native-toast-message';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AuthProvider } from './src/hooks/useAuth';
+import AppNavigator from './src/navigation/AppNavigator';
 
-import { store } from './src/store';
-import { theme } from './src/constants/theme';
-import { AuthProvider } from './src/contexts/AuthContext';
-import { NotificationProvider } from './src/contexts/NotificationContext';
-import RootNavigator from './src/navigation/RootNavigator';
-import { toastConfig } from './src/components/common/ToastConfig';
-import NetworkStatus from './src/components/common/NetworkStatus';
-
-// Ignorar warnings específicos en desarrollo
-LogBox.ignoreLogs([
-  'Non-serializable values were found in the navigation state',
-]);
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 2,
-      refetchOnWindowFocus: false,
-    },
-  },
-});
-
-function App(): JSX.Element {
-  useEffect(() => {
-    // Ocultar splash screen después de cargar
-    setTimeout(() => {
-      SplashScreen.hide();
-    }, 1000);
-  }, []);
-
+/**
+ * Forex ERP — App Móvil
+ * React Native + TypeScript
+ *
+ * Estructura:
+ *   App.tsx                          ← Este archivo (punto de entrada)
+ *   src/
+ *     types/index.ts                 ← Tipos TypeScript globales
+ *     services/api.ts                ← Cliente HTTP para el backend Django
+ *     hooks/useAuth.tsx              ← Contexto y hook de autenticación
+ *     navigation/AppNavigator.tsx    ← Stack + Bottom Tabs
+ *     screens/
+ *       LoginScreen.tsx              ← Pantalla de login con JWT + PIN
+ *       DashboardScreen.tsx          ← Tasas en tiempo real + predicciones + resumen
+ *       TransactionScreen.tsx        ← Formulario de nueva transacción
+ *       InventoryScreen.tsx          ← Control de stock por divisa/sucursal
+ *       AlertsScreen.tsx             ← Alertas activas con filtro por severidad
+ *       ReportsScreen.tsx            ← Reportes diarios por divisa con selector de fecha
+ */
+export default function App() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <Provider store={store}>
-        <QueryClientProvider client={queryClient}>
-          <PaperProvider theme={theme}>
-            <NavigationContainer>
-              <AuthProvider>
-                <NotificationProvider>
-                  <StatusBar
-                    barStyle="light-content"
-                    backgroundColor={theme.colors.primary}
-                  />
-                  <NetworkStatus />
-                  <RootNavigator />
-                  <Toast config={toastConfig} />
-                </NotificationProvider>
-              </AuthProvider>
-            </NavigationContainer>
-          </PaperProvider>
-        </QueryClientProvider>
-      </Provider>
-    </GestureHandlerRootView>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <NavigationContainer>
+          <StatusBar barStyle="light-content" backgroundColor="#1E3A5F" />
+          <AppNavigator />
+        </NavigationContainer>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
-
-export default App;
