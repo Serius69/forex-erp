@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+# Dependencias del sistema para mysqlclient
+RUN apt-get update && apt-get install -y \
+    default-libmysqlclient-dev \
+    build-essential \
+    pkg-config \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# No copiamos el código — se monta como volumen en dev
+EXPOSE 8000

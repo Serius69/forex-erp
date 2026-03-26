@@ -1,3 +1,4 @@
+# inventory/models.py
 from django.db import models
 from django.db.models import F, Sum
 from django.contrib.auth import get_user_model

@@ -14,7 +14,7 @@ class PredictionModelViewSet(viewsets.ModelViewSet):
     serializer_class = PredictionModelSerializer
     permission_classes = [IsAuthenticated]
     
-    @action(detail=False, methods=['POST'])
+    @action(detail=False, methods=['POST'], url_path='train-all')
     def train_all(self, request):
         """Entrena todos los modelos"""
         if request.user.role != 'ADMIN':
@@ -40,7 +40,7 @@ class PredictionModelViewSet(viewsets.ModelViewSet):
         
         return Response({'success': True})
     
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='performance')
     def performance(self, request):
         """Obtiene métricas de rendimiento de todos los modelos"""
         models = self.get_queryset()
@@ -92,7 +92,7 @@ class PredictionViewSet(viewsets.ModelViewSet):
         
         return queryset.select_related('model').order_by('prediction_date')
     
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='current')
     def current(self, request):
         """Obtiene predicciones actuales (próximas 24 horas)"""
         currency_pair = request.query_params.get('currency_pair', 'USD/BOB')
@@ -140,7 +140,7 @@ class PredictionViewSet(viewsets.ModelViewSet):
             'generated_at': timezone.now()
         })
     
-    @action(detail=False, methods=['POST'])
+    @action(detail=False, methods=['POST'], url_path='generate')
     def generate(self, request):
         """Genera nuevas predicciones"""
         currency_pair = request.data.get('currency_pair')
@@ -166,7 +166,7 @@ class PredictionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='accuracy-report')
     def accuracy_report(self, request):
         """Reporte de precisión de predicciones"""
         days = int(request.query_params.get('days', 7))

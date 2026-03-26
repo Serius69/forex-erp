@@ -2,9 +2,10 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum, F, Q
+from django.db.models import Sum, Count, Q, F
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
 from .models import CurrencyInventory, InventoryMovement, InventoryTransfer
 from .alerts import InventoryAlert, InventoryAlertService
 from .serializers import (
@@ -38,8 +39,8 @@ class CurrencyInventoryViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(currency__code=currency_code)
         if needs_replenishment == 'true':
             queryset = queryset.filter(
-                models.Q(physical_balance__lte=F('reorder_point')) |
-                models.Q(digital_balance__lte=F('reorder_point'))
+                Q(physical_balance__lte=F('reorder_point')) |
+                Q(digital_balance__lte=F('reorder_point'))
             )
         
         return queryset.select_related('currency', 'branch').annotate(

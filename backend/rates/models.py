@@ -1,3 +1,4 @@
+# rates/models.py
 from django.db import models
 from django.core.cache import cache
 from decimal import Decimal

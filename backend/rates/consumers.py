@@ -5,52 +5,45 @@ from django.core.cache import cache
 
 class RateConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        self.room_group_name = 'rates_updates'
-        
-        # Unirse al grupo
-        await self.channel_layer.group_add(
-            self.room_group_name,
-            self.channel_name
-        )
-        
+        await self.channel_layer.group_add('rates', self.channel_name)
         await self.accept()
-        
-        # Enviar tasas actuales al conectarse
-        await self.send_current_rates()
+        # Enviar tasas actuales al conectar
+        rates = await self.get_current_rates()
+        await self.send(json.dumps({
+            'type': 'rates_update',
+            'rates': rates,
+        }))
     
     async def disconnect(self, close_code):
-        # Salir del grupo
-        await self.channel_layer.group_discard(
-            self.room_group_name,
-            self.channel_name
-        )
+        await self.channel_layer.group_discard('rates', self.channel_name)
     
     async def receive(self, text_data):
-        # Procesar mensajes del cliente si es necesario
-        pass
+        pass  # El cliente no envía datos en este canal
     
     async def rates_update(self, event):
-        """Envía actualización de tasas a WebSocket"""
-        await self.send(text_data=json.dumps({
-            'type': 'rates_update',
-            'rates': event['rates'],
-            'timestamp': event['timestamp']
+        """Recibe broadcast del grupo y lo envía al cliente."""
+        await self.send(json.dumps({
+            'type':  'rates_update',
+            'rates': event.get('rates', {}),
         }))
     
     @database_sync_to_async
     def get_current_rates(self):
-        """Obtiene tasas actuales de la base de datos"""
-        from rates.services import RateService
-        
-        service = RateService()
-        rates = {}
-        
-        for currency in ['USD', 'EUR', 'BRL', 'ARS']:
-            rate_data = service.get_current_rates(currency)
-            if rate_data:
-                rates[currency] = rate_data
-        
-        return rates
+        try:
+            from .models import ExchangeRate, Currency
+            bob   = Currency.objects.get(code='BOB')
+            rates = {}
+            for r in (ExchangeRate.objects
+                      .filter(currency_to=bob, valid_until__isnull=True)
+                      .select_related('currency_from')):
+                rates[r.currency_from.code] = {
+                    'buy':      float(r.buy_rate),
+                    'sell':     float(r.sell_rate),
+                    'official': float(r.official_rate),
+                }
+            return rates
+        except Exception:
+            return {}
     
     async def send_current_rates(self):
         """Envía tasas actuales al cliente"""

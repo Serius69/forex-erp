@@ -25,7 +25,7 @@ class RTEViewSet(viewsets.ReadOnlyModelViewSet):
         result = ASFIReportService.generate_rte_monthly(year, month, user=request.user)
         return Response(result)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='download-excel')
     def download_excel(self, request):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -39,7 +39,7 @@ class RTEViewSet(viewsets.ReadOnlyModelViewSet):
         except FileNotFoundError:
             raise Http404
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='download-pdf')
     def download_pdf(self, request):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -64,7 +64,7 @@ class ROUEViewSet(viewsets.ModelViewSet):
             return CreateROUESerializer
         return ROUESerializer
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='download-pdf')
     def download_pdf(self, request, pk=None):
         from .services.asfi_service import ASFIReportService
         path = ASFIReportService.generate_roue_pdf(pk, user=request.user)
@@ -87,7 +87,7 @@ class PEPViewSet(viewsets.ModelViewSet):
             return CreatePEPSerializer
         return PEPSerializer
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='download-excel')
     def download_excel(self, request):
         from .services.asfi_service import ASFIReportService
         result = ASFIReportService.generate_pep_report(user=request.user)
@@ -95,7 +95,7 @@ class PEPViewSet(viewsets.ModelViewSet):
                             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                             as_attachment=True, filename='PEP.xlsx')
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='download-pdf')
     def download_pdf(self, request):
         from .services.asfi_service import ASFIReportService
         result = ASFIReportService.generate_pep_report(user=request.user)
@@ -109,7 +109,7 @@ class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class  = DailyLogSerializer
     permission_classes= [IsAdminOrSupervisor]
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], url_path='generate')
     def generate(self, request):
         date_str  = request.data.get('date',     str(dt.today()))
         branch_id = request.data.get('branch_id', 1)
@@ -118,7 +118,7 @@ class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
             dt.fromisoformat(date_str), branch_id, user=request.user)
         return Response(result)
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='download-excel')
     def download_excel(self, request, pk=None):
         log = self.get_object()
         return FileResponse(open(log.excel_file, 'rb'),
@@ -126,7 +126,7 @@ class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
                             as_attachment=True,
                             filename=f'LIBRO_DIARIO_{log.log_date}.xlsx')
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='download-pdf')
     def download_pdf(self, request, pk=None):
         log = self.get_object()
         return FileResponse(open(log.pdf_file, 'rb'),
@@ -143,7 +143,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
         dt_ = request.query_params.get('date_to', str(dt.today()))
         return dt.fromisoformat(df), dt.fromisoformat(dt_)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='pnl')
     def pnl(self, request):
         date_from, date_to = self._parse_dates(request)
         period = request.query_params.get('period', 'daily')
@@ -161,7 +161,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
                                 as_attachment=True, filename='PnG.pdf')
         return Response(result)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='profitability')
     def profitability(self, request):
         date_from, date_to = self._parse_dates(request)
         fmt = request.query_params.get('format', 'json')
@@ -178,7 +178,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
                                 as_attachment=True, filename='Rentabilidad.pdf')
         return Response(result)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='client-ranking')
     def client_ranking(self, request):
         date_from, date_to = self._parse_dates(request)
         top_n = int(request.query_params.get('top_n', 20))
@@ -196,7 +196,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
                                 as_attachment=True, filename='RankingClientes.pdf')
         return Response(result)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='comparative')
     def comparative(self, request):
         date_from, date_to = self._parse_dates(request)
         fmt = request.query_params.get('format', 'json')
@@ -213,7 +213,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
                                 as_attachment=True, filename='Comparativo.pdf')
         return Response(result)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='cashflow')
     def cashflow(self, request):
         base_date = dt.fromisoformat(
             request.query_params.get('base_date', str(dt.today())))

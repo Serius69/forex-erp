@@ -1,3 +1,4 @@
+# transactions/views.py
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -102,7 +103,9 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
-    @action(detail=True, methods=['POST'], permission_classes=[CanReverseTransaction])
+    @action(detail=True, methods=['POST'],
+        permission_classes=[CanReverseTransaction],
+        url_path='reverse')
     def reverse(self, request, pk=None):
         """Revierte una transacción"""
         transaction = self.get_object()
@@ -127,7 +130,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
-    @action(detail=True, methods=['GET'])
+    @action(detail=True, methods=['GET'], url_path='receipt')
     def receipt(self, request, pk=None):
         """Descarga el comprobante de la transacción"""
         transaction = self.get_object()
@@ -153,7 +156,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
             response['Content-Disposition'] = f'attachment; filename="{transaction.transaction_number}.pdf"'
             return response
     
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='daily-summary')
     def daily_summary(self, request):
         """Resumen diario de transacciones"""
         date = request.query_params.get('date', timezone.now().date())
@@ -233,7 +236,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
         
         return Response(summary)
     
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='pending-approvals')
     def pending_approvals(self, request):
         """Transacciones pendientes de aprobación"""
         if request.user.role not in ['ADMIN', 'SUPERVISOR']:
@@ -266,9 +269,8 @@ class CustomerViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        queryset = super().get_queryset()
-        
-        # Búsqueda
+        queryset = Customer.objects.all()
+
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
@@ -276,28 +278,23 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 Q(full_name__icontains=search) |
                 Q(phone__icontains=search)
             )
-        
-        # Filtro de clientes frecuentes
+
         frequent_only = self.request.query_params.get('frequent_only')
         if frequent_only == 'true':
             queryset = queryset.filter(is_frequent=True)
-        
-        return queryset.annotate(
-            transaction_count=Count('transactions'),
-            total_volume=Sum('transactions__amount_from')
-        ).order_by('-transaction_count')
+
+        # ← SIN annotate — transaction_count y total_volume
+        # ya son @property en el modelo
+        return queryset.order_by('-created_at')
     
-    @action(detail=False, methods=['GET'])
+    @action(detail=False, methods=['GET'], url_path='search')
     def search(self, request):
-        """Búsqueda rápida de cliente por documento"""
         document = request.query_params.get('document')
-        
         if not document:
             return Response(
                 {'error': 'Número de documento requerido'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
         try:
             customer = Customer.objects.get(document_number=document)
             return Response(CustomerSerializer(customer).data)
@@ -307,22 +304,19 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
     
-    @action(detail=True, methods=['GET'])
+    @action(detail=True, methods=['GET'], url_path='transactions')
     def transactions(self, request, pk=None):
-        """Obtiene las transacciones de un cliente"""
         customer = self.get_object()
-        transactions = Transaction.objects.filter(
+        from transactions.models import Transaction
+        txs = Transaction.objects.filter(
             customer=customer
         ).order_by('-created_at')[:50]
-        
-        serializer = TransactionSerializer(transactions, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['POST'])
+        from transactions.serializers import TransactionSerializer
+        return Response(TransactionSerializer(txs, many=True).data)
+
+    @action(detail=True, methods=['POST'], url_path='mark-frequent')
     def mark_frequent(self, request, pk=None):
-        """Marca un cliente como frecuente"""
         customer = self.get_object()
         customer.is_frequent = True
         customer.save()
-        
         return Response({'success': True})

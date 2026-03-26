@@ -2,28 +2,29 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from .models import User, Branch, UserActivity
 
+
 class BranchSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Branch
-        fields = '__all__'
+        model  = Branch
+        fields = ['id', 'name', 'code', 'address', 'phone', 'is_active', 'created_at']
+
 
 class UserSerializer(serializers.ModelSerializer):
     branch = BranchSerializer(read_only=True)
     branch_id = serializers.PrimaryKeyRelatedField(
-        queryset=Branch.objects.all(),
-        source='branch',
-        write_only=True
-    )
-    
+        queryset=Branch.objects.all(), source='branch', write_only=True,
+        required=False, allow_null=True)
+
     class Meta:
-        model = User
+        model  = User
         fields = [
-            'id', 'username', 'email', 'first_name', 'last_name',
-            'role', 'branch', 'branch_id', 'phone', 'is_active',
-            'is_two_factor_enabled', 'date_joined'
+            'id', 'username', 'first_name', 'last_name', 'email',
+            'role', 'branch', 'branch_id', 'phone',
+            'is_two_factor_enabled', 'is_active',
+            'date_joined', 'last_login',
         ]
-        read_only_fields = ['id', 'date_joined']
-    
+        read_only_fields = ['date_joined', 'last_login']
+
     def create(self, validated_data):
         password = validated_data.pop('password', None)
         user = super().create(validated_data)
@@ -32,39 +33,47 @@ class UserSerializer(serializers.ModelSerializer):
             user.save()
         return user
 
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    password  = serializers.CharField(write_only=True, min_length=8)
+    branch_id = serializers.PrimaryKeyRelatedField(
+        queryset=Branch.objects.all(), source='branch', required=False, allow_null=True)
+
+    class Meta:
+        model  = User
+        fields = ['username', 'first_name', 'last_name', 'email',
+                  'password', 'role', 'branch_id', 'phone']
+
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        user = User(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
+
+
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
-    password = serializers.CharField()
-    pin = serializers.CharField(required=False)
-    two_factor_token = serializers.CharField(required=False)
-    
-    def validate(self, attrs):
-        username = attrs.get('username')
-        password = attrs.get('password')
-        
-        if username and password:
-            user = authenticate(username=username, password=password)
-            
-            if not user:
-                raise serializers.ValidationError('Credenciales inválidas')
-            
-            if not user.is_active:
-                raise serializers.ValidationError('Usuario inactivo')
-            
-            # Verificar 2FA si está habilitado
-            if user.is_two_factor_enabled:
-                token = attrs.get('two_factor_token')
-                if not token or not user.verify_two_factor_token(token):
-                    raise serializers.ValidationError('Token 2FA inválido')
-            
-            attrs['user'] = user
-            return attrs
-        
-        raise serializers.ValidationError('Debe incluir username y password')
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        user = authenticate(
+            username=data['username'],
+            password=data['password']
+        )
+        if not user:
+            raise serializers.ValidationError('Credenciales incorrectas')
+        if not user.is_active:
+            raise serializers.ValidationError('Usuario inactivo')
+        data['user'] = user
+        return data
+
 
 class UserActivitySerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-    
+    user = serializers.StringRelatedField()
+
     class Meta:
-        model = UserActivity
-        fields = '__all__'
+        model  = UserActivity
+        fields = ['id', 'user', 'action', 'details',
+                  'ip_address', 'user_agent', 'timestamp']
+        read_only_fields = fields
