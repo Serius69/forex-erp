@@ -2,7 +2,6 @@ from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
 import logging
-from .ml_service import ForexPredictionService
 from .models import PredictionModel, Prediction, TrainingData
 from rates.models import ExchangeRate
 
@@ -11,6 +10,7 @@ logger = logging.getLogger(__name__)
 @shared_task
 def train_prediction_models():
     """Tarea para entrenar todos los modelos de predicción"""
+    from .ml_service import ForexPredictionService
     service = ForexPredictionService()
     currencies = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB']
     
@@ -44,6 +44,7 @@ def train_prediction_models():
 @shared_task
 def generate_predictions():
     """Genera predicciones para las próximas 24 horas"""
+    from .ml_service import ForexPredictionService
     service = ForexPredictionService()
     currencies = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB']
     
@@ -132,6 +133,29 @@ def evaluate_predictions():
     return {
         'predictions_evaluated': evaluated_count
     }
+
+@shared_task(name='predictions.generate_daily_forecast')
+def generate_daily_forecast():
+    """
+    Genera predicciones de TC para los próximos 14 días.
+    Programado diariamente a la 01:00 por Celery Beat.
+    Extiende generate_predictions() con un horizonte mayor para el frontend.
+    """
+    from .ml_service import ForexPredictionService
+    service = ForexPredictionService()
+    currencies = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB', 'PEN/BOB']
+    total = 0
+
+    for currency_pair in currencies:
+        try:
+            predictions = service.predict_rates(currency_pair, horizon=14 * 24)  # 14 días en horas
+            total += len(predictions)
+            logger.info('generate_daily_forecast %s: %d predicciones', currency_pair, len(predictions))
+        except Exception as exc:
+            logger.warning('generate_daily_forecast SKIP %s: %s', currency_pair, exc)
+
+    return {'generated': total, 'currencies': len(currencies)}
+
 
 def update_model_metrics():
     """Actualiza métricas de rendimiento de los modelos"""

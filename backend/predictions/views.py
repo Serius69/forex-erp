@@ -1,12 +1,15 @@
+import statistics
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.db.models import Avg, Min, Max, Sum, Count
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 from datetime import timedelta
 from .models import PredictionModel, Prediction
 from .serializers import PredictionModelSerializer, PredictionSerializer
-from .ml_service import ForexPredictionService
 from .tasks import train_prediction_models, generate_predictions
 
 class PredictionModelViewSet(viewsets.ModelViewSet):
@@ -55,17 +58,20 @@ class PredictionModelViewSet(viewsets.ModelViewSet):
             )
             
             if recent_predictions.exists():
-                avg_error = recent_predictions.aggregate(
-                    avg_error=models.Avg('error_percentage')
-                )['avg_error']
-                
+                agg = recent_predictions.aggregate(
+                    avg_error=Avg('error_percentage'),
+                    min_error=Min('error_percentage'),
+                    max_error=Max('error_percentage'),
+                )
                 performance_data.append({
-                    'model': model.name,
-                    'type': model.model_type,
-                    'currency_pair': model.currency_pair,
-                    'average_error': avg_error,
+                    'model':             model.name,
+                    'type':              model.model_type,
+                    'currency_pair':     model.currency_pair,
+                    'average_error':     round(agg['avg_error'] or 0, 4),
+                    'min_error':         round(agg['min_error'] or 0, 4),
+                    'max_error':         round(agg['max_error'] or 0, 4),
                     'predictions_count': recent_predictions.count(),
-                    'metrics': model.metrics
+                    'metrics':           model.metrics,
                 })
         
         return Response(performance_data)
@@ -106,6 +112,7 @@ class PredictionViewSet(viewsets.ModelViewSet):
         
         # Si no hay predicciones, generarlas
         if not predictions.exists():
+            from .ml_service import ForexPredictionService
             service = ForexPredictionService()
             service.predict_rates(currency_pair, horizon=24)
             
@@ -125,13 +132,13 @@ class PredictionViewSet(viewsets.ModelViewSet):
                 predictions_by_model[model_type] = []
             
             predictions_by_model[model_type].append({
-                'date': pred.prediction_date,
-                'rate': float(pred.predicted_rate),
-                'buy_rate': float(pred.predicted_buy_rate),
-                'sell_rate': float(pred.predicted_sell_rate),
-                'confidence_lower': float(pred.confidence_lower),
-                'confidence_upper': float(pred.confidence_upper),
-                'confidence_score': pred.confidence_score
+                'date':              pred.prediction_date,
+                'rate':              str(pred.predicted_rate),
+                'buy_rate':          str(pred.predicted_buy_rate),
+                'sell_rate':         str(pred.predicted_sell_rate),
+                'confidence_lower':  str(pred.confidence_lower),
+                'confidence_upper':  str(pred.confidence_upper),
+                'confidence_score':  pred.confidence_score,
             })
         
         return Response({
@@ -153,6 +160,7 @@ class PredictionViewSet(viewsets.ModelViewSet):
             )
         
         try:
+            from .ml_service import ForexPredictionService
             service = ForexPredictionService()
             predictions = service.predict_rates(currency_pair, horizon)
             
@@ -205,3 +213,104 @@ class PredictionViewSet(viewsets.ModelViewSet):
                 }
         
         return Response(report)
+
+class PredictionsDashboardView(APIView):
+    """
+    Endpoint simple de predicciones basado en promedios móviles.
+    No requiere modelos ML entrenados; funciona con datos históricos de Transaction.
+    GET /api/predictions/dashboard/
+    """
+    permission_classes = [IsAuthenticated]
+
+    WINDOW = 7   # días para moving average
+    HORIZON = 7  # días a predecir
+    Z_THRESHOLD = 2.0
+
+    def get(self, request):
+        from transactions.models import Transaction
+
+        today = timezone.now().date()
+        days_90_ago = today - timedelta(days=90)
+
+        try:
+            rows = list(
+                Transaction.objects
+                .filter(status='COMPLETED', created_at__date__gte=days_90_ago)
+                .annotate(day=TruncDate('created_at'))
+                .values('day')
+                .annotate(count=Count('id'), volume=Sum('amount_to'))
+                .order_by('day')
+            )
+        except Exception:
+            return self._empty()
+
+        if len(rows) < 3:
+            return self._empty()
+
+        counts  = [int(r['count'])           for r in rows]
+        volumes = [int(r['volume'] or 0)     for r in rows]
+
+        # ── Moving averages ─────────────────────────────────────────────
+        w = min(self.WINDOW, len(counts))
+        def ma(series, idx):
+            start = max(0, idx - w + 1)
+            chunk = series[start: idx + 1]
+            return sum(chunk) / len(chunk)
+
+        last_count_ma  = ma(counts,  len(counts)  - 1)
+        last_volume_ma = ma(volumes, len(volumes) - 1)
+
+        # ── Trend ───────────────────────────────────────────────────────
+        trend = 'stable'
+        if len(counts) >= 14:
+            recent = sum(counts[-7:]) / 7
+            prev   = sum(counts[-14:-7]) / 7
+            if prev > 0:
+                change = (recent - prev) / prev
+                if change > 0.05:
+                    trend = 'up'
+                elif change < -0.05:
+                    trend = 'down'
+
+        # ── Forecast next N days ────────────────────────────────────────
+        forecast = []
+        for i in range(1, self.HORIZON + 1):
+            forecast.append({
+                'date':                    str(today + timedelta(days=i)),
+                'predicted_transactions':  round(last_count_ma),
+                'predicted_volume':        round(last_volume_ma),
+            })
+
+        # ── Anomaly detection (z-score) ─────────────────────────────────
+        anomalies = []
+        if len(counts) >= 10:
+            try:
+                mean = statistics.mean(counts)
+                std  = statistics.stdev(counts)
+                if std > 0:
+                    for i, r in enumerate(rows):
+                        z = (counts[i] - mean) / std
+                        if abs(z) >= self.Z_THRESHOLD:
+                            anomalies.append({
+                                'date':     str(r['day']),
+                                'value':    counts[i],
+                                'expected': round(mean, 1),
+                                'z_score':  round(z, 2),
+                                'type':     'high' if z > 0 else 'low',
+                            })
+            except statistics.StatisticsError:
+                pass
+
+        return Response({
+            'forecast_next_days': forecast,
+            'trend':              trend,
+            'anomalies':          anomalies[-10:],
+        })
+
+    @staticmethod
+    def _empty():
+        return Response({
+            'forecast_next_days': [],
+            'trend':              'stable',
+            'anomalies':          [],
+        })
