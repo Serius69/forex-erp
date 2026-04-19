@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from .models import (CashTransactionReport, SuspiciousActivityReport,
-                      PEPRegistry, DailyOperationLog, GeneratedReport)
+                     PEPRegistry, DailyOperationLog, GeneratedReport)
 from users.serializers import UserSerializer
 from transactions.serializers import CustomerSerializer
+from transactions.models import Customer
 
 
 class RTESerializer(serializers.ModelSerializer):
@@ -43,8 +44,7 @@ class ROUESerializer(serializers.ModelSerializer):
 
 class CreateROUESerializer(serializers.ModelSerializer):
     customer_id = serializers.PrimaryKeyRelatedField(
-        queryset=__import__('transactions.models',
-                            fromlist=['Customer']).Customer.objects.all(),
+        queryset=Customer.objects.all(),
         source='customer')
 
     class Meta:
@@ -79,8 +79,7 @@ class PEPSerializer(serializers.ModelSerializer):
 
 class CreatePEPSerializer(serializers.ModelSerializer):
     customer_id = serializers.PrimaryKeyRelatedField(
-        queryset=__import__('transactions.models',
-                            fromlist=['Customer']).Customer.objects.all(),
+        queryset=Customer.objects.all(),
         source='customer')
 
     class Meta:

@@ -3,6 +3,9 @@ import logging
 from datetime import date, datetime
 from decimal import Decimal
 
+# Logger separado para auditoría de filtrado ASFI — va a kapitalya.asfi_audit
+audit_log = logging.getLogger('kapitalya.asfi_audit')
+
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -16,6 +19,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
 from django.conf import settings
+from django.db import models
 from django.db.models import Sum, Count, Q
 
 logger = logging.getLogger(__name__)
@@ -74,10 +78,45 @@ class ASFIReportService:
         start = date(year, month, 1)
         end   = date(year, month, calendar.monthrange(year, month)[1])
 
+        # ── Conteo total (sin filtro) para calcular excluidas ─────────────────
+        total_universe = CashTransactionReport.objects.filter(
+            report_date__gte=start, report_date__lte=end,
+        ).count()
+
+        # ── Queryset filtrado: SOLO transacciones visibles para ASFI ──────────
+        # visible_asfi=True es el campo canónico; is_reportable_to_asfi se
+        # mantiene como alias en sync dentro de Transaction.save().
         rtes = (CashTransactionReport.objects
-                .filter(report_date__gte=start, report_date__lte=end)
+                .filter(report_date__gte=start, report_date__lte=end,
+                        transaction__visible_asfi=True)
                 .select_related('transaction', 'transaction__customer')
                 .order_by('report_date'))
+
+        total_included = rtes.count()
+        total_excluded = total_universe - total_included
+
+        # ── Validación pre-generación: ninguna transacción interna puede ──────
+        # haber pasado el filtro (defensa en profundidad sobre el ORM filter).
+        leaked = rtes.filter(transaction__visible_asfi=False).count()
+        if leaked > 0:
+            audit_log.critical(
+                'ASFI_RTE_VALIDATION_FAIL year=%d month=%d leaked_internal=%d '
+                'user=%s — reporte NO generado',
+                year, month, leaked, getattr(user, 'username', 'system'),
+            )
+            raise ValueError(
+                f'Validación ASFI fallida: {leaked} transacción(es) interna(s) '
+                f'detectada(s) en el queryset RTE {year}-{month:02d}. '
+                f'El reporte no fue generado.'
+            )
+
+        # ── Log de auditoría ──────────────────────────────────────────────────
+        audit_log.info(
+            'ASFI_RTE_GENERATE year=%d month=%d included=%d excluded_internal=%d '
+            'user=%s',
+            year, month, total_included, total_excluded,
+            getattr(user, 'username', 'system'),
+        )
 
         excel_path = cls._rte_excel(rtes, start, end, year, month)
         pdf_path   = cls._rte_pdf(rtes, start, end, year, month)
@@ -90,12 +129,20 @@ class ASFIReportService:
                     file_path=path.replace(settings.MEDIA_ROOT, '').lstrip('/'),
                     file_size_kb=os.path.getsize(path) // 1024,
                     generated_by=user,
-                    parameters={'year': year, 'month': month},
+                    parameters={
+                        'year': year, 'month': month,
+                        'total_included': total_included,
+                        'total_excluded': total_excluded,
+                    },
                 )
         return {
-            'status': 'ok', 'year': year, 'month': month,
-            'total_records': rtes.count(),
-            'excel_path': excel_path, 'pdf_path': pdf_path,
+            'status':           'ok',
+            'year':             year,
+            'month':            month,
+            'total_records':    total_included,
+            'total_excluded':   total_excluded,
+            'excel_path':       excel_path,
+            'pdf_path':         pdf_path,
         }
 
     @classmethod
@@ -321,36 +368,80 @@ class ASFIReportService:
     # ── PEP ───────────────────────────────────────────────────────────────────
 
     @classmethod
-    def generate_pep_report(cls, user=None) -> dict:
+    def generate_pep_report(cls, year: int = None, month: int = None, user=None) -> dict:
         from reports.models import PEPRegistry, GeneratedReport
-        peps  = PEPRegistry.objects.select_related(
-            'customer').order_by('risk_level', 'customer__full_name')
+        import calendar
+
         today = date.today()
-        excel_path = cls._pep_excel(peps, today)
-        pdf_path   = cls._pep_pdf(peps, today)
+        if year is None:
+            year = today.year
+        if month is None:
+            month = today.month
+
+        report_date = date(year, month, 1)
+        month_end   = date(year, month, calendar.monthrange(year, month)[1])
+
+        # Filter PEPs active during the requested month:
+        # since_date <= last_day_of_month AND (until_date IS NULL OR until_date >= first_day_of_month)
+        peps = (PEPRegistry.objects
+                .select_related('customer')
+                .filter(since_date__lte=month_end)
+                .filter(models.Q(until_date__isnull=True) | models.Q(until_date__gte=report_date))
+                .order_by('risk_level', 'customer__full_name'))
+
+        total_peps = peps.count()
+        audit_log.info(
+            'ASFI_PEP_GENERATE year=%d month=%d total_peps=%d user=%s',
+            year, month, total_peps,
+            getattr(user, 'username', 'system'),
+        )
+
+        excel_path = cls._pep_excel(peps, report_date, year, month)
+        pdf_path   = cls._pep_pdf(peps, report_date, year, month)
         if user:
             for path, fmt in [(excel_path,'EXCEL'),(pdf_path,'PDF')]:
                 GeneratedReport.objects.create(
                     report_type='PEP_LIST', format=fmt,
-                    date_from=today, date_to=today,
+                    date_from=report_date, date_to=month_end,
                     file_path=path.replace(settings.MEDIA_ROOT,'').lstrip('/'),
                     file_size_kb=os.path.getsize(path)//1024,
-                    generated_by=user)
-        return {'status':'ok','total_peps':peps.count(),
-                'excel_path':excel_path,'pdf_path':pdf_path}
+                    generated_by=user,
+                    parameters={'year': year, 'month': month, 'total_peps': total_peps},
+                )
+        return {
+            'status':      'ok',
+            'year':        year,
+            'month':       month,
+            'total_peps':  total_peps,
+            'excel_path':  excel_path,
+            'pdf_path':    pdf_path,
+        }
 
     @classmethod
-    def _pep_excel(cls, peps, today) -> str:
+    def _pep_excel(cls, peps, report_date, year, month) -> str:
+        import calendar
+        month_end = date(year, month, calendar.monthrange(year, month)[1])
+        period_label = report_date.strftime('%B %Y').upper()
+
         wb = openpyxl.Workbook(); ws = wb.active; ws.title = 'Registro PEP'
         thin = Border(left=Side(style='thin'), right=Side(style='thin'),
                       top=Side(style='thin'), bottom=Side(style='thin'))
         ca = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        ws.merge_cells('A1:J1')
-        ws['A1'] = f'REGISTRO DE PERSONAS EXPUESTAS POLITICAMENTE (PEP) - {today.strftime("%d/%m/%Y")}'
-        ws['A1'].font = Font(bold=True, size=12, color='003366'); ws['A1'].alignment = ca
-        _xl_header(ws, 3, ['Cliente','Documento','Cargo','Institucion',
+
+        for merge, text, sz in [
+            ('A1:J1', 'AUTORIDAD DE SUPERVISION DEL SISTEMA FINANCIERO - ASFI', 13),
+            ('A2:J2', f'REGISTRO DE PERSONAS EXPUESTAS POLITICAMENTE (PEP) - {period_label}', 11),
+            ('A3:J3', f'Periodo: {report_date.strftime("%d/%m/%Y")} al {month_end.strftime("%d/%m/%Y")}', 10),
+        ]:
+            ws.merge_cells(merge)
+            cell = ws[merge.split(':')[0]]
+            cell.value = text
+            cell.font  = Font(bold=True, size=sz, color='003366')
+            cell.alignment = ca
+
+        _xl_header(ws, 5, ['Cliente','Documento','Cargo','Institucion',
                              'Desde','Hasta','Riesgo','DD Reforzada','Prox. Revision','Estado'])
-        for row_i, pep in enumerate(peps, 4):
+        for row_i, pep in enumerate(peps, 6):
             rc = {'HIGH':'FFE0E0','MEDIUM':'FFFDE0','LOW':'E0FFE0'}.get(pep.risk_level,'FFFFFF')
             vals = [
                 pep.customer.full_name,
@@ -366,21 +457,37 @@ class ASFIReportService:
                 cell = ws.cell(row=row_i, column=col, value=val)
                 cell.border = thin; cell.alignment = ca
                 cell.fill   = PatternFill('solid', fgColor=rc)
+
+        tr = peps.count() + 6
+        ws.merge_cells(f'A{tr}:I{tr}')
+        ws[f'A{tr}']      = f'TOTAL: {peps.count()} registros PEP activos en el periodo'
+        ws[f'A{tr}'].font = Font(bold=True, color='003366')
+
         for i, w in enumerate([28,22,25,25,12,12,10,14,14,10], 1):
             ws.column_dimensions[get_column_letter(i)].width = w
-        path = os.path.join(_ensure(REPORTS_DIR), f'PEP_{today.strftime("%Y%m%d")}.xlsx')
+
+        path = os.path.join(_ensure(REPORTS_DIR), f'PEP_{year}{month:02d}.xlsx')
         wb.save(path); return path
 
     @classmethod
-    def _pep_pdf(cls, peps, today) -> str:
-        path   = os.path.join(_ensure(REPORTS_DIR), f'PEP_{today.strftime("%Y%m%d")}.pdf')
+    def _pep_pdf(cls, peps, report_date, year, month) -> str:
+        import calendar
+        month_end    = date(year, month, calendar.monthrange(year, month)[1])
+        period_label = report_date.strftime('%B %Y').upper()
+
+        path   = os.path.join(_ensure(REPORTS_DIR), f'PEP_{year}{month:02d}.pdf')
         doc    = SimpleDocTemplate(path, pagesize=A4, topMargin=1.5*cm, bottomMargin=1.5*cm,
                                     leftMargin=1.5*cm, rightMargin=1.5*cm)
         styles = getSampleStyleSheet(); story = []
-        story.append(Paragraph('REGISTRO DE PERSONAS EXPUESTAS POLITICAMENTE',
-            ParagraphStyle('T', parent=styles['Title'], textColor=ASFI_DARK, fontSize=13)))
+        story.append(Paragraph('AUTORIDAD DE SUPERVISION DEL SISTEMA FINANCIERO',
+            ParagraphStyle('T1', parent=styles['Title'], textColor=ASFI_DARK, fontSize=13)))
         story.append(Paragraph(
-            f'Fecha: {today.strftime("%d/%m/%Y")} | Total: {peps.count()} registros',
+            f'REGISTRO DE PERSONAS EXPUESTAS POLITICAMENTE (PEP) - {period_label}',
+            ParagraphStyle('T2', parent=styles['Normal'], textColor=ASFI_DARK,
+                           fontSize=10, alignment=TA_CENTER, spaceAfter=2)))
+        story.append(Paragraph(
+            f'Periodo: {report_date.strftime("%d/%m/%Y")} al {month_end.strftime("%d/%m/%Y")} '
+            f'| Total: {peps.count()} registros',
             ParagraphStyle('S', parent=styles['Normal'], fontSize=9,
                            textColor=colors.grey, alignment=TA_CENTER, spaceAfter=8)))
         story.append(HRFlowable(width='100%', thickness=1.5, color=ASFI_DARK))
@@ -396,7 +503,13 @@ class ASFIReportService:
             ])
         t = Table(data, colWidths=[4.5*cm,3*cm,6*cm,2.2*cm,1.8*cm,1.5*cm], repeatRows=1)
         t.setStyle(_pdf_table_style())
-        story.append(t); doc.build(story); return path
+        story.append(t)
+        story.append(Spacer(1, 0.5*cm))
+        story.append(Paragraph(
+            f'Generado el {datetime.now().strftime("%d/%m/%Y %H:%M")} - DOCUMENTO CONFIDENCIAL ASFI',
+            ParagraphStyle('F', parent=styles['Normal'],
+                           fontSize=7, textColor=colors.grey, alignment=TA_CENTER)))
+        doc.build(story); return path
 
     # ── Libro Diario ──────────────────────────────────────────────────────────
 
@@ -409,9 +522,45 @@ class ASFIReportService:
         log, _ = DailyOperationLog.objects.get_or_create(
             log_date=log_date, branch_id=branch_id)
 
-        txs = (Transaction.objects
-               .filter(created_at__date=log_date, branch_id=branch_id, status='COMPLETED')
-               .select_related('customer','currency_from','currency_to','cashier'))
+        # ── Conteo total completadas (sin filtro ASFI) para calcular excluidas ─
+        base_qs = Transaction.objects.filter(
+            created_at__date=log_date,
+            branch_id=branch_id,
+            status='COMPLETED',
+        )
+        total_universe = base_qs.count()
+
+        # ── Queryset filtrado: SOLO transacciones con visible_asfi=True ────────
+        txs = (base_qs
+               .filter(visible_asfi=True)
+               .select_related('customer', 'currency_from', 'currency_to', 'cashier'))
+
+        total_included = txs.count()
+        total_excluded = total_universe - total_included
+
+        # ── Validación pre-generación: ninguna transacción interna puede ──────
+        # haber filtrado al queryset resultante.
+        leaked = txs.filter(visible_asfi=False).count()
+        if leaked > 0:
+            audit_log.critical(
+                'ASFI_DAILY_LOG_VALIDATION_FAIL date=%s branch_id=%d leaked_internal=%d '
+                'user=%s — reporte NO generado',
+                log_date, branch_id, leaked,
+                getattr(user, 'username', 'system'),
+            )
+            raise ValueError(
+                f'Validación ASFI fallida: {leaked} transacción(es) interna(s) '
+                f'detectada(s) en el queryset Libro Diario {log_date} sucursal {branch_id}. '
+                f'El reporte no fue generado.'
+            )
+
+        # ── Log de auditoría ──────────────────────────────────────────────────
+        audit_log.info(
+            'ASFI_DAILY_LOG_GENERATE date=%s branch_id=%d included=%d '
+            'excluded_internal=%d user=%s',
+            log_date, branch_id, total_included, total_excluded,
+            getattr(user, 'username', 'system'),
+        )
 
         agg = txs.aggregate(
             count     =Count('id'),
@@ -439,13 +588,22 @@ class ASFIReportService:
                     date_from=log_date, date_to=log_date,
                     file_path=path.replace(settings.MEDIA_ROOT,'').lstrip('/'),
                     file_size_kb=os.path.getsize(path)//1024,
-                    generated_by=user, parameters={'branch_id': branch_id})
+                    generated_by=user,
+                    parameters={
+                        'branch_id':      branch_id,
+                        'total_included': total_included,
+                        'total_excluded': total_excluded,
+                    },
+                )
         return {
-            'status':'ok', 'date':str(log_date),
-            'total_transactions':log.total_transactions,
-            'total_profit_bob':float(log.total_profit_bob),
-            'rte_count':log.rte_count,
-            'excel_path':excel_path, 'pdf_path':pdf_path,
+            'status':             'ok',
+            'date':               str(log_date),
+            'total_transactions': log.total_transactions,
+            'total_excluded':     total_excluded,
+            'total_profit_bob':   float(log.total_profit_bob),
+            'rte_count':          log.rte_count,
+            'excel_path':         excel_path,
+            'pdf_path':           pdf_path,
         }
 
     @classmethod

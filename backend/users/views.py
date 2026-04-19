@@ -1,19 +1,17 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import login
-from .models import User, UserActivity
-from .serializers import UserSerializer, LoginSerializer, UserActivitySerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.contrib.auth import authenticate
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from datetime import timedelta
-from rest_framework.decorators import api_view, permission_classes
-from transactions.models import Transaction
-from rates.models import ExchangeRate, Currency
+from .models import User, UserActivity, Branch
+from .serializers import UserSerializer, UserCreateSerializer, LoginSerializer, UserActivitySerializer, BranchSerializer
+from core.ratelimit import rate_limit
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -21,13 +19,17 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        queryset = super().get_queryset()
-        
-        # Filtrar por sucursal si no es admin
+        queryset = super().get_queryset().select_related('branch')
+
         if self.request.user.role != 'ADMIN':
             queryset = queryset.filter(branch=self.request.user.branch)
-        
+
         return queryset
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return UserCreateSerializer
+        return UserSerializer
     
     @action(detail=False, methods=['GET'], url_path='me')
     def me(self, request):
@@ -224,24 +226,11 @@ class UserViewSet(viewsets.ModelViewSet):
         activities = UserActivity.objects.filter(user=user).order_by('-timestamp')[:100]
         return Response(UserActivitySerializer(activities, many=True).data)
 
-
-    from .models import User, UserActivity, Branch
-    from .serializers import UserSerializer, UserActivitySerializer, BranchSerializer
-
     @action(detail=False, methods=['GET'], url_path='branches')
     def branches(self, request):
         """Lista de sucursales disponibles"""
-        from .models import Branch
-        from .serializers import BranchSerializer
         branches = Branch.objects.filter(is_active=True)
         return Response(BranchSerializer(branches, many=True).data)
-
-from django.db.models import Sum, Count, Q
-from django.utils import timezone
-from datetime import timedelta
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -341,10 +330,12 @@ class ForexTokenView(TokenObtainPairView):
     Vista JWT personalizada para login del ERP.
     Extiende TokenObtainPairView para incluir datos del usuario
     y registrar actividad en el log.
+    Rate limit: 10 intentos por IP por minuto (anti-brute-force).
     """
     permission_classes = [AllowAny]
     serializer_class   = TokenObtainPairSerializer
 
+    @rate_limit(requests=10, window=60, scope='ip')
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
 

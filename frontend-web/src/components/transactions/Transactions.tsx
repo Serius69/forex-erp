@@ -1,32 +1,27 @@
-import React, { useState, useRef } from 'react';
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+// src/components/transactions/Transactions.tsx
+import React, { useState } from 'react';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Box, Button, Typography, Tabs, Tab } from '@mui/material';
-import { Add } from '@mui/icons-material';
-import TransactionList    from './TransactionList';
-import TransactionForm    from './TransactionForm';
+import { Add, History, HourglassEmpty } from '@mui/icons-material';
 import TransactionHistory from './TransactionHistory';
 import TransactionPending from './TransactionPending';
+import TransactionForm    from './TransactionForm';
+
+const TABS = [
+  { label: 'Transacciones',  path: '/transactions',         icon: <History /> },
+  { label: 'Pendientes',     path: '/transactions/pending',  icon: <HourglassEmpty /> },
+];
 
 const Transactions: React.FC = () => {
   const [showForm, setShowForm] = useState(false);
-  const refreshRef              = useRef<(() => void) | null>(null);
-  const navigate                = useNavigate();
-  const location                = useLocation();
+  const navigate  = useNavigate();
+  const location  = useLocation();
 
-  const tabs = [
-    { label: 'Transacciones',  path: '/transactions' },
-    { label: 'Historial',      path: '/transactions/history' },
-    { label: 'Pendientes',     path: '/transactions/pending' },
-  ];
-
-  const currentTab = tabs.findIndex(t =>
-    t.path === location.pathname || location.pathname.startsWith(t.path + '/')
+  const currentTab = TABS.findIndex(t =>
+    t.path === '/transactions'
+      ? location.pathname === '/transactions'
+      : location.pathname.startsWith(t.path)
   );
-
-  const handleSuccess = () => {
-    setShowForm(false);
-    refreshRef.current?.();
-  };
 
   return (
     <Box>
@@ -38,21 +33,22 @@ const Transactions: React.FC = () => {
       </Box>
 
       <Tabs value={currentTab === -1 ? 0 : currentTab} sx={{ mb: 3 }}
-        onChange={(_, v) => navigate(tabs[v].path)}>
-        {tabs.map(t => <Tab key={t.path} label={t.label} />)}
+        onChange={(_, v) => navigate(TABS[v].path)}>
+        {TABS.map(t => (
+          <Tab key={t.path} icon={t.icon} iconPosition="start" label={t.label} />
+        ))}
       </Tabs>
 
       <Routes>
-        <Route index            element={<TransactionList onRefreshRef={refreshRef} />} />
-        <Route path="history"   element={<TransactionHistory />} />
-        <Route path="pending"   element={<TransactionPending />} />
-        <Route path="new"       element={<Navigate to="/transactions" replace />} />
+        <Route index       element={<TransactionHistory />} />
+        <Route path="history"  element={<TransactionHistory />} />
+        <Route path="pending"  element={<TransactionPending />} />
       </Routes>
 
       <TransactionForm
         open={showForm}
         onClose={() => setShowForm(false)}
-        onSuccess={handleSuccess}
+        onSuccess={() => setShowForm(false)}
       />
     </Box>
   );

@@ -1,0 +1,10 @@
+cd frontend-mobile\ForexERPMobile\android\app
+
+keytool -genkey -v -keystore kapitalya-release.keystore ^
+  -alias kapitalya ^
+  -keyalg RSA ^
+  -keysize 2048 ^
+  -validity 10000 ^
+  -storepass KapitalyaStore2026! ^
+  -keypass KapitalyaKey2026! ^
+  -dname "CN=Kapitalya, OU=Desarrollo, O=Kapitalya SRL, L=La Paz, S=La Paz, C=BO"

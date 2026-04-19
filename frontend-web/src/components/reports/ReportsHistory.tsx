@@ -18,16 +18,29 @@ const ReportsHistory: React.FC = () => {
   const [total,       setTotal]       = useState(0);
   const { enqueueSnackbar }           = useSnackbar();
 
+  // ReportsHistory.tsx — solo el fix crítico en load()
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.get('/reports/generated/', {
         params: { page: page + 1, page_size: rowsPerPage },
       });
-      setReports(res.data.results ?? res.data);
-      setTotal(res.data.count ?? res.data.length);
+      // ✅ Siempre extraer array correctamente
+      const data = res.data;
+      if (Array.isArray(data)) {
+        setReports(data);
+        setTotal(data.length);
+      } else if (data?.results && Array.isArray(data.results)) {
+        setReports(data.results);
+        setTotal(data.count ?? data.results.length);
+      } else {
+        setReports([]);
+        setTotal(0);
+      }
     } catch {
       enqueueSnackbar('Error al cargar historial', { variant: 'error' });
+      setReports([]);   // ← nunca dejar undefined
+      setTotal(0);
     } finally {
       setLoading(false);
     }

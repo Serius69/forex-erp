@@ -6,14 +6,17 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q, F
 from django.utils import timezone
 from datetime import datetime, timedelta
+from django.utils.dateparse import parse_date
 from django.http import HttpResponse
 from .models import Transaction, Customer, TransactionDocument
 from .serializers import (
     TransactionSerializer, CustomerSerializer,
     TransactionCreateSerializer, TransactionDocumentSerializer
 )
+from django.db import transaction as db_transaction
 from .services import TransactionService
 from .permissions import CanReverseTransaction
+from core.ratelimit import rate_limit
 
 class TransactionViewSet(viewsets.ModelViewSet):
     queryset = Transaction.objects.all()
@@ -31,78 +34,431 @@ class TransactionViewSet(viewsets.ModelViewSet):
         customer_id = self.request.query_params.get('customer_id')
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
-        status = self.request.query_params.get('status')
-        transaction_type = self.request.query_params.get('type')
+        tx_status = self.request.query_params.get('status')
+        transaction_type = (
+            self.request.query_params.get('transaction_type') or
+            self.request.query_params.get('type')
+        )
         
+        # ?asfi=true/false  OR  ?reportable=true/false  (alias, both supported)
+        asfi_param       = self.request.query_params.get('asfi')
+        reportable_param = self.request.query_params.get('reportable')
+        _flag = asfi_param if asfi_param is not None else reportable_param
+        if _flag == 'true':
+            queryset = queryset.filter(visible_asfi=True)
+        elif _flag == 'false':
+            queryset = queryset.filter(visible_asfi=False)
+
+        # ?category=REPORTABLE|INTERNA  — filtrar por categoría exacta
+        category_param = self.request.query_params.get('category')
+        if category_param in ('REPORTABLE', 'INTERNA'):
+            queryset = queryset.filter(transaction_category=category_param)
+
         if customer_id:
             queryset = queryset.filter(customer_id=customer_id)
         if date_from:
-            queryset = queryset.filter(created_at__gte=date_from)
+            d = parse_date(str(date_from))
+            if d:
+                queryset = queryset.filter(created_at__date__gte=d)
         if date_to:
-            queryset = queryset.filter(created_at__lte=date_to)
-        if status:
-            queryset = queryset.filter(status=status)
+            d = parse_date(str(date_to))
+            if d:
+                queryset = queryset.filter(created_at__date__lte=d)
+        if tx_status:
+            queryset = queryset.filter(status=tx_status)
         if transaction_type:
             queryset = queryset.filter(transaction_type=transaction_type)
         
         return queryset.select_related(
-            'customer', 'currency_from', 'currency_to', 
-            'cashier', 'branch', 'supervisor'
-        ).order_by('-created_at')
+            'customer', 'currency_from', 'currency_to',
+            'cashier', 'branch', 'supervisor',
+        ).prefetch_related('documents').order_by('-created_at')
     
+    def list(self, request, *args, **kwargs):
+        """Override to return structured JSON on DB/serialization errors."""
+        try:
+            return super().list(request, *args, **kwargs)
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger('transactions').exception('TX_LIST_FAILED err=%s', exc)
+            return Response(
+                {'error': 'Error al obtener transacciones', 'detail': str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
     def get_serializer_class(self):
         if self.action == 'create':
             return TransactionCreateSerializer
         return TransactionSerializer
-    
+
+    @rate_limit(requests=60, window=60, scope='user')
     def create(self, request):
-        """Crea nueva transacción"""
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        service = TransactionService()
-        
-        try:
-            transaction, receipt_file = service.create_transaction(
-                serializer.validated_data,
-                request.user
-            )
-            
-            # Guardar documento del recibo
-            TransactionDocument.objects.create(
-                transaction=transaction,
-                document_type='RECEIPT',
-                file=receipt_file,
-                description='Comprobante de transacción',
-                uploaded_by=request.user
-            )
-            
-            # Registrar actividad
-            from users.models import UserActivity
-            UserActivity.objects.create(
-                user=request.user,
-                action='TRANSACTION_CREATED',
-                details={
-                    'transaction_id': transaction.id,
-                    'transaction_number': transaction.transaction_number,
-                    'amount': float(transaction.amount_from),
-                    'currency': transaction.currency_from.code
-                },
-                ip_address=self.get_client_ip(request),
-                user_agent=request.META.get('HTTP_USER_AGENT', '')
-            )
-            
+        serializer = TransactionCreateSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        if not serializer.is_valid():
+            # Formato estandarizado: `field_errors` + `message` legible
+            first_msgs = []
+            for field, errs in serializer.errors.items():
+                if isinstance(errs, list):
+                    first_msgs.append(f"{field}: {errs[0]}")
+                elif isinstance(errs, dict):
+                    for sub_field, sub_errs in errs.items():
+                        first_msgs.append(f"{field}.{sub_field}: {sub_errs[0] if sub_errs else errs}")
             return Response(
-                TransactionSerializer(transaction).data,
+                {
+                    'code':         'VALIDATION_ERROR',
+                    'message':      ' | '.join(first_msgs[:3]),
+                    'field_errors': serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        vd       = serializer.validated_data
+        customer = vd['customer']
+        cur_from = vd['currency_from']
+        cur_to   = vd['currency_to']
+        branch   = request.user.branch
+
+        if not branch:
+            return Response(
+                {'error': 'Usuario sin sucursal asignada'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        import logging
+        log = logging.getLogger('transactions')
+
+        # ── Idempotency key — prevenir transacciones duplicadas ───────────────
+        idempotency_key = request.META.get('HTTP_IDEMPOTENCY_KEY', '').strip()
+        if idempotency_key:
+            from django.core.cache import cache
+            idem_cache_key = f"tx_idem:{request.user.id}:{idempotency_key}"
+            existing_tx_id = cache.get(idem_cache_key)
+            if existing_tx_id:
+                try:
+                    existing_tx = Transaction.objects.get(pk=existing_tx_id)
+                    log.info(
+                        "IDEMPOTENCY_HIT key=%s tx=%s",
+                        idempotency_key, existing_tx.transaction_number,
+                    )
+                    return Response(
+                        TransactionSerializer(existing_tx).data,
+                        status=status.HTTP_200_OK,
+                    )
+                except Transaction.DoesNotExist:
+                    pass  # La TX fue eliminada; continuar creando una nueva
+
+        # ── Validación de monto máximo: requiere PIN de supervisor ────────────
+        # Reglas de negocio (BUSINESS_LOGIC.md §10):
+        #   USD > 5,000 | BOB > 35,000 | otras > 35,000 BOB equivalente
+        amount_from   = vd['amount_from']
+        exchange_rate = vd['exchange_rate']
+
+        def _requires_supervisor_check():
+            if cur_from.code == 'USD':
+                return amount_from > 5000
+            if cur_from.code == 'BOB':
+                return amount_from > 35000
+            return amount_from * exchange_rate > 35000
+
+        supervisor_instance = None
+        if _requires_supervisor_check():
+            raw_pin = request.META.get('HTTP_X_SUPERVISOR_PIN', '').strip()
+            if not raw_pin:
+                log.warning(
+                    "SUPERVISOR_REQUIRED cashier=%s amount=%s %s",
+                    request.user.username, amount_from, cur_from.code,
+                )
+                return Response(
+                    {
+                        'error':  'Requiere supervisor',
+                        'detail': (
+                            f'Transacciones de {cur_from.code} '
+                            f'superiores al límite requieren '
+                            f'autorización de supervisor. '
+                            f'Envía el header X-Supervisor-PIN con el PIN.'
+                        ),
+                        'code':   'SUPERVISOR_REQUIRED',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Validar PIN contra todos los supervisores/admins
+            from users.models import User as UserModel
+            for sup in UserModel.objects.filter(role__in=('ADMIN', 'SUPERVISOR')):
+                if sup.check_pin(raw_pin):
+                    supervisor_instance = sup
+                    break
+
+            if supervisor_instance is None:
+                log.warning(
+                    "INVALID_SUPERVISOR_PIN cashier=%s amount=%s %s",
+                    request.user.username, amount_from, cur_from.code,
+                )
+                return Response(
+                    {'error': 'PIN inválido', 'code': 'INVALID_PIN'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            log.info(
+                "SUPERVISOR_APPROVED tx_by=%s supervisor=%s amount=%s %s",
+                request.user.username, supervisor_instance.username,
+                amount_from, cur_from.code,
+            )
+
+        try:
+            with db_transaction.atomic():
+                # Lock del branch para serializar la generación del número.
+                # Previene race condition entre cajeros concurrentes.
+                from users.models import Branch as BranchModel
+                BranchModel.objects.select_for_update().get(pk=branch.pk)
+
+                now    = timezone.now()
+                prefix = f"{branch.code}{now.strftime('%Y%m%d')}"
+                last   = Transaction.objects.filter(
+                    transaction_number__startswith=prefix
+                ).order_by('-transaction_number').select_for_update().first()
+                seq    = int(last.transaction_number[-4:]) + 1 if last else 1
+                tx_num = f"{prefix}{seq:04d}"
+
+                # Cuantizar montos con precisión financiera
+                from core.finance import quantize_amount, quantize_money, quantize_rate
+                tx = Transaction.objects.create(
+                    transaction_number    = tx_num,
+                    transaction_type      = vd['transaction_type'],
+                    transaction_category  = vd.get('transaction_category', 'REPORTABLE'),
+                    status                = 'COMPLETED',
+                    customer              = customer,
+                    nombre_cliente        = vd.get('nombre_cliente') or None,
+                    carnet_identidad      = vd.get('carnet_identidad') or None,
+                    currency_from         = cur_from,
+                    currency_to           = cur_to,
+                    amount_from           = quantize_amount(vd['amount_from']),
+                    amount_to             = quantize_money(vd['amount_to']),
+                    exchange_rate         = quantize_rate(vd['exchange_rate']),
+                    payment_method        = vd['payment_method'],
+                    payment_reference     = vd.get('payment_reference') or '',
+                    denomination_type     = vd.get('denomination_type'),
+                    notes                 = vd.get('notes') or '',
+                    cashier               = request.user,
+                    branch                = branch,
+                    supervisor            = supervisor_instance,
+                    completed_at          = now,
+                )
+
+                # Actualizar inventario de divisas.
+                # NO envuelto en try/except: si falla, el atomic block hace rollback
+                # completo y los efectos de capital también se deshacen.
+                service = TransactionService()
+                service._update_inventory(tx)
+
+                # ── Efectos BOB: CapitalComposicion + CashFlowLog ─────────────
+                # BUY  → BOB disminuye (empresa paga bolivianos)
+                # SELL → BOB aumenta  (empresa recibe bolivianos)
+                from .services import apply_transaction_effects
+                apply_transaction_effects(tx)   # raises ValidationError si saldo negativo
+
+                # Audit log — obligatorio, se registra dentro del atomic
+                from users.models import UserActivity
+                UserActivity.objects.create(
+                    user       = request.user,
+                    action     = 'TRANSACTION_CREATED',
+                    details    = {
+                        'tx_number':        tx.transaction_number,
+                        'transaction_type': tx.transaction_type,
+                        'amount_from':      str(tx.amount_from),
+                        'amount_to':        str(tx.amount_to),
+                        'exchange_rate':    str(tx.exchange_rate),
+                        'currency_from':    tx.currency_from.code,
+                        'currency_to':      tx.currency_to.code,
+                        'payment_method':        tx.payment_method,
+                        'transaction_category': tx.transaction_category,
+                        'customer_id':           tx.customer_id,
+                        'nombre_cliente':         tx.nombre_cliente,
+                        'carnet_identidad':        tx.carnet_identidad,
+                        'branch':                branch.code,
+                        'supervisor':       supervisor_instance.username if supervisor_instance else None,
+                    },
+                    ip_address = self.get_client_ip(request),
+                    user_agent = request.META.get('HTTP_USER_AGENT', ''),
+                )
+
+            # ── Registrar idempotency key post-commit ─────────────────────────
+            # Debe ejecutarse dentro de on_commit: si el atomic block hizo rollback
+            # (p.ej. ValidationError de capital), la key no debe quedar en caché.
+            if idempotency_key:
+                from django.core.cache import cache
+                _tx_id = tx.id
+                db_transaction.on_commit(
+                    lambda: cache.set(idem_cache_key, _tx_id, timeout=86400)
+                )
+
+            # ── Audit log financiero ──────────────────────────────────────────
+            audit = logging.getLogger('audit')
+            audit.info(
+                "TX_CREATED tx=%s type=%s cashier=%s branch=%s "
+                "amount_from=%s %s amount_to=%s BOB rate=%s customer=%s supervisor=%s",
+                tx.transaction_number, tx.transaction_type,
+                request.user.username, branch.code,
+                tx.amount_from, cur_from.code,
+                tx.amount_to, tx.exchange_rate,
+                tx.carnet_identidad or 'N/A',
+                supervisor_instance.username if supervisor_instance else 'N/A',
+            )
+            log.info(
+                "TRANSACTION_CREATED tx=%s cashier=%s amount=%s %s",
+                tx.transaction_number, request.user.username,
+                tx.amount_from, cur_from.code,
+            )
+
+            # ── Detección de anomalías post-commit ────────────────────────────
+            try:
+                from core.alerts import FinancialAnomalyDetector
+                FinancialAnomalyDetector.check_large_transaction(tx)
+                FinancialAnomalyDetector.record_transaction(request.user.id, branch.id)
+                FinancialAnomalyDetector.check_rapid_transactions(request.user.id, branch.id)
+            except Exception:
+                pass  # anomaly detection nunca rompe el flujo principal
+
+            return Response(
+                TransactionSerializer(tx).data,
                 status=status.HTTP_201_CREATED
             )
-            
+
         except Exception as e:
+            log.error(
+                "TRANSACTION_CREATE_FAILED cashier=%s err=%s",
+                request.user.username, e, exc_info=True,
+            )
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
+    # ── EDIT ─────────────────────────────────────────────────────────────────
+    def update(self, request, pk=None, **kwargs):
+        """
+        PATCH /api/transactions/{id}/ — editar notas, método de pago, referencia.
+        Solo campos no-financieros; los montos/tasas son inmutables una vez completada.
+        Requiere rol ADMIN o SUPERVISOR.
+        """
+        if request.user.role not in ('ADMIN', 'SUPERVISOR'):
+            return Response(
+                {'error': 'Solo administradores o supervisores pueden editar transacciones'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tx = self.get_object()
+        if tx.status == 'REVERSED':
+            return Response(
+                {'error': 'No se puede editar una transacción revertida'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        EDITABLE_FIELDS = {'notes', 'payment_method', 'payment_reference'}
+        data = {k: v for k, v in request.data.items() if k in EDITABLE_FIELDS}
+
+        if not data:
+            return Response(
+                {'error': f'Solo se pueden editar: {", ".join(EDITABLE_FIELDS)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        for field, value in data.items():
+            setattr(tx, field, value)
+        tx.save(update_fields=list(data.keys()) + ['updated_at'])
+
+        import logging
+        from users.models import UserActivity
+        UserActivity.objects.create(
+            user       = request.user,
+            action     = 'TRANSACTION_EDITED',
+            details    = {'tx_number': tx.transaction_number, 'changed': data},
+            ip_address = self.get_client_ip(request),
+            user_agent = request.META.get('HTTP_USER_AGENT', ''),
+        )
+        logging.getLogger('audit').info(
+            "TX_EDITED tx=%s editor=%s fields=%s",
+            tx.transaction_number, request.user.username, list(data.keys()),
+        )
+
+        return Response(TransactionSerializer(tx).data)
+
+    partial_update = update  # PATCH delegates to update
+
+    # ── DELETE ────────────────────────────────────────────────────────────────
+    def destroy(self, request, pk=None):
+        """
+        DELETE /api/transactions/{id}/ — anular y restaurar inventario.
+        Solo ADMIN. Marca como CANCELLED y revierte el inventario exactamente.
+        No borra el registro (auditoría financiera).
+        """
+        if request.user.role != 'ADMIN':
+            return Response(
+                {'error': 'Solo administradores pueden eliminar transacciones'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tx = self.get_object()
+        if tx.status in ('CANCELLED', 'REVERSED'):
+            return Response(
+                {'error': f'La transacción ya está {tx.status}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = request.data.get('reason', '').strip()
+        if not reason:
+            return Response(
+                {'error': 'Debe proporcionar una razón para eliminar la transacción'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        import logging
+        log = logging.getLogger('transactions')
+
+        try:
+            with db_transaction.atomic():
+                service = TransactionService()
+                service._reverse_inventory(tx)
+
+                # Revertir efectos BOB (devuelve el movimiento de caja exacto)
+                from .services import reverse_transaction_effects
+                reverse_transaction_effects(tx)
+
+                tx.status = 'CANCELLED'
+                tx.notes  = (tx.notes + f'\n[CANCELADO por {request.user.username}: {reason}]').strip()
+                tx.save(update_fields=['status', 'notes', 'updated_at'])
+
+                from users.models import UserActivity
+                UserActivity.objects.create(
+                    user       = request.user,
+                    action     = 'TRANSACTION_CANCELLED',
+                    details    = {
+                        'tx_number':        tx.transaction_number,
+                        'reason':           reason,
+                        'amount_from':      str(tx.amount_from),
+                        'currency_from':    tx.currency_from.code,
+                        'original_status':  'COMPLETED',
+                    },
+                    ip_address = self.get_client_ip(request),
+                    user_agent = request.META.get('HTTP_USER_AGENT', ''),
+                )
+                logging.getLogger('audit').info(
+                    "TX_CANCELLED tx=%s admin=%s reason=%s",
+                    tx.transaction_number, request.user.username, reason,
+                )
+
+            return Response(
+                {'success': True, 'message': f'Transacción {tx.transaction_number} cancelada. Inventario revertido.'},
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as exc:
+            log.error("TX_CANCEL_FAILED tx=%s err=%s", pk, exc, exc_info=True)
+            return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['POST'],
         permission_classes=[CanReverseTransaction],
         url_path='reverse')
@@ -158,18 +514,16 @@ class TransactionViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['GET'], url_path='daily-summary')
     def daily_summary(self, request):
-        """Resumen diario de transacciones"""
-        date = request.query_params.get('date', timezone.now().date())
+        date_str = request.query_params.get('date', '')
+        if date_str:
+            target_date = parse_date(date_str) or timezone.localdate()
+        else:
+            target_date = timezone.localdate()
         
-        if isinstance(date, str):
-            date = datetime.strptime(date, '%Y-%m-%d').date()
-        
-        transactions = self.get_queryset().filter(
-            created_at__date=date
-        )
+        transactions = self.get_queryset().filter(created_at__date=target_date)
         
         summary = {
-            'date': date,
+            'date': target_date,
             'total_transactions': transactions.count(),
             'by_type': {
                 'buy': transactions.filter(transaction_type='BUY').count(),
@@ -269,7 +623,11 @@ class CustomerViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        queryset = Customer.objects.all()
+        from django.db.models import Count, Sum
+        queryset = Customer.objects.annotate(
+            tx_count=Count('transactions', distinct=True),
+            tx_volume=Sum('transactions__amount_from'),
+        )
 
         search = self.request.query_params.get('search')
         if search:
@@ -283,8 +641,6 @@ class CustomerViewSet(viewsets.ModelViewSet):
         if frequent_only == 'true':
             queryset = queryset.filter(is_frequent=True)
 
-        # ← SIN annotate — transaction_count y total_volume
-        # ya son @property en el modelo
         return queryset.order_by('-created_at')
     
     @action(detail=False, methods=['GET'], url_path='search')

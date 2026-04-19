@@ -1,11 +1,35 @@
 from rest_framework import serializers
-from .models import Currency, ExchangeRate, RateConfiguration
+from .models import Currency, ExchangeRate, ExchangeRateSource, RateConfiguration
+
+
+class ExchangeRateSourceSerializer(serializers.ModelSerializer):
+    is_healthy = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model  = ExchangeRateSource
+        fields = [
+            'id', 'name', 'source_type', 'url', 'is_active',
+            'fetch_interval_min', 'weight', 'priority',
+            'last_fetched_at', 'last_success_at', 'consecutive_failures',
+            'is_healthy', 'notes', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'last_fetched_at', 'last_success_at']
 
 
 class CurrencySerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+
     class Meta:
         model  = Currency
-        fields = ['id', 'code', 'name', 'symbol', 'is_active']
+        fields = [
+            'id', 'code', 'name', 'name_en', 'name_es', 'symbol',
+            'is_active', 'use_exchange_rate', 'is_base_currency',
+            'scale_factor', 'created_at',
+        ]
+        read_only_fields = ['created_at']
+
+    def get_name(self, obj):
+        return obj.name_es or obj.name_en
 
 
 class ExchangeRateSerializer(serializers.ModelSerializer):
@@ -15,8 +39,12 @@ class ExchangeRateSerializer(serializers.ModelSerializer):
         queryset=Currency.objects.all(), source='currency_from', write_only=True)
     currency_to_id = serializers.PrimaryKeyRelatedField(
         queryset=Currency.objects.all(), source='currency_to', write_only=True)
-    spread            = serializers.DecimalField(max_digits=10, decimal_places=4, read_only=True)
-    spread_percentage = serializers.DecimalField(max_digits=5,  decimal_places=2, read_only=True)
+    spread             = serializers.DecimalField(max_digits=10, decimal_places=4, read_only=True)
+    spread_percentage  = serializers.DecimalField(max_digits=5,  decimal_places=2, read_only=True)
+    # Traceability (read-only, computed by the fetcher/aggregator pipeline)
+    is_inference       = serializers.BooleanField(read_only=True)
+    requires_warning   = serializers.BooleanField(read_only=True)
+    source_method_display = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model  = ExchangeRate
@@ -25,10 +53,41 @@ class ExchangeRateSerializer(serializers.ModelSerializer):
             'currency_to', 'currency_to_id',
             'official_rate', 'buy_rate', 'sell_rate',
             'spread', 'spread_percentage',
-            'source', 'valid_from', 'valid_until',
+            'market_type',
+            'rate_source',
+            # Legacy source label
+            'source',
+            # ── Traceability fields (Phase 3) ─────────────────────────────────
+            'source_method',          # API | SCRAP | MANUAL | INFERENCE
+            'source_method_display',  # human-readable label
+            'source_url',             # URL consultada
+            'fetched_at',             # timestamp de la consulta
+            'created_by',             # user FK (null = auto)
+            'is_validated',           # admin-approved
+            'confidence',             # 0.000–1.000
+            'is_inference',           # computed: source_method == INFERENCE and not validated
+            'requires_warning',       # computed: inference or low confidence
+            # ── Sistema primario ──────────────────────────────────────────────
+            'is_primary',             # True = tasa usada en transacciones
+            'avg_rate',               # mid-rate (buy+sell)/2
+            # ─────────────────────────────────────────────────────────────────
+            'valid_from', 'valid_until',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['created_at', 'updated_at']
+        read_only_fields = [
+            'created_at', 'updated_at',
+            'is_inference', 'requires_warning', 'source_method_display',
+            'avg_rate',
+        ]
+
+    def get_source_method_display(self, obj) -> str:
+        labels = {
+            'API':       'API externa (tiempo real)',
+            'SCRAP':     'Web scraping',
+            'MANUAL':    'Ingreso manual',
+            'INFERENCE': 'Estimado/inferido',
+        }
+        return labels.get(obj.source_method, obj.source_method)
 
 
 class RateConfigurationSerializer(serializers.ModelSerializer):

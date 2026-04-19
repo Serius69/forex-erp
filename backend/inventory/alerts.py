@@ -38,14 +38,14 @@ class InventoryAlert(models.Model):
         User,
         on_delete=models.SET_NULL,
         null=True,
-        related_name='triggered_alerts'
+        related_name='inventoryalert_triggered'
     )
     resolved_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='resolved_alerts'
+        related_name='inventoryalert_resolved'
     )
     
     is_resolved = models.BooleanField(default=False)
@@ -112,9 +112,9 @@ class InventoryAlert(models.Model):
         return 'MEDIUM'
     
     def _send_notifications(self):
-        """Envía notificaciones por email"""
+        """Envía notificaciones por email y Telegram."""
         recipients = []
-        
+
         # Determinar destinatarios según severidad
         if self.severity == 'CRITICAL':
            # Notificar a todos los administradores
@@ -129,7 +129,7 @@ class InventoryAlert(models.Model):
                branch=self.inventory.branch,
                is_active=True
            ).values_list('email', flat=True)
-       
+
         if recipients:
            send_mail(
                f'[{self.get_severity_display()}] {self.get_alert_type_display()}',
@@ -138,6 +138,19 @@ class InventoryAlert(models.Model):
                list(recipients),
                fail_silently=True,
            )
+
+        # Telegram: alerta en tiempo real para severidades HIGH y CRITICAL
+        try:
+            from services.notifications.telegram import alert_inventory_critical
+            alert_inventory_critical(
+                alert_type=self.get_alert_type_display(),
+                currency=self.inventory.currency.code,
+                branch=str(self.inventory.branch),
+                severity=self.severity,
+                message=self.message,
+            )
+        except Exception:
+            pass
    
     def resolve(self, user, notes=''):
        """Marca la alerta como resuelta"""
@@ -161,7 +174,7 @@ class InventoryAlertService:
        
        alerts_created = []
        
-       for inventory in CurrencyInventory.objects.all():
+       for inventory in CurrencyInventory.objects.select_related('currency', 'branch').all():
            # Verificar stock bajo
            if inventory.needs_replenishment:
                alert, created = InventoryAlert.objects.get_or_create(
@@ -214,8 +227,22 @@ class InventoryAlertService:
                    if created:
                        alerts_created.append(alert)
        
+       # Verificar inventario negativo (saldo físico o digital < 0)
+       for inventory in CurrencyInventory.objects.select_related('currency', 'branch').all():
+           if inventory.physical_balance < 0 or inventory.digital_balance < 0:
+               try:
+                   from services.notifications.telegram import alert_negative_inventory
+                   balance = min(float(inventory.physical_balance), float(inventory.digital_balance))
+                   alert_negative_inventory(
+                       currency=inventory.currency.code,
+                       branch=str(inventory.branch),
+                       balance=f'{balance:,.2f}',
+                   )
+               except Exception:
+                   pass
+
        return alerts_created
-   
+
    @staticmethod
    def get_active_alerts(branch=None, severity=None):
        """Obtiene alertas activas con filtros opcionales"""

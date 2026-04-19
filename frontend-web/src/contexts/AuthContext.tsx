@@ -1,13 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, setAuthToken } from '../services/api';
+import { api } from '../services/api';
 import { User } from '../types';
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (username: string, password: string, pin?: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   verifyPin: (pin: string) => Promise<boolean>;
 }
 
@@ -29,7 +29,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const token = localStorage.getItem('access_token');
     if (token) {
-      setAuthToken(token);
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       loadUser();
     } else {
       setLoading(false);
@@ -57,7 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       localStorage.setItem('access_token', access);
       localStorage.setItem('refresh_token', refresh);
-      setAuthToken(access);
+      api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
 
       setUser(user);
       navigate('/dashboard');
@@ -66,10 +66,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    // Blacklistear el refresh token en el backend antes de limpiar localmente.
+    // Si la llamada falla (red caída), limpiamos igual — el token expirará solo.
+    const refresh = localStorage.getItem('refresh_token');
+    if (refresh) {
+      try {
+        await api.post('/auth/logout/', { refresh });
+      } catch {
+        // Silencioso: el token expirará por su TTL natural
+      }
+    }
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
-    setAuthToken(null);
+    delete api.defaults.headers.common['Authorization'];
     setUser(null);
     navigate('/login');
   };

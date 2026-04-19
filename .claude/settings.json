@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v \"DEBUG\\\\|h5py\\\\|^$\")",
+      "Bash(\"/e/data/forex-erp/backend/venv/Scripts/python.exe\" \"/e/data/forex-erp/backend/manage.py\" showmigrations analytics)",
+      "Bash(/e/data/forex-erp/backend/venv/Scripts/python.exe -c ':*)",
+      "Bash(grep -v \"DEBUG\\\\|h5py\\\\|^$\\\\|requests\\\\|UserWarning\\\\|warnings\")",
+      "Bash(grep -v \"DEBUG\\\\|h5py\\\\|^$\\\\|requests\\\\|UserWarning\\\\|warn\")",
+      "Bash(python manage.py check --deploy)",
+      "Bash(venv/Scripts/python manage.py check)",
+      "Bash(venv/Scripts/python -c \"import django; django.setup\\(\\); from django.core.management import call_command; call_command\\('check'\\)\")",
+      "Bash(set DJANGO_SETTINGS_MODULE=core.settings.development)",
+      "Bash(venv/Scripts/python manage.py showmigrations data_migration)",
+      "Bash(xargs grep:*)",
+      "Bash(python -m pytest transactions/tests/test_validators.py -v)",
+      "Bash(python manage.py test transactions.tests.test_validators --verbosity=2)",
+      "Bash(py -3.11 -c \"import django; print\\(django.__version__\\)\")",
+      "Bash(venv/Scripts/python.exe -c ':*)",
+      "Bash(venv/Scripts/python.exe manage.py makemigrations snapshots)",
+      "Bash(venv/Scripts/python.exe manage.py migrate snapshots --run-syncdb)",
+      "Bash(venv/Scripts/python.exe manage.py migrate snapshots)",
+      "Bash(venv/Scripts/python.exe manage.py check snapshots)",
+      "Bash(DJANGO_SETTINGS_MODULE=core.settings.development venv/Scripts/python.exe manage.py check)",
+      "Bash(DJANGO_SETTINGS_MODULE=core.settings.development venv/Scripts/python.exe manage.py check capital)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(DJANGO_SETTINGS_MODULE=core.settings.development venv/Scripts/python.exe manage.py makemigrations analytics --name add_decision_log)"
+    ],
+    "additionalDirectories": [
+      "e:\\data\\forex-erp\\backend\\data_migration"
+    ]
+  }
+}

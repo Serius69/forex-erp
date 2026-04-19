@@ -1,8 +1,10 @@
 from datetime import date as dt
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 from users.permissions import IsAdminOrSupervisor
 from .models import (CashTransactionReport, SuspiciousActivityReport,
                       PEPRegistry, DailyOperationLog, GeneratedReport)
@@ -10,6 +12,16 @@ from .serializers import (RTESerializer, ROUESerializer, PEPSerializer,
                             DailyLogSerializer, GeneratedReportSerializer,
                             CreateROUESerializer, CreatePEPSerializer)
 
+class GeneratedReportViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset           = GeneratedReport.objects.select_related('generated_by').order_by('-generated_at')
+    serializer_class   = GeneratedReportSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.user.role != 'ADMIN':
+            qs = qs.filter(generated_by=self.request.user)
+        return qs
 
 class RTEViewSet(viewsets.ReadOnlyModelViewSet):
     queryset          = CashTransactionReport.objects.select_related('transaction').all()
@@ -89,19 +101,31 @@ class PEPViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='download-excel')
     def download_excel(self, request):
+        year  = int(request.query_params.get('year',  dt.today().year))
+        month = int(request.query_params.get('month', dt.today().month))
         from .services.asfi_service import ASFIReportService
-        result = ASFIReportService.generate_pep_report(user=request.user)
-        return FileResponse(open(result['excel_path'], 'rb'),
-                            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                            as_attachment=True, filename='PEP.xlsx')
+        result = ASFIReportService.generate_pep_report(year=year, month=month, user=request.user)
+        try:
+            return FileResponse(open(result['excel_path'], 'rb'),
+                                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                                as_attachment=True,
+                                filename=f'PEP_{year}{month:02d}.xlsx')
+        except FileNotFoundError:
+            raise Http404
 
     @action(detail=False, methods=['get'], url_path='download-pdf')
     def download_pdf(self, request):
+        year  = int(request.query_params.get('year',  dt.today().year))
+        month = int(request.query_params.get('month', dt.today().month))
         from .services.asfi_service import ASFIReportService
-        result = ASFIReportService.generate_pep_report(user=request.user)
-        return FileResponse(open(result['pdf_path'], 'rb'),
-                            content_type='application/pdf',
-                            as_attachment=True, filename='PEP.pdf')
+        result = ASFIReportService.generate_pep_report(year=year, month=month, user=request.user)
+        try:
+            return FileResponse(open(result['pdf_path'], 'rb'),
+                                content_type='application/pdf',
+                                as_attachment=True,
+                                filename=f'PEP_{year}{month:02d}.pdf')
+        except FileNotFoundError:
+            raise Http404
 
 
 class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -231,3 +255,81 @@ class ManagementReportViewSet(viewsets.ViewSet):
                                 content_type='application/pdf',
                                 as_attachment=True, filename='FlujoCaja.pdf')
         return Response(result)
+
+
+# ── Vistas dedicadas ASFI (rutas explícitas, sin ambigüedad de router) ─────────
+
+class RTEReportView(APIView):
+    """
+    GET /api/reports/asfi/rte/download-excel/?year=YYYY&month=MM
+    GET /api/reports/asfi/rte/download-pdf/?year=YYYY&month=MM
+    """
+    permission_classes = [IsAdminOrSupervisor]
+
+    def get(self, request, fmt):
+        year  = int(request.query_params.get('year',  dt.today().year))
+        month = int(request.query_params.get('month', dt.today().month))
+
+        from .services.asfi_service import ASFIReportService
+        try:
+            result = ASFIReportService.generate_rte_monthly(year, month, user=request.user)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if fmt == 'excel':
+            file_path    = result['excel_path']
+            content_type = ('application/vnd.openxmlformats-officedocument'
+                            '.spreadsheetml.sheet')
+            filename     = f'RTE_{year}{month:02d}.xlsx'
+        else:
+            file_path    = result['pdf_path']
+            content_type = 'application/pdf'
+            filename     = f'RTE_{year}{month:02d}.pdf'
+
+        try:
+            with open(file_path, 'rb') as f:
+                data = f.read()
+        except FileNotFoundError:
+            return Response({'error': 'Archivo no encontrado'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        response = HttpResponse(data, content_type=content_type)
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+
+class PEPReportView(APIView):
+    """
+    GET /api/reports/asfi/pep/download-excel/?year=YYYY&month=MM
+    GET /api/reports/asfi/pep/download-pdf/?year=YYYY&month=MM
+    """
+    permission_classes = [IsAdminOrSupervisor]
+
+    def get(self, request, fmt):
+        year  = int(request.query_params.get('year',  dt.today().year))
+        month = int(request.query_params.get('month', dt.today().month))
+
+        from .services.asfi_service import ASFIReportService
+        result = ASFIReportService.generate_pep_report(year=year, month=month,
+                                                        user=request.user)
+
+        if fmt == 'excel':
+            file_path    = result['excel_path']
+            content_type = ('application/vnd.openxmlformats-officedocument'
+                            '.spreadsheetml.sheet')
+            filename     = f'PEP_{year}{month:02d}.xlsx'
+        else:
+            file_path    = result['pdf_path']
+            content_type = 'application/pdf'
+            filename     = f'PEP_{year}{month:02d}.pdf'
+
+        try:
+            with open(file_path, 'rb') as f:
+                data = f.read()
+        except FileNotFoundError:
+            return Response({'error': 'Archivo no encontrado'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        response = HttpResponse(data, content_type=content_type)
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response

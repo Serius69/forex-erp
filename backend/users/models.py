@@ -18,7 +18,7 @@ class Branch(models.Model):
     class Meta:
         verbose_name = 'Sucursal'
         verbose_name_plural = 'Sucursales'
-    
+        ordering = ['-created_at']
     def __str__(self):
         return self.name
 
@@ -37,6 +37,7 @@ class User(AbstractUser):
     is_two_factor_enabled = models.BooleanField(default=False)
     
     class Meta:
+        ordering = ['username']
         verbose_name = 'Usuario'
         verbose_name_plural = 'Usuarios'
     
@@ -84,6 +85,42 @@ class User(AbstractUser):
         
         totp = pyotp.TOTP(self.two_factor_secret)
         return totp.verify(token, valid_window=1)
+
+class AuditLog(models.Model):
+    """Registro inmutable de cambios en modelos Django. Ver core/audit.py para helpers."""
+    ACTION_CHOICES = [
+        ('CREATE', 'Creación'), ('UPDATE', 'Modificación'),
+        ('DELETE', 'Eliminación'), ('REVERSE', 'Reversión'),
+    ]
+    from django.contrib.contenttypes.models import ContentType as _CT
+    content_type   = models.ForeignKey(
+        'contenttypes.ContentType', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='audit_logs',
+    )
+    object_id      = models.CharField(max_length=100, db_index=True)
+    object_repr    = models.CharField(max_length=300, blank=True)
+    action         = models.CharField(max_length=10, choices=ACTION_CHOICES, db_index=True)
+    before_json    = models.JSONField(default=dict, blank=True)
+    after_json     = models.JSONField(default=dict, blank=True)
+    changed_fields = models.JSONField(default=list, blank=True)
+    user           = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='audit_logs',
+    )
+    ip_address     = models.GenericIPAddressField(null=True, blank=True)
+    user_agent     = models.TextField(blank=True)
+    extra          = models.JSONField(default=dict, blank=True)
+    timestamp      = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table  = 'core_audit_log'
+        ordering  = ['-timestamp']
+        verbose_name        = 'Log de auditoría'
+        verbose_name_plural = 'Logs de auditoría'
+
+    def __str__(self):
+        return f'{self.action} {self.object_repr} @ {self.timestamp}'
+
 
 class UserActivity(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='activities')

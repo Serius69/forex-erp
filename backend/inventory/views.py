@@ -2,18 +2,25 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum, Count, Q, F
+from django.db.models import Sum, Count, Q, F, ExpressionWrapper, DecimalField
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
-from .models import CurrencyInventory, InventoryMovement, InventoryTransfer
+
+# total_balance es @property, no campo DB — usar esta expresión en queries
+_TOTAL_BAL = ExpressionWrapper(
+    F('physical_balance') + F('digital_balance'),
+    output_field=DecimalField(max_digits=15, decimal_places=2),
+)
+from .models import CurrencyInventory, InventoryMovement, InventoryTransfer, InventoryCard
 from .alerts import InventoryAlert, InventoryAlertService
 from .serializers import (
     CurrencyInventorySerializer,
     InventoryMovementSerializer,
     InventoryTransferSerializer,
     InventoryAlertSerializer,
-    InventoryAdjustmentSerializer
+    InventoryAdjustmentSerializer,
+    InventoryCardSerializer,
 )
 
 class CurrencyInventoryViewSet(viewsets.ModelViewSet):
@@ -53,14 +60,17 @@ class CurrencyInventoryViewSet(viewsets.ModelViewSet):
     def summary(self, request):
         """Resumen general del inventario"""
         inventories = self.get_queryset()
-        
+
+        # Anotar total_balance como campo DB para poder filtrar
+        inventories_ann = inventories.annotate(total_balance_db=_TOTAL_BAL)
+
         summary = {
-            'total_currencies': inventories.count(),
-            'needs_replenishment': inventories.filter(
-                total_balance__lte=F('reorder_point')
+            'total_currencies': inventories_ann.count(),
+            'needs_replenishment': inventories_ann.filter(
+                total_balance_db__lte=F('reorder_point')
             ).count(),
-            'overstocked': inventories.filter(
-                total_balance__gt=F('maximum_stock')
+            'overstocked': inventories_ann.filter(
+                total_balance_db__gt=F('maximum_stock')
             ).count(),
             'by_currency': {},
             'total_value_bob': 0
@@ -207,11 +217,11 @@ class InventoryTransferViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         
         # Filtros
-        status = self.request.query_params.get('status')
+        transfer_status = self.request.query_params.get('status')
         branch_id = self.request.query_params.get('branch_id')
-        
-        if status:
-            queryset = queryset.filter(status=status)
+
+        if transfer_status:
+            queryset = queryset.filter(status=transfer_status)
         
         if branch_id:
             queryset = queryset.filter(
@@ -365,8 +375,56 @@ class InventoryAlertViewSet(viewsets.ModelViewSet):
             )
         
         alerts_created = InventoryAlertService.check_all_inventories()
-        
+
         return Response({
             'alerts_created': len(alerts_created),
             'alerts': InventoryAlertSerializer(alerts_created, many=True).data
         })
+
+
+class InventoryMovementViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = InventoryMovementSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = InventoryMovement.objects.select_related(
+            'inventory__currency', 'inventory__branch', 'user'
+        ).order_by('-created_at')
+
+        if self.request.user.role != 'ADMIN':
+            qs = qs.filter(inventory__branch=self.request.user.branch)
+
+        currency     = self.request.query_params.get('currency')
+        mov_type     = self.request.query_params.get('type')
+        date_from    = self.request.query_params.get('date_from')
+        date_to      = self.request.query_params.get('date_to')
+        inventory_id = self.request.query_params.get('inventory_id')
+
+        if currency:
+            qs = qs.filter(inventory__currency__code=currency)
+        if mov_type:
+            qs = qs.filter(movement_type=mov_type)
+        if date_from:
+            qs = qs.filter(created_at__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__lte=date_to)
+        if inventory_id:
+            qs = qs.filter(inventory_id=inventory_id)
+
+        return qs
+
+
+class InventoryCardViewSet(viewsets.ModelViewSet):
+    queryset = InventoryCard.objects.all()
+    serializer_class = InventoryCardSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        currency = self.request.query_params.get('currency')
+        status   = self.request.query_params.get('status')
+        if currency:
+            queryset = queryset.filter(currency__iexact=currency)
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset

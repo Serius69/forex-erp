@@ -463,9 +463,11 @@ class ForexPredictionService:
        
        # Agregar regresores (usar últimos valores conocidos)
        if 'international_rate' in model.extra_regressors:
-           future['international_rate'] = future['international_rate'].fillna(
-               method='ffill'
-           ).fillna(6.96)  # Valor por defecto
+           future['international_rate'] = (
+               future['international_rate']
+               .ffill()
+               .fillna(6.96)  # Valor por defecto
+           )
        
        # Predecir
        forecast = model.predict(future)

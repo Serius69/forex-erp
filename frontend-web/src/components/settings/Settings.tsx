@@ -99,7 +99,7 @@ const Settings: React.FC = () => {
       {/* ── Tab 0: Perfil ── */}
       {tab === 0 && (
         <Grid container spacing={3}>
-          <Grid xs={12} md={4}>
+          <Grid item xs={12} md={4}>
             <Card>
               <CardContent sx={{ textAlign: 'center', py: 4 }}>
                 <Avatar sx={{ width: 80, height: 80, mx: 'auto', mb: 2, bgcolor: 'primary.main', fontSize: 32 }}>
@@ -120,20 +120,20 @@ const Settings: React.FC = () => {
               </CardContent>
             </Card>
           </Grid>
-          <Grid xs={12} md={8}>
+          <Grid item xs={12} md={8}>
             <Paper sx={{ p: 3 }}>
               <Typography variant="h6" mb={2}>Información Personal</Typography>
               <Grid container spacing={2}>
-                <Grid xs={6}>
+                <Grid item xs={6}>
                   <TextField fullWidth label="Nombre" defaultValue={user?.first_name} disabled />
                 </Grid>
-                <Grid xs={6}>
+                <Grid item xs={6}>
                   <TextField fullWidth label="Apellido" defaultValue={user?.last_name} disabled />
                 </Grid>
-                <Grid xs={12}>
+                <Grid item xs={12}>
                   <TextField fullWidth label="Email" defaultValue={user?.email} disabled />
                 </Grid>
-                <Grid xs={12}>
+                <Grid item xs={12}>
                   <TextField fullWidth label="Usuario" defaultValue={user?.username} disabled />
                 </Grid>
               </Grid>
@@ -149,25 +149,25 @@ const Settings: React.FC = () => {
       {tab === 1 && (
         <Grid container spacing={3}>
           {/* Cambiar contraseña */}
-          <Grid xs={12} md={6}>
+          <Grid item xs={12} md={6}>
             <Paper sx={{ p: 3 }}>
               <Typography variant="h6" mb={2}>Cambiar Contraseña</Typography>
               <Grid container spacing={2}>
-                <Grid xs={12}>
+                <Grid item xs={12}>
                   <TextField fullWidth label="Contraseña Actual" type="password"
                     value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} />
                 </Grid>
-                <Grid xs={12}>
+                <Grid item xs={12}>
                   <TextField fullWidth label="Nueva Contraseña" type="password"
                     value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
                 </Grid>
-                <Grid xs={12}>
+                <Grid item xs={12}>
                   <TextField fullWidth label="Confirmar Contraseña" type="password"
                     value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)}
                     error={confirmPass !== '' && confirmPass !== newPassword}
                     helperText={confirmPass !== '' && confirmPass !== newPassword ? 'No coincide' : ''} />
                 </Grid>
-                <Grid xs={12}>
+                <Grid item xs={12}>
                   <Button fullWidth variant="contained" onClick={handleChangePassword}
                     disabled={loading || !oldPassword || !newPassword || newPassword !== confirmPass}>
                     Actualizar Contraseña
@@ -178,7 +178,7 @@ const Settings: React.FC = () => {
           </Grid>
 
           {/* PIN y 2FA */}
-          <Grid xs={12} md={6}>
+          <Grid item xs={12} md={6}>
             <Paper sx={{ p: 3 }}>
               <Typography variant="h6" mb={2}>PIN de Operaciones</Typography>
               <TextField fullWidth label="Nuevo PIN (4-6 dígitos)" type="password"

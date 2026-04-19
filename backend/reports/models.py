@@ -50,10 +50,16 @@ class CashTransactionReport(models.Model):
     def save(self, *args, **kwargs):
         if not self.report_number:
             from django.utils import timezone
+            from django.db import transaction as _tx
             prefix = f"RTE{timezone.now().strftime('%Y%m%d')}"
-            count  = CashTransactionReport.objects.filter(
-                report_number__startswith=prefix).count()
-            self.report_number = f"{prefix}{count + 1:04d}"
+            with _tx.atomic():
+                last = (CashTransactionReport.objects
+                        .select_for_update()
+                        .filter(report_number__startswith=prefix)
+                        .order_by('-report_number')
+                        .first())
+                seq = int(last.report_number[-4:]) + 1 if last else 1
+                self.report_number = f"{prefix}{seq:04d}"
         super().save(*args, **kwargs)
 
     @classmethod
@@ -103,10 +109,16 @@ class SuspiciousActivityReport(models.Model):
     def save(self, *args, **kwargs):
         if not self.report_number:
             from django.utils import timezone
+            from django.db import transaction as _tx
             prefix = f"ROUE{timezone.now().strftime('%Y%m')}"
-            count  = SuspiciousActivityReport.objects.filter(
-                report_number__startswith=prefix).count()
-            self.report_number = f"{prefix}{count + 1:04d}"
+            with _tx.atomic():
+                last = (SuspiciousActivityReport.objects
+                        .select_for_update()
+                        .filter(report_number__startswith=prefix)
+                        .order_by('-report_number')
+                        .first())
+                seq = int(last.report_number[-4:]) + 1 if last else 1
+                self.report_number = f"{prefix}{seq:04d}"
         super().save(*args, **kwargs)
 
 

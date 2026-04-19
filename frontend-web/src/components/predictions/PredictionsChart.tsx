@@ -286,14 +286,14 @@ const PredictionsChart: React.FC = () => {
         </Box>
 
         <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid xs={12} md={8}>
+          <Grid item xs={12} md={8}>
             <Alert severity="info" icon={<Info />}>
               <Typography variant="body2">
                 <strong>{getModelInfo()?.name}</strong>: {getModelInfo()?.description}
               </Typography>
             </Alert>
           </Grid>
-          <Grid xs={12} md={4}>
+          <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
               <Chip
                 label={`Precisión: ${getModelInfo()?.accuracy}`}

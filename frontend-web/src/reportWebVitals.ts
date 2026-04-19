@@ -1,13 +1,16 @@
-import { ReportHandler } from 'web-vitals';
+// web-vitals v4 — API actualizada (onCLS, onFCP, onLCP, onTTFB, onINP)
+import type { MetricType } from 'web-vitals';
+
+type ReportHandler = (metric: MetricType) => void;
 
 const reportWebVitals = (onPerfEntry?: ReportHandler) => {
   if (onPerfEntry && onPerfEntry instanceof Function) {
-    import('web-vitals').then(({ getCLS, getFID, getFCP, getLCP, getTTFB }) => {
-      getCLS(onPerfEntry);
-      getFID(onPerfEntry);
-      getFCP(onPerfEntry);
-      getLCP(onPerfEntry);
-      getTTFB(onPerfEntry);
+    import('web-vitals').then(({ onCLS, onFCP, onLCP, onTTFB, onINP }) => {
+      onCLS(onPerfEntry);
+      onFCP(onPerfEntry);
+      onLCP(onPerfEntry);
+      onTTFB(onPerfEntry);
+      onINP(onPerfEntry);
     });
   }
 };

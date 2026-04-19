@@ -108,11 +108,11 @@ const ReportsMain: React.FC = () => {
               Período para RTE y Libro Diario
             </Typography>
             <Grid container spacing={2} alignItems="center">
-              <Grid xs={12} sm={4}>
+              <Grid item xs={12} sm={4}>
                 <TextField fullWidth label="Año" type="number"
                   value={year} onChange={(e) => setYear(parseInt(e.target.value))} />
               </Grid>
-              <Grid xs={12} sm={4}>
+              <Grid item xs={12} sm={4}>
                 <FormControl fullWidth>
                   <InputLabel>Mes</InputLabel>
                   <Select value={month}
@@ -123,14 +123,14 @@ const ReportsMain: React.FC = () => {
                   </Select>
                 </FormControl>
               </Grid>
-              <Grid xs={12} sm={4}>
+              <Grid item xs={12} sm={4}>
                 <Chip label={`${month}/${year}`} color="primary" />
               </Grid>
             </Grid>
           </Paper>
 
           <Grid container spacing={3}>
-            <Grid xs={12} sm={6} md={4}>
+            <Grid item xs={12} sm={6} md={4}>
               <ReportCard
                 title="RTE — Transacciones en Efectivo"
                 description="Registro de transacciones >= $1,000 USD equivalente para ASFI."
@@ -149,7 +149,7 @@ const ReportsMain: React.FC = () => {
               />
             </Grid>
 
-            <Grid xs={12} sm={6} md={4}>
+            <Grid item xs={12} sm={6} md={4}>
               <ReportCard
                 title="PEP — Personas Expuestas Políticamente"
                 description="Listado completo del registro PEP para cumplimiento ASFI."
@@ -168,7 +168,7 @@ const ReportsMain: React.FC = () => {
               />
             </Grid>
 
-            <Grid xs={12} sm={6} md={4}>
+            <Grid item xs={12} sm={6} md={4}>
               <ReportCard
                 title="Libro Diario de Operaciones"
                 description="Registro diario de operaciones según ASFI Art. 14."
@@ -216,17 +216,17 @@ const ReportsMain: React.FC = () => {
               Período del Reporte
             </Typography>
             <Grid container spacing={2} alignItems="center">
-              <Grid xs={12} sm={3}>
+              <Grid item xs={12} sm={3}>
                 <TextField fullWidth label="Fecha Desde" type="date"
                   value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
                   InputLabelProps={{ shrink: true }} />
               </Grid>
-              <Grid xs={12} sm={3}>
+              <Grid item xs={12} sm={3}>
                 <TextField fullWidth label="Fecha Hasta" type="date"
                   value={dateTo} onChange={(e) => setDateTo(e.target.value)}
                   InputLabelProps={{ shrink: true }} />
               </Grid>
-              <Grid xs={12} sm={2}>
+              <Grid item xs={12} sm={2}>
                 <FormControl fullWidth>
                   <InputLabel>Período P&G</InputLabel>
                   <Select value={period}
@@ -236,12 +236,12 @@ const ReportsMain: React.FC = () => {
                   </Select>
                 </FormControl>
               </Grid>
-              <Grid xs={12} sm={2}>
+              <Grid item xs={12} sm={2}>
                 <TextField fullWidth label="Top N Clientes" type="number"
                   value={topN} onChange={(e) => setTopN(parseInt(e.target.value))}
                   inputProps={{ min: 5, max: 100 }} />
               </Grid>
-              <Grid xs={12} sm={2}>
+              <Grid item xs={12} sm={2}>
                 <TextField fullWidth label="Días Proyección" type="number"
                   value={daysAhead} onChange={(e) => setDaysAhead(parseInt(e.target.value))}
                   inputProps={{ min: 7, max: 90 }} />
@@ -250,7 +250,7 @@ const ReportsMain: React.FC = () => {
           </Paper>
 
           <Grid container spacing={3}>
-            <Grid xs={12} sm={6} md={4}>
+            <Grid item xs={12} sm={6} md={4}>
               <ReportCard
                 title="P&G — Pérdidas y Ganancias"
                 description={`Análisis detallado de ingresos, costos y utilidad. Período: ${period}.`}
@@ -269,7 +269,7 @@ const ReportsMain: React.FC = () => {
               />
             </Grid>
 
-            <Grid xs={12} sm={6} md={4}>
+            <Grid item xs={12} sm={6} md={4}>
               <ReportCard
                 title="Rentabilidad por Divisa"
                 description="Análisis de rentabilidad desglosado por divisa y sucursal."
@@ -288,7 +288,7 @@ const ReportsMain: React.FC = () => {
               />
             </Grid>
 
-            <Grid xs={12} sm={6} md={4}>
+            <Grid item xs={12} sm={6} md={4}>
               <ReportCard
                 title="Ranking de Clientes"
                 description={`Top ${topN} clientes por volumen de operaciones.`}
@@ -307,7 +307,7 @@ const ReportsMain: React.FC = () => {
               />
             </Grid>
 
-            <Grid xs={12} sm={6} md={4}>
+            <Grid item xs={12} sm={6} md={4}>
               <ReportCard
                 title="Comparativo de Períodos"
                 description="Comparación automática vs período anterior equivalente."
@@ -326,7 +326,7 @@ const ReportsMain: React.FC = () => {
               />
             </Grid>
 
-            <Grid xs={12} sm={6} md={4}>
+            <Grid item xs={12} sm={6} md={4}>
               <ReportCard
                 title="Proyección de Flujo de Caja"
                 description={`Proyección de ingresos y egresos a ${daysAhead} días.`}

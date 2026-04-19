@@ -4,6 +4,7 @@ from django.db.models import F, Sum
 from django.contrib.auth import get_user_model
 from decimal import Decimal
 from django.utils import timezone
+from core.finance import quantize_amount, quantize_rate, calculate_wac
 
 User = get_user_model()
 
@@ -73,7 +74,18 @@ class CurrencyInventory(models.Model):
     @property
     def total_balance(self):
         return self.physical_balance + self.digital_balance
-    
+
+    @property
+    def real_physical_balance(self):
+        """Saldo físico en unidades reales (total_balance × scale_factor).
+        Para CLP/ARS (scale=1000): 680 unidades → 680,000 pesos reales."""
+        return self.physical_balance * self.currency.scale_factor
+
+    @property
+    def real_total_balance(self):
+        """Saldo total en unidades reales (total_balance × scale_factor)."""
+        return self.total_balance * self.currency.scale_factor
+
     @property
     def needs_replenishment(self):
         return self.total_balance <= self.reorder_point
@@ -88,65 +100,68 @@ class CurrencyInventory(models.Model):
             return (self.total_balance / self.maximum_stock) * 100
         return 0
     
-    def add_currency(self, amount, rate, user):
-        """Añade divisas al inventario"""
-        # Calcular nuevo costo promedio ponderado
-        total_value = (self.total_balance * self.weighted_average_cost) + (amount * rate)
-        new_balance = self.total_balance + amount
-        
-        if new_balance > 0:
-            self.weighted_average_cost = total_value / new_balance
-        
-        self.physical_balance = F('physical_balance') + amount
-        self.save()
-        self.refresh_from_db()
-        
-        # Registrar movimiento
-        InventoryMovement.objects.create(
-            inventory=self,
-            movement_type='IN',
-            amount=amount,
-            rate=rate,
-            balance_before=self.total_balance - amount,
-            balance_after=self.total_balance,
-            user=user,
-            reference=f"Compra de divisas"
+    def add_currency(self, amount, rate, user=None):
+        """Aumenta el saldo físico (casa compra divisas). Thread-safe con select_for_update."""
+        amount = quantize_amount(amount)
+        rate   = quantize_rate(rate)
+
+        # Calcular WAC antes de modificar el balance
+        new_wac = calculate_wac(
+            self.physical_balance, self.weighted_average_cost, amount, rate
         )
-        
-        # Verificar si se excedió el máximo
-        if self.is_overstocked:
-            self._create_alert('OVERSTOCK', user)
+        balance_before = self.physical_balance
+
+        self.physical_balance      += amount
+        self.weighted_average_cost  = new_wac
+        self.save(update_fields=['physical_balance', 'weighted_average_cost'])
+
+        InventoryMovement.objects.create(
+            inventory      = self,
+            movement_type  = 'IN',
+            amount         = amount,
+            rate           = rate,
+            balance_before = balance_before,
+            balance_after  = self.physical_balance,
+            notes          = f"Compra de divisa TC={rate}",
+            user           = user if isinstance(user, User) else None,
+        )
     
     def remove_currency(self, amount, user):
-        """Retira divisas del inventario"""
+        """
+        Retira divisas del inventario. Thread-safe: debe llamarse desde dentro de
+        un bloque select_for_update() para garantizar consistencia.
+        """
+        amount = quantize_amount(amount)
+
         if amount > self.total_balance:
-            raise ValueError(f"Saldo insuficiente. Disponible: {self.total_balance}")
-        
+            raise ValueError(
+                f"Saldo insuficiente de {self.currency.code}. "
+                f"Disponible: {self.total_balance:.4f}, solicitado: {amount:.4f}"
+            )
+
+        balance_before = self.total_balance
+
         # Retirar primero del balance físico
         if amount <= self.physical_balance:
-            self.physical_balance = F('physical_balance') - amount
+            self.physical_balance -= amount
         else:
-            # Retirar lo que hay en físico y el resto de digital
-            remainder = amount - self.physical_balance
-            self.physical_balance = 0
-            self.digital_balance = F('digital_balance') - remainder
-        
-        self.save()
-        self.refresh_from_db()
-        
-        # Registrar movimiento
+            remainder            = amount - self.physical_balance
+            self.physical_balance = Decimal('0')
+            self.digital_balance -= remainder
+
+        self.save(update_fields=['physical_balance', 'digital_balance'])
+
         InventoryMovement.objects.create(
-            inventory=self,
-            movement_type='OUT',
-            amount=amount,
-            rate=self.weighted_average_cost,
-            balance_before=self.total_balance + amount,
-            balance_after=self.total_balance,
-            user=user,
-            reference=f"Venta de divisas"
+            inventory      = self,
+            movement_type  = 'OUT',
+            amount         = amount,
+            rate           = self.weighted_average_cost,
+            balance_before = balance_before,
+            balance_after  = self.total_balance,
+            user           = user if isinstance(user, User) else None,
+            reference      = "Venta de divisas",
         )
-        
-        # Verificar si necesita reposición
+
         if self.needs_replenishment:
             self._create_alert('LOW_STOCK', user)
     
@@ -224,6 +239,28 @@ class CurrencyInventory(models.Model):
             data=extra_data or {}
         )
 
+class InventoryCard(models.Model):
+    STATUS_CHOICES = [
+        ('ACTIVE',   'Activa'),
+        ('INACTIVE', 'Inactiva'),
+        ('BLOCKED',  'Bloqueada'),
+    ]
+
+    currency   = models.CharField(max_length=10)
+    amount     = models.DecimalField(max_digits=15, decimal_places=2)
+    status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Tarjeta de Inventario'
+        verbose_name_plural = 'Tarjetas de Inventario'
+
+    def __str__(self):
+        return f"{self.currency} - {self.amount} ({self.status})"
+
+
 class InventoryMovement(models.Model):
     MOVEMENT_TYPES = [
         ('IN', 'Entrada'),
@@ -244,7 +281,7 @@ class InventoryMovement(models.Model):
     balance_before = models.DecimalField(max_digits=15, decimal_places=2)
     balance_after = models.DecimalField(max_digits=15, decimal_places=2)
     reference = models.CharField(max_length=100, blank=True)
-    user = models.ForeignKey(User, on_delete=models.PROTECT)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     
@@ -301,7 +338,7 @@ class InventoryTransfer(models.Model):
     received_by = models.ForeignKey(
         User,
         on_delete=models.PROTECT,
-        related_name='transfers_received',
+        related_name='transfers_received_by_me',
         null=True,
         blank=True
     )

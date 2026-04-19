@@ -23,6 +23,8 @@ export interface Currency {
   code: string;
   name: string;
   symbol: string;
+  /** Multiplicador de unidades. scale_factor=1000 → CLP/ARS (1 unidad del sistema = 1000 reales). */
+  scale_factor: number;
 }
 
 export interface Transaction {
@@ -64,6 +66,8 @@ export interface ExchangeRate {
   official_rate: number;
   buy_rate: number;
   sell_rate: number;
+  /** 'official' = tasa BCB regulada, 'parallel' = mercado paralelo boliviano */
+  market_type: 'official' | 'parallel';
   source: string;
   valid_from: string;
   valid_until?: string;

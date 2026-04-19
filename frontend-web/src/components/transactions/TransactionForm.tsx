@@ -1,676 +1,737 @@
-import React, { useState, useEffect } from 'react';
+// src/components/transactions/TransactionForm.tsx
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Button,
-  TextField,
-  Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  InputAdornment,
-  Typography, 
-  Box,
-  Stepper,
-  Step,
-  StepLabel,
-  Alert,
-  Autocomplete,
-  ToggleButton,
-  ToggleButtonGroup,
-  Chip,
-  Paper,
-  Divider,
+  Dialog, DialogTitle, DialogContent, DialogActions,
+  Button, TextField, FormControl, InputLabel, Select,
+  MenuItem, InputAdornment, Typography, Box, Alert, Divider,
+  ToggleButton, ToggleButtonGroup, Chip, Paper, CircularProgress,
+  Autocomplete, Stepper, Step, StepLabel, IconButton,
 } from '@mui/material';
 import {
-  AttachMoney,
-  Person,
-  Calculate,
-  Receipt,
-  SwapHoriz,
+  SwapHoriz, ArrowUpward, ArrowDownward, Close,
+  CheckCircle, Person, Warning, LockOutlined, AssignmentInd,
 } from '@mui/icons-material';
-import { useFormik } from 'formik';
-import * as yup from 'yup';
 import { useSnackbar } from 'notistack';
 import { NumericFormat } from 'react-number-format';
-
 import { api } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
-import PinDialog from '../common/PinDialog';
-import { formatCurrency, formatNumber } from '../../utils/formatters';
+import { formatCurrency } from '../../utils/formatters';
+import { isScaled, formatScale, realAmount, formatRateLabel } from '../../utils/finance';
+import { TOKENS } from '../../styles/theme';
+import { alpha } from '@mui/material/styles';
 
-interface TransactionFormProps {
-  open: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
+export interface TransactionPreset {
+  currency: string;
+  txType:   'BUY' | 'SELL';
+  rate:     number;
 }
 
-const validationSchema = yup.object({
-  transactionType: yup.string().required('Tipo de transacción requerido'),
-  customerId: yup.number().nullable(),
-  customerName: yup.string().when('customerId', {
-    is:   (val: any) => !val,
-    then: (schema: any) => schema.required('Nombre del cliente requerido'),
-  }),
-  documentNumber: yup.string().when('customerId', {
-    is:   (val: any) => !val,
-    then: (schema: any) => schema.required('Nombre del cliente requerido'),
-  }),
-  currencyFrom: yup.string().required('Divisa requerida'),
-  amountFrom: yup.number().min(0.01, 'Monto mínimo 0.01').required('Monto requerido'),
-  exchangeRate: yup.number().min(0.0001, 'Tasa inválida').required('Tasa requerida'),
-  paymentMethod: yup.string().required('Método de pago requerido'),
-});
+interface Props {
+  open:      boolean;
+  onClose:   () => void;
+  onSuccess: () => void;
+  /** When set, the form opens pre-filled (e.g. from a DecisionCard recommendation) */
+  preset?:   TransactionPreset;
+}
 
-const steps = ['Cliente', 'Transacción', 'Confirmación'];
+// STEPS is now computed inside the component — see `steps` derived value below.
 
-const TransactionForm: React.FC<TransactionFormProps> = ({ open, onClose, onSuccess }) => {
-  const [activeStep, setActiveStep] = useState(0);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [rates, setRates] = useState<any>({});
-  const [showPinDialog, setShowPinDialog] = useState(false);
-  const [loading, setLoading] = useState(false);
-  
+const CURRENCIES_LIST = [
+  { code: 'USD', name: 'Dólar EE.UU.',    flag: '🇺🇸' },
+  { code: 'EUR', name: 'Euro',             flag: '🇪🇺' },
+  { code: 'CLP', name: 'Peso Chileno',     flag: '🇨🇱' },
+  { code: 'PEN', name: 'Sol Peruano',      flag: '🇵🇪' },
+  { code: 'BRL', name: 'Real Brasileño',   flag: '🇧🇷' },
+  { code: 'ARS', name: 'Peso Argentino',   flag: '🇦🇷' },
+];
+
+const PAYMENT_METHODS = [
+  { value: 'CASH',     label: 'Efectivo',       icon: '💵' },
+  { value: 'QR',       label: 'QR',             icon: '📱' },
+  { value: 'TRANSFER', label: 'Transferencia',  icon: '🏦' },
+  { value: 'CHECK',    label: 'Cheque',         icon: '📝' },
+  { value: 'CARD',     label: 'Tarjeta',        icon: '💳' },
+];
+
+const DOC_TYPES = ['CI', 'NIT', 'PASSPORT', 'RUC'];
+
+const TransactionForm: React.FC<Props> = ({ open, onClose, onSuccess, preset }) => {
+  const [step,          setStep]          = useState(0);
+  const [txType,        setTxType]        = useState<'BUY'|'SELL'>('SELL');
+  const [currency,      setCurrency]      = useState('USD');
+  const [amount,        setAmount]        = useState<number | undefined>(undefined);
+  const [rate,          setRate]          = useState<number | undefined>(undefined);
+  const [payMethod,     setPayMethod]     = useState('CASH');
+  const [payRef,        setPayRef]        = useState('');
+  const [notes,         setNotes]         = useState('');
+  const [docType,       setDocType]       = useState('CI');
+  const [docNumber,     setDocNumber]     = useState('');
+  const [customerName,  setCustomerName]  = useState('');
+  const [phone,         setPhone]         = useState('');
+  const [customers,     setCustomers]     = useState<any[]>([]);
+  const [selectedCust,  setSelectedCust]  = useState<any>(null);
+  const [rates,         setRates]         = useState<Record<string, any>>({});
+  // scale_factor derivado de la divisa seleccionada (1 para USD/EUR, 1000 para CLP/ARS)
+  const scaleFactor = rates[currency]?.scale_factor ?? 1;
+  const [wacMap,        setWacMap]        = useState<Record<string, number>>({});
+  const [searching,     setSearching]     = useState(false);
+  const [loading,       setLoading]       = useState(false);
+  const [isReportable,  setIsReportable]  = useState(false); // default: INTERNA
+  const [errors,        setErrors]        = useState<Record<string, string>>({});
+  const [success,       setSuccess]       = useState<string | null>(null);
+  const docRef = useRef<HTMLInputElement>(null);
+  const amountRef = useRef<HTMLInputElement>(null);
   const { enqueueSnackbar } = useSnackbar();
-  const { verifyPin } = useAuth();
 
-  const formik = useFormik({
-    initialValues: {
-      transactionType: 'SELL',
-      customerId: null,
-      customerName: '',
-      documentType: 'CI',
-      documentNumber: '',
-      phone: '',
-      email: '',
-      currencyFrom: 'USD',
-      amountFrom: '',
-      exchangeRate: '',
-      paymentMethod: 'CASH',
-      paymentReference: '',
-      notes: '',
-    },
-    validationSchema,
-    onSubmit: async (values) => {
-      setShowPinDialog(true);
-    },
-  });
+  const total = (amount ?? 0) * (rate ?? 0);
+  const requiresAuth = total > 35000; // ~$5000 USD equiv in BOB
 
+  // Ganancia estimada: solo aplica en SELL (vendemos divisa al cliente)
+  // Ganancia = (TC venta - WAC) × cantidad
+  const wac = wacMap[currency];
+  const gananciaEstimada: number | null =
+    txType === 'SELL' && wac && wac > 0 && rate && amount
+      ? (rate - wac) * (amount / scaleFactor)
+      : null;
+
+  // Dynamic steps: "Interna" skips the Cliente step entirely.
+  const steps    = isReportable ? ['Cliente', 'Operación', 'Confirmar'] : ['Operación', 'Confirmar'];
+  const operStep = isReportable ? 1 : 0;   // index of the Operación step
+  const confStep = isReportable ? 2 : 1;   // index of the Confirmar step
+
+  // ── Load on open ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (open) {
-      loadCustomers();
-      loadRates();
+    if (!open) return;
+    resetForm();
+    // Apply preset values — overrides the defaults set in resetForm()
+    if (preset) {
+      setTxType(preset.txType);
+      setCurrency(preset.currency);
+      setRate(preset.rate);
     }
-  }, [open]);
-
-  useEffect(() => {
-    // Actualizar tasa cuando cambia la divisa o tipo de transacción
-    if (formik.values.currencyFrom && formik.values.transactionType) {
-      const rate = rates[formik.values.currencyFrom];
-      if (rate) {
-        const exchangeRate = formik.values.transactionType === 'BUY' 
-          ? rate.sell 
-          : rate.buy;
-        formik.setFieldValue('exchangeRate', exchangeRate);
-      }
-    }
-  }, [formik.values.currencyFrom, formik.values.transactionType, rates]);
-
-  const loadCustomers = async () => {
-    try {
-      const response = await api.get('/customers/');
-      setCustomers(response.data.results);
-    } catch (error) {
-      console.error('Error loading customers:', error);
-    }
-  };
-
-  const loadRates = async () => {
-    try {
-      const response = await api.get('/rates/exchange-rates/current/');
-      setRates(response.data);
-    } catch (error) {
-      console.error('Error loading rates:', error);
-    }
-  };
-
-  const searchCustomerByDocument = async (documentNumber: string) => {
-    if (documentNumber.length < 5) return;
-
-    try {
-      const response = await api.get(`/customers/search/?document=${documentNumber}`);
-      if (response.data) {
-        formik.setValues({
-          ...formik.values,
-          customerId: response.data.id,
-          customerName: response.data.full_name,
-          documentType: response.data.document_type,
-          documentNumber: response.data.document_number,
-          phone: response.data.phone || '',
-          email: response.data.email || '',
+    Promise.all([
+      api.get('/customers/').catch(() => ({ data: { results: [] } })),
+      api.get('/rates/exchange-rates/current/').catch(() => ({ data: [] })),
+      api.get('/inventory/').catch(() => ({ data: [] })),
+    ]).then(([custRes, ratesRes, invRes]) => {
+      setCustomers(custRes.data?.results ?? custRes.data ?? []);
+      const rateData = ratesRes.data?.results ?? ratesRes.data ?? [];
+      const rateMap: Record<string, any> = {};
+      if (Array.isArray(rateData)) {
+        rateData.forEach((r: any) => {
+          const code = r.currency_from?.code ?? r.currency_from;
+          if (code) rateMap[code] = {
+            buy:          parseFloat(r.buy_rate),
+            sell:         parseFloat(r.sell_rate),
+            scale_factor: r.currency_from?.scale_factor ?? r.scale_factor ?? 1,
+          };
         });
       }
-    } catch (error) {
-      // Cliente no encontrado, permitir registro nuevo
+      setRates(rateMap);
+      // WAC por divisa para estimar ganancia en ventas
+      const invData = invRes.data?.results ?? invRes.data ?? [];
+      const wac: Record<string, number> = {};
+      if (Array.isArray(invData)) {
+        invData.forEach((inv: any) => {
+          const code = inv.currency?.code ?? inv.currency;
+          const w = parseFloat(inv.average_cost ?? inv.wac ?? 0);
+          if (code && w > 0) wac[code] = w;
+        });
+      }
+      setWacMap(wac);
+    });
+  }, [open, preset]);
+
+  // ── Auto-set rate on currency/type change ────────────────────────────────────
+  // Skip if a preset rate was provided — the user can still override it manually.
+  useEffect(() => {
+    if (preset?.rate && preset.currency === currency) return;
+    if (rates[currency]) {
+      // SELL = vendemos divisa al cliente → tasa de venta; BUY = compramos al cliente → tasa de compra
+      const r = txType === 'SELL' ? rates[currency].sell : rates[currency].buy;
+      setRate(r || undefined);
     }
+  }, [currency, txType, rates, preset]);
+
+  // ── Customer search by document ─────────────────────────────────────────────
+  const searchCustomer = useCallback(async (doc: string) => {
+    if (doc.length < 5) return;
+    setSearching(true);
+    try {
+      const res = await api.get(`/customers/search/?document=${doc}`);
+      if (res.data) {
+        setSelectedCust(res.data);
+        setCustomerName(res.data.full_name);
+        setDocType(res.data.document_type);
+        setPhone(res.data.phone || '');
+        setErrors(p => ({ ...p, customerName: '', docNumber: '' }));
+      }
+    } catch { /* No encontrado — nuevo cliente */ }
+    finally { setSearching(false); }
+  }, []);
+
+  // ── Validation per step ──────────────────────────────────────────────────────
+  const validateStep = (s: number): boolean => {
+    const errs: Record<string, string> = {};
+    // Cliente step only exists (and is only required) when isReportable
+    if (isReportable && s === 0) {
+      if (!docNumber.trim()) errs.docNumber = 'Ingresa el número de documento';
+      if (!customerName.trim()) errs.customerName = 'Ingresa el nombre del cliente';
+    }
+    if (s === operStep) {
+      if (!amount || amount <= 0) errs.amount = 'Ingresa un monto válido';
+      else if (!Number.isInteger(amount)) errs.amount = 'Solo se permiten números enteros';
+      else if (amount > 500000) errs.amount = 'Monto demasiado alto — verifica';
+      if (!rate || rate <= 0) errs.rate = 'La tasa de cambio es requerida';
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
   };
 
-  const handlePinSubmit = async (pin: string) => {
-    const isValid = await verifyPin(pin);
-    if (!isValid) {
-      enqueueSnackbar('PIN inválido', { variant: 'error' });
-      return;
-    }
-
-    setShowPinDialog(false);
-    submitTransaction();
+  const handleNext = () => {
+    if (validateStep(step)) setStep(s => s + 1);
   };
 
-  const submitTransaction = async () => {
+  // ── Submit ────────────────────────────────────────────────────────────────────
+  const handleSubmit = async () => {
+    if (!validateStep(operStep)) { setStep(operStep); return; }
     setLoading(true);
     try {
-      const data = {
-        transaction_type: formik.values.transactionType,
-        customer: formik.values.customerId ? 
-          { id: formik.values.customerId } : 
-          {
-            document_type: formik.values.documentType,
-            document_number: formik.values.documentNumber,
-            full_name: formik.values.customerName,
-            phone: formik.values.phone,
-            email: formik.values.email,
-          },
-        currency_from: formik.values.currencyFrom,
-        currency_to: 'BOB',
-        amount_from: formik.values.amountFrom,
-        exchange_rate: formik.values.exchangeRate,
-        amount_to: calculateTotal(),
-        payment_method: formik.values.paymentMethod,
-        payment_reference: formik.values.paymentReference,
-        notes: formik.values.notes,
+      const payload = {
+        transaction_type:     txType,
+        // transaction_category drives visible_asfi server-side — never send is_reportable_to_asfi
+        transaction_category: isReportable ? 'REPORTABLE' : 'INTERNA',
+        // REPORTABLE: attach customer data; INTERNA: omit customer entirely
+        ...(isReportable && {
+          customer: selectedCust
+            ? { id: selectedCust.id }
+            : { document_type: docType, document_number: docNumber, full_name: customerName, phone: phone || '' },
+        }),
+        currency_from:     currency,
+        currency_to:       'BOB',
+        amount_from:       Math.round(amount!),           // integer required by backend
+        amount_to:         Math.round(total),             // integer required by backend
+        exchange_rate:     rate,
+        payment_method:    payMethod,
+        payment_reference: payRef || '',
+        notes:             notes || '',
       };
-
-      await api.post('/transactions/', data);
-      
+      const res = await api.post('/transactions/', payload);
+      const txNum = res.data?.transaction_number ?? res.data?.id;
+      setSuccess(txNum ? `Transacción ${txNum} registrada` : 'Transacción registrada');
       enqueueSnackbar('Transacción registrada exitosamente', { variant: 'success' });
-      formik.resetForm();
-      onSuccess();
-      onClose();
-    } catch (error: any) {
-      enqueueSnackbar(
-        error.response?.data?.error || 'Error al registrar transacción',
-        { variant: 'error' }
-      );
+      setTimeout(() => {
+        resetForm();
+        onSuccess();
+        onClose();
+      }, 1800);
+    } catch (e: any) {
+      const errData = e.response?.data;
+      let msg = 'Error al registrar la transacción';
+      if (typeof errData === 'object' && errData !== null) {
+        // Backend returns { code, message, field_errors } or { field: [msgs] }
+        if (errData.message) {
+          msg = errData.message;
+        } else if (errData.field_errors) {
+          msg = Object.entries(errData.field_errors as Record<string, any>)
+            .map(([f, m]) => Array.isArray(m) ? `${f}: ${m[0]}` : `${f}: ${m}`)
+            .join(' · ');
+        } else {
+          msg = Object.entries(errData)
+            .filter(([k]) => k !== 'code')
+            .map(([f, m]) => Array.isArray(m) ? `${f}: ${m[0]}` : `${f}: ${m}`)
+            .join(' · ');
+        }
+      }
+      enqueueSnackbar(msg, { variant: 'error', persist: false });
+      setStep(1); // Volver al paso de operación
     } finally {
       setLoading(false);
     }
   };
 
-  const calculateTotal = () => {
-    const amount = parseFloat(formik.values.amountFrom as string) || 0;
-    const rate = parseFloat(formik.values.exchangeRate as string) || 0;
-    return amount * rate;
+  const resetForm = () => {
+    setStep(0); setTxType('SELL'); setCurrency('USD');
+    setAmount(undefined); setRate(undefined); setPayMethod('CASH');
+    setPayRef(''); setNotes(''); setDocType('CI'); setDocNumber('');
+    setCustomerName(''); setPhone(''); setSelectedCust(null);
+    setIsReportable(false); // default: INTERNA
+    setErrors({}); setSuccess(null); setSearching(false);
   };
 
-const handleNext = async () => {
-  const fieldsToValidate =
-    activeStep === 0 ? ['customerName', 'documentNumber'] :
-    activeStep === 1 ? ['currencyFrom', 'amountFrom', 'exchangeRate', 'paymentMethod'] :
-    [];
+  const handleClose = () => { resetForm(); onClose(); };
 
-  // Tocar todos los campos del paso actual para mostrar errores
-  fieldsToValidate.forEach((field) => {
-    formik.setFieldTouched(field, true, false);
-  });
+  // ── Step 0: Cliente ──────────────────────────────────────────────────────────
+  const stepCliente = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+      <Autocomplete
+        options={customers}
+        getOptionLabel={o => `${o.full_name} — ${o.document_number}`}
+        value={selectedCust}
+        onChange={(_, v) => {
+          setSelectedCust(v);
+          if (v) { setCustomerName(v.full_name); setDocType(v.document_type); setDocNumber(v.document_number); setPhone(v.phone || ''); }
+          else { setCustomerName(''); setDocNumber(''); setPhone(''); }
+        }}
+        renderInput={params => (
+          <TextField {...params} label="Buscar cliente registrado (opcional)"
+            InputProps={{ ...params.InputProps, startAdornment: <><Person sx={{ color: TOKENS.muted, mr: 1 }} fontSize="small" />{params.InputProps.startAdornment}</> }} />
+        )}
+        renderOption={(props, o) => (
+          <Box component="li" {...props} sx={{ gap: 1 }}>
+            <Box>
+              <Typography variant="body2" fontWeight={600}>{o.full_name}</Typography>
+              <Typography variant="caption" color="text.secondary">{o.document_type} {o.document_number}{o.is_frequent ? ' ⭐' : ''}{o.is_pep ? ' 🔴 PEP' : ''}</Typography>
+            </Box>
+          </Box>
+        )}
+      />
 
-  // Validar cada campo usando formik directamente
-  const errorResults = await Promise.all(
-    fieldsToValidate.map((field) => formik.validateField(field))
+      {!selectedCust && (
+        <>
+          <Divider>O registrar nuevo cliente</Divider>
+          <Box sx={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 2 }}>
+            <FormControl>
+              <InputLabel>Tipo Doc.</InputLabel>
+              <Select value={docType} label="Tipo Doc." onChange={e => setDocType(e.target.value)}>
+                {DOC_TYPES.map(t => <MenuItem key={t} value={t}>{t}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <TextField
+              label="Número de documento *"
+              value={docNumber}
+              inputRef={docRef}
+              error={!!errors.docNumber}
+              helperText={errors.docNumber}
+              onChange={e => { setDocNumber(e.target.value); searchCustomer(e.target.value); }}
+              InputProps={{ endAdornment: searching && <CircularProgress size={16} sx={{ mr: 1 }} /> }}
+            />
+          </Box>
+          <TextField
+            label="Nombre completo *"
+            value={customerName}
+            error={!!errors.customerName}
+            helperText={errors.customerName}
+            onChange={e => setCustomerName(e.target.value)}
+          />
+          <TextField
+            label="Teléfono (Opcional)"
+            value={phone}
+            onChange={e => setPhone(e.target.value)}
+            inputProps={{ inputMode: 'tel' }}
+          />
+        </>
+      )}
+
+      {selectedCust && (
+        <Paper sx={{ p: 2, bgcolor: alpha(TOKENS.green, 0.05), border: `1px solid ${alpha(TOKENS.green, 0.2)}` }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <CheckCircle sx={{ color: TOKENS.green, fontSize: 20 }} />
+            <Box flex={1}>
+              <Typography variant="body2" fontWeight={700}>{selectedCust.full_name}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                {selectedCust.document_type} {selectedCust.document_number}
+                {selectedCust.is_frequent && <Chip label="Frecuente" size="small" color="primary" sx={{ ml: 0.75, height: 16, fontSize: '0.6rem' }} />}
+                {selectedCust.is_pep && <Chip label="PEP" size="small" color="error" sx={{ ml: 0.75, height: 16, fontSize: '0.6rem' }} />}
+              </Typography>
+            </Box>
+            <IconButton size="small" onClick={() => { setSelectedCust(null); setCustomerName(''); setDocNumber(''); setPhone(''); }}>
+              <Close fontSize="small" />
+            </IconButton>
+          </Box>
+        </Paper>
+      )}
+    </Box>
   );
 
-  // Revisar si algún campo tiene error
-  const currentErrors = formik.errors as Record<string, string>;
-  const hasErrors = fieldsToValidate.some((field) => !!currentErrors[field]);
+  // ── Step 1: Operación ────────────────────────────────────────────────────────
+  const stepOperacion = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+      {/* Tipo */}
+      <ToggleButtonGroup value={txType} exclusive fullWidth
+        onChange={(_, v) => { if (v) setTxType(v); }}
+        sx={{ height: 48 }}>
+        <ToggleButton value="SELL" sx={{
+          flex: 1, fontWeight: 700, fontSize: '0.875rem', gap: 0.75, border: '1.5px solid',
+          '&.Mui-selected': { bgcolor: alpha(TOKENS.blue, 0.1), color: TOKENS.blue, borderColor: TOKENS.blue },
+        }}>
+          <ArrowUpward fontSize="small" /> Cliente compra divisas
+        </ToggleButton>
+        <ToggleButton value="BUY" sx={{
+          flex: 1, fontWeight: 700, fontSize: '0.875rem', gap: 0.75, border: '1.5px solid',
+          '&.Mui-selected': { bgcolor: alpha(TOKENS.green, 0.1), color: TOKENS.green, borderColor: TOKENS.green },
+        }}>
+          <ArrowDownward fontSize="small" /> Cliente vende divisas
+        </ToggleButton>
+      </ToggleButtonGroup>
 
-  if (!hasErrors) {
-    setActiveStep((prev) => prev + 1);
-  }
-};
+      {/* Divisa */}
+      <Box>
+        <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ mb: 1, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Divisa
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          {CURRENCIES_LIST.map(c => (
+            <Chip
+              key={c.code}
+              label={`${c.flag} ${c.code}`}
+              onClick={() => setCurrency(c.code)}
+              variant={currency === c.code ? 'filled' : 'outlined'}
+              color={currency === c.code ? 'primary' : 'default'}
+              sx={{ fontWeight: 700, cursor: 'pointer', fontSize: '0.8125rem', height: 34 }}
+            />
+          ))}
+        </Box>
+      </Box>
 
-  const handleBack = () => {
-    setActiveStep((prev) => prev - 1);
-  };
-
-  const getStepContent = (step: number) => {
-    switch (step) {
-      case 0:
-        return (
-          <Grid container spacing={3}>
-            <Grid xs={12}>
-              <Autocomplete
-                options={customers}
-                getOptionLabel={(option) => 
-                  `${option.full_name} - ${option.document_number}`
-                }
-                value={customers.find((c) => c.id === formik.values.customerId) || null}
-                onChange={(_, value) => {
-                  if (value) {
-                    formik.setValues({
-                      ...formik.values,
-                      customerId: value.id,
-                      customerName: value.full_name,
-                      documentType: value.document_type,
-                      documentNumber: value.document_number,
-                      phone: value.phone || '',
-                      email: value.email || '',
-                    });
-                  }
-                }}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Buscar cliente existente"
-                    variant="outlined"
-                    fullWidth
-                  />
-                )}
-              />
-            </Grid>
-
-            <Grid xs={12}>
-              <Divider>O registrar nuevo cliente</Divider>
-            </Grid>
-
-            <Grid xs={4}>
-              <FormControl fullWidth>
-                <InputLabel>Tipo Doc.</InputLabel>
-                <Select
-                  value={formik.values.documentType}
-                  onChange={formik.handleChange}
-                  name="documentType"
-                  disabled={!!formik.values.customerId}
-                >
-                  <MenuItem value="CI">CI</MenuItem>
-                  <MenuItem value="NIT">NIT</MenuItem>
-                  <MenuItem value="PASSPORT">Pasaporte</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            <Grid xs={8}>
-              <TextField
-                fullWidth
-                label="Número de Documento"
-                name="documentNumber"
-                value={formik.values.documentNumber}
-                onChange={(e) => {
-                  formik.handleChange(e);
-                  searchCustomerByDocument(e.target.value);
-                }}
-                error={formik.touched.documentNumber && Boolean(formik.errors.documentNumber)}
-                helperText={formik.touched.documentNumber && formik.errors.documentNumber}
-                disabled={!!formik.values.customerId}
-              />
-            </Grid>
-
-            <Grid xs={12}>
-              <TextField
-                fullWidth
-                label="Nombre Completo"
-                name="customerName"
-                value={formik.values.customerName}
-                onChange={formik.handleChange}
-                error={formik.touched.customerName && Boolean(formik.errors.customerName)}
-                helperText={formik.touched.customerName && formik.errors.customerName}
-                disabled={!!formik.values.customerId}
-              />
-            </Grid>
-
-            <Grid xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Teléfono (Opcional)"
-                name="phone"
-                value={formik.values.phone}
-                onChange={formik.handleChange}
-                disabled={!!formik.values.customerId}
-              />
-            </Grid>
-
-            <Grid xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Email (Opcional)"
-                name="email"
-                type="email"
-                value={formik.values.email}
-                onChange={formik.handleChange}
-                disabled={!!formik.values.customerId}
-              />
-            </Grid>
-          </Grid>
-        );
-
-      case 1:
-        return (
-          <Grid container spacing={3}>
-            <Grid xs={12}>
-              <ToggleButtonGroup
-                value={formik.values.transactionType}
-                exclusive
-                onChange={(_, value) => {
-                  if (value) formik.setFieldValue('transactionType', value);
-                }}
-                fullWidth
-              >
-                <ToggleButton value="SELL" color="primary">
-                  <SwapHoriz sx={{ mr: 1 }} />
-                  Cliente Compra Divisas
-                </ToggleButton>
-                <ToggleButton value="BUY" color="secondary">
-                  <SwapHoriz sx={{ mr: 1 }} />
-                  Cliente Vende Divisas
-                </ToggleButton>
-              </ToggleButtonGroup>
-            </Grid>
-
-            <Grid xs={12} sm={4}>
-              <FormControl fullWidth>
-                <InputLabel>Divisa</InputLabel>
-                <Select
-                  value={formik.values.currencyFrom}
-                  onChange={formik.handleChange}
-                  name="currencyFrom"
-                  error={formik.touched.currencyFrom && Boolean(formik.errors.currencyFrom)}
-                >
-                  <MenuItem value="USD">USD - Dólar</MenuItem>
-                  <MenuItem value="EUR">EUR - Euro</MenuItem>
-                  <MenuItem value="BRL">BRL - Real</MenuItem>
-                  <MenuItem value="ARS">ARS - Peso Argentino</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            <Grid xs={12} sm={4}>
-              <NumericFormat
-                customInput={TextField}
-                fullWidth
-                label="Monto"
-                name="amountFrom"
-                value={formik.values.amountFrom}
-                onValueChange={(values) => {
-                  formik.setFieldValue('amountFrom', values.floatValue);
-                }}
-                thousandSeparator=","
-                decimalSeparator="."
-                decimalScale={2}
-                fixedDecimalScale
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      {formik.values.currencyFrom}
-                    </InputAdornment>
-                  ),
-                }}
-                error={formik.touched.amountFrom && Boolean(formik.errors.amountFrom)}
-                helperText={formik.touched.amountFrom && formik.errors.amountFrom}
-              />
-            </Grid>
-
-            <Grid xs={12} sm={4}>
-              <NumericFormat
-                customInput={TextField}
-                fullWidth
-                label="Tipo de Cambio"
-                name="exchangeRate"
-                value={formik.values.exchangeRate}
-                onValueChange={(values) => {
-                  formik.setFieldValue('exchangeRate', values.floatValue);
-                }}
-                thousandSeparator=","
-                decimalSeparator="."
-                decimalScale={4}
-                fixedDecimalScale
-                error={formik.touched.exchangeRate && Boolean(formik.errors.exchangeRate)}
-                helperText={formik.touched.exchangeRate && formik.errors.exchangeRate}
-              />
-            </Grid>
-
-            <Grid xs={12}>
-              <Paper elevation={0} sx={{ p: 2, bgcolor: 'primary.light', color: 'primary.contrastText' }}>
-                <Typography variant="h5" align="center">
-                  Total en Bolivianos: {formatCurrency(calculateTotal())}
+      {/* Monto + Tasa */}
+      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+        <NumericFormat
+          customInput={TextField}
+          label={isScaled(scaleFactor)
+            ? `Lotes de ${formatScale(scaleFactor)} ${currency} *`
+            : `Monto en ${currency} *`}
+          value={amount}
+          onValueChange={v => {
+            // Enforce integer-only: discard any fractional part
+            const raw = v.floatValue;
+            setAmount(raw !== undefined ? Math.trunc(raw) : undefined);
+          }}
+          thousandSeparator=","
+          decimalScale={0}
+          allowNegative={false}
+          inputRef={amountRef}
+          error={!!errors.amount}
+          helperText={errors.amount || (isScaled(scaleFactor) && amount
+            ? `= ${new Intl.NumberFormat('es-BO').format(realAmount(amount, scaleFactor))} ${currency} reales`
+            : undefined)}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <Typography variant="caption" fontWeight={700} color="text.secondary">
+                  {isScaled(scaleFactor) ? `×${formatScale(scaleFactor)}` : currency}
                 </Typography>
-              </Paper>
-            </Grid>
+              </InputAdornment>
+            ),
+          }}
+          sx={{ '& input': { fontVariantNumeric: 'tabular-nums', fontWeight: 600, fontSize: '1rem' } }}
+        />
+        <NumericFormat
+          customInput={TextField}
+          label={isScaled(scaleFactor) ? `TC por ${formatScale(scaleFactor)} ${currency} *` : 'Tasa de Cambio *'}
+          value={rate}
+          onValueChange={v => setRate(v.floatValue)}
+          decimalScale={4}
+          fixedDecimalScale
+          allowNegative={false}
+          error={!!errors.rate}
+          helperText={errors.rate}
+          InputProps={{
+            endAdornment: rates[currency] && (
+              <InputAdornment position="end">
+                <Chip
+                  label={`Mercado: ${(txType === 'SELL' ? rates[currency]?.sell : rates[currency]?.buy)?.toFixed(4)}`}
+                  size="small"
+                  onClick={() => setRate(txType === 'SELL' ? rates[currency]?.sell : rates[currency]?.buy)}
+                  sx={{ cursor: 'pointer', fontSize: '0.625rem', height: 20 }}
+                />
+              </InputAdornment>
+            ),
+          }}
+          sx={{ '& input': { fontVariantNumeric: 'tabular-nums', fontWeight: 600, fontSize: '1rem' } }}
+        />
+      </Box>
 
-            <Grid xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Método de Pago</InputLabel>
-                <Select
-                  value={formik.values.paymentMethod}
-                  onChange={formik.handleChange}
-                  name="paymentMethod"
-                  error={formik.touched.paymentMethod && Boolean(formik.errors.paymentMethod)}
-                >
-                  <MenuItem value="CASH">Efectivo</MenuItem>
-                  <MenuItem value="TRANSFER">Transferencia</MenuItem>
-                  <MenuItem value="CHECK">Cheque</MenuItem>
-                  <MenuItem value="CARD">Tarjeta</MenuItem>
-                  <MenuItem value="QR">QR</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
+      {/* Total preview */}
+      {total > 0 && (
+        <Paper sx={{
+          p: 2.5, textAlign: 'center',
+          bgcolor: txType === 'SELL' ? alpha(TOKENS.blue, 0.05) : alpha(TOKENS.green, 0.05),
+          border: `1.5px solid ${txType === 'SELL' ? alpha(TOKENS.blue, 0.2) : alpha(TOKENS.green, 0.2)}`,
+        }}>
+          <Typography variant="overline" color="text.secondary">TOTAL EN BOLIVIANOS</Typography>
+          <Typography variant="h4" fontWeight={800}
+            sx={{ color: txType === 'SELL' ? TOKENS.blue : TOKENS.green, fontVariantNumeric: 'tabular-nums' }}>
+            {formatCurrency(total)}
+          </Typography>
+          {/* Desglose adaptado a escala */}
+          {isScaled(scaleFactor) ? (
+            <Typography variant="caption" color="text.secondary">
+              {amount ?? 0} lotes × BOB {rate?.toFixed(4) ?? '0'}/{formatScale(scaleFactor)} {currency}
+              {' = '}{Math.round(total)} BOB
+              {' · '}{new Intl.NumberFormat('es-BO').format(realAmount(amount ?? 0, scaleFactor))} {currency} reales
+            </Typography>
+          ) : (
+            <Typography variant="caption" color="text.secondary">
+              {amount ?? 0} {currency} × BOB {rate?.toFixed(4) ?? '0'} = {Math.round(total)} BOB
+            </Typography>
+          )}
+          {/* Ganancia estimada en tiempo real */}
+          {gananciaEstimada !== null && (
+            <Box sx={{
+              mt: 1.5, pt: 1.5,
+              borderTop: `1px dashed ${gananciaEstimada >= 0 ? alpha(TOKENS.green, 0.4) : alpha(TOKENS.red, 0.4)}`,
+            }}>
+              <Typography variant="caption" color="text.secondary" fontWeight={600} textTransform="uppercase" letterSpacing={0.5}>
+                Ganancia estimada
+              </Typography>
+              <Typography variant="h6" fontWeight={800}
+                sx={{ color: gananciaEstimada >= 0 ? TOKENS.green : TOKENS.red, fontVariantNumeric: 'tabular-nums' }}>
+                {gananciaEstimada >= 0 ? '+' : ''}{formatCurrency(gananciaEstimada)}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                TC venta {rate?.toFixed(4)} − WAC {wac?.toFixed(4)} = margen {(rate! - wac!).toFixed(4)}/u
+              </Typography>
+            </Box>
+          )}
+          {requiresAuth && (
+            <Box sx={{ mt: 1.5 }}>
+              <Chip icon={<Warning />} label="Requiere autorización de supervisor (>Bs 35,000)" color="warning" size="small" />
+            </Box>
+          )}
+        </Paper>
+      )}
 
-            <Grid xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Referencia de Pago (Opcional)"
-                name="paymentReference"
-                value={formik.values.paymentReference}
-                onChange={formik.handleChange}
-              />
-            </Grid>
+      {/* Método de pago */}
+      <Box>
+        <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ mb: 1, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Método de Pago
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          {PAYMENT_METHODS.map(m => (
+            <Paper
+              key={m.value}
+              onClick={() => setPayMethod(m.value)}
+              sx={{
+                px: 1.75, py: 1, cursor: 'pointer', borderRadius: '8px', transition: 'all 0.15s',
+                border: `1.5px solid ${payMethod === m.value ? TOKENS.blue : TOKENS.border}`,
+                bgcolor: payMethod === m.value ? alpha(TOKENS.blue, 0.06) : TOKENS.surface,
+                display: 'flex', alignItems: 'center', gap: 0.75,
+                '&:hover': { borderColor: TOKENS.blue },
+              }}
+            >
+              <Typography sx={{ fontSize: 16, lineHeight: 1 }}>{m.icon}</Typography>
+              <Typography variant="caption" fontWeight={700}
+                sx={{ color: payMethod === m.value ? TOKENS.blue : TOKENS.textSub }}>
+                {m.label}
+              </Typography>
+            </Paper>
+          ))}
+        </Box>
+      </Box>
 
-            <Grid xs={12}>
-              <TextField
-                fullWidth
-                multiline
-                rows={2}
-                label="Notas (Opcional)"
-                name="notes"
-                value={formik.values.notes}
-                onChange={formik.handleChange}
-              />
-            </Grid>
-          </Grid>
-        );
+      {(payMethod === 'TRANSFER' || payMethod === 'CHECK') && (
+        <TextField label="Número de referencia" value={payRef}
+          onChange={e => setPayRef(e.target.value)}
+          placeholder="Nro. transferencia o cheque" />
+      )}
 
-      case 2:
-        return (
-          <Box>
-            <Alert severity="info" sx={{ mb: 3 }}>
-              Por favor, revise los detalles de la transacción antes de confirmar.
-            </Alert>
+      <TextField label="Notas (Opcional)" value={notes}
+        onChange={e => setNotes(e.target.value)}
+        multiline rows={2} placeholder="Observaciones de la operación…" />
 
-            <Grid container spacing={2}>
-              <Grid xs={12} sm={6}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Tipo de Transacción
-                </Typography>
-                <Typography variant="h6">
-                  {formik.values.transactionType === 'SELL' ? 
-                    'Cliente Compra Divisas' : 'Cliente Vende Divisas'}
-                </Typography>
-              </Grid>
+    </Box>
+  );
 
-              <Grid xs={12} sm={6}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Cliente
-                </Typography>
-                <Typography variant="h6">
-                  {formik.values.customerName}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {formik.values.documentType} {formik.values.documentNumber}
-                </Typography>
-              </Grid>
+  // ── Step 2: Confirmación ─────────────────────────────────────────────────────
+  const curInfo = CURRENCIES_LIST.find(c => c.code === currency);
+  const stepConfirm = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {success ? (
+        <Box sx={{ textAlign: 'center', py: 3 }}>
+          <CheckCircle sx={{ fontSize: 64, color: TOKENS.green, mb: 2 }} />
+          <Typography variant="h5" fontWeight={700} color={TOKENS.green}>{success}</Typography>
+        </Box>
+      ) : (
+        <>
+          <Alert severity="warning" icon={<Warning />}>
+            Revisa cada dato antes de confirmar — las transacciones afectan el inventario y el capital en tiempo real.
+          </Alert>
 
-              <Grid xs={12}>
-                <Divider sx={{ my: 2 }} />
-              </Grid>
+          {/* Resumen cliente — solo para transacciones reportables */}
+          {isReportable ? (
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="overline" color="text.secondary" mb={1} display="block">Cliente</Typography>
+              <Typography variant="body1" fontWeight={700}>{customerName}</Typography>
+              <Typography variant="body2" color="text.secondary">{docType} {docNumber}</Typography>
+            </Paper>
+          ) : (
+            <Paper sx={{
+              p: 1.5, display: 'flex', alignItems: 'center', gap: 1.5,
+              bgcolor: alpha(TOKENS.blue, 0.05),
+              border: `1px solid ${alpha(TOKENS.blue, 0.2)}`,
+            }}>
+              <LockOutlined sx={{ color: TOKENS.blue, fontSize: 20 }} />
+              <Box>
+                <Typography variant="body2" fontWeight={700} sx={{ color: TOKENS.blue }}>
+                  Transacción interna (no reportada a ASFI)
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Sin datos de cliente — excluida del RTE y Libro Diario regulatorio
+                </Typography>
+              </Box>
+            </Paper>
+          )}
 
-              <Grid xs={12} sm={4}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Divisa
-                </Typography>
-                <Typography variant="h6">
-                  {formik.values.currencyFrom}
-                </Typography>
-              </Grid>
-
-              <Grid xs={12} sm={4}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Monto
-                </Typography>
-                <Typography variant="h6">
-                  {formik.values.currencyFrom} {formatNumber(formik.values.amountFrom)}
-                </Typography>
-              </Grid>
-
-              <Grid xs={12} sm={4}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Tipo de Cambio
-                </Typography>
-                <Typography variant="h6">
-                  {formatNumber(formik.values.exchangeRate, 4)}
-                </Typography>
-              </Grid>
-
-              <Grid xs={12}>
-                <Paper elevation={0} sx={{ p: 2, bgcolor: 'success.light', mt: 2 }}>
-                  <Typography variant="h5" align="center" color="success.contrastText">
-                    Total: {formatCurrency(calculateTotal())}
+          {/* Resumen operación */}
+          <Paper sx={{ p: 2, bgcolor: alpha(txType === 'SELL' ? TOKENS.blue : TOKENS.green, 0.04) }}>
+            <Typography variant="overline" color="text.secondary" mb={1.5} display="block">Operación</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {[
+                { label: 'Tipo', value: txType === 'SELL' ? 'Venta de divisas (cliente compra)' : 'Compra de divisas (cliente vende)' },
+                { label: 'Divisa', value: `${curInfo?.flag} ${currency} — ${curInfo?.name}` },
+                {
+                  label: 'Monto',
+                  value: isScaled(scaleFactor)
+                    ? `${amount ?? 0} lotes · ${new Intl.NumberFormat('es-BO').format(realAmount(amount ?? 0, scaleFactor))} ${currency} reales`
+                    : `${currency} ${amount ?? 0}`,
+                  mono: true,
+                },
+                {
+                  label: 'Tasa',
+                  value: formatRateLabel(rate ?? 0, currency, scaleFactor),
+                  mono: true,
+                },
+                { label: 'Pago', value: PAYMENT_METHODS.find(m => m.value === payMethod)?.label ?? payMethod },
+                { label: 'Tipo', value: isReportable ? '🟢 Reportable (ASFI)' : '🔵 Interna' },
+              ].map(row => (
+                <Box key={row.label} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="body2" color="text.secondary">{row.label}</Typography>
+                  <Typography variant="body2" fontWeight={600} sx={row.mono ? { fontVariantNumeric: 'tabular-nums' } : {}}>
+                    {row.value}
                   </Typography>
-                </Paper>
-              </Grid>
+                </Box>
+              ))}
+            </Box>
 
-              <Grid xs={12} sm={6}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Método de Pago
-                </Typography>
-                <Typography variant="h6">
-                  {formik.values.paymentMethod}
-                </Typography>
-              </Grid>
+            <Divider sx={{ my: 1.5 }} />
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="subtitle1" fontWeight={700}>Total a cobrar / pagar</Typography>
+              <Typography variant="h5" fontWeight={800}
+                sx={{ color: txType === 'SELL' ? TOKENS.blue : TOKENS.green, fontVariantNumeric: 'tabular-nums' }}>
+                {formatCurrency(total)}
+              </Typography>
+            </Box>
+          </Paper>
 
-              {formik.values.paymentReference && (
-                <Grid xs={12} sm={6}>
-                  <Typography variant="subtitle2" color="text.secondary">
-                    Referencia
-                  </Typography>
-                  <Typography variant="h6">
-                    {formik.values.paymentReference}
-                  </Typography>
-                </Grid>
-              )}
-
-              {formik.values.notes && (
-                <Grid xs={12}>
-                  <Typography variant="subtitle2" color="text.secondary">
-                    Notas
-                  </Typography>
-                  <Typography variant="body1">
-                    {formik.values.notes}
-                  </Typography>
-                </Grid>
-              )}
-            </Grid>
-          </Box>
-        );
-
-      default:
-        return null;
-    }
-  };
+          {requiresAuth && (
+            <Alert severity="warning">Esta operación requiere autorización de un supervisor por superar Bs. 35,000.</Alert>
+          )}
+        </>
+      )}
+    </Box>
+  );
 
   return (
-    <>
-      <Dialog
-        open={open}
-        onClose={onClose}
-        maxWidth="md"
-        fullWidth
-        PaperProps={{
-          sx: { minHeight: '60vh' }
-       }}
-     >
-       <DialogTitle>
-         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-           <Receipt />
-           Nueva Transacción
-         </Box>
-       </DialogTitle>
-       
-       <DialogContent>
-         <Box sx={{ mt: 2 }}>
-           <Stepper activeStep={activeStep} alternativeLabel>
-             {steps.map((label) => (
-               <Step key={label}>
-                 <StepLabel>{label}</StepLabel>
-               </Step>
-             ))}
-           </Stepper>
+    <Dialog open={open} onClose={success ? handleClose : undefined} maxWidth="sm" fullWidth
+      PaperProps={{ sx: { borderRadius: '16px', maxHeight: '90vh' } }}>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pb: 1 }}>
+        <Box sx={{ width: 36, height: 36, borderRadius: '9px', bgcolor: alpha(TOKENS.blue, 0.1), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <SwapHoriz sx={{ color: TOKENS.blue, fontSize: 20 }} />
+        </Box>
+        Nueva Transacción
+        <Box flex={1} />
+        {!success && (
+          <IconButton size="small" onClick={handleClose} sx={{ color: TOKENS.muted }}>
+            <Close fontSize="small" />
+          </IconButton>
+        )}
+      </DialogTitle>
 
-           <Box sx={{ mt: 4 }}>
-             {getStepContent(activeStep)}
-           </Box>
-         </Box>
-       </DialogContent>
+      {/* ── Transaction type selector ── */}
+      <Box sx={{ px: 3, pt: 0.5, pb: 1.5 }}>
+        <ToggleButtonGroup
+          value={isReportable ? 'REPORTABLE' : 'INTERNA'}
+          exclusive
+          fullWidth
+          size="small"
+          onChange={(_, val) => {
+            if (!val) return; // prevent deselection
+            const next = val === 'REPORTABLE';
+            setIsReportable(next);
+            setStep(0); // reset — step indices change between modes
+          }}
+        >
+          <ToggleButton
+            value="INTERNA"
+            sx={{
+              gap: 0.75, fontWeight: 700, fontSize: '0.8rem',
+              '&.Mui-selected': {
+                bgcolor: alpha(TOKENS.blue, 0.1),
+                color: TOKENS.blue,
+                borderColor: TOKENS.blue,
+              },
+            }}
+          >
+            <LockOutlined fontSize="small" />
+            Interna (no ASFI)
+          </ToggleButton>
+          <ToggleButton
+            value="REPORTABLE"
+            sx={{
+              gap: 0.75, fontWeight: 700, fontSize: '0.8rem',
+              '&.Mui-selected': {
+                bgcolor: alpha(TOKENS.green, 0.1),
+                color: TOKENS.green,
+                borderColor: TOKENS.green,
+              },
+            }}
+          >
+            <AssignmentInd fontSize="small" />
+            Reportable (ASFI)
+          </ToggleButton>
+        </ToggleButtonGroup>
+      </Box>
 
-       <DialogActions sx={{ px: 3, pb: 2 }}>
-         <Button onClick={onClose}>Cancelar</Button>
-         <Box sx={{ flex: '1 1 auto' }} />
-         
-         {activeStep > 0 && (
-           <Button onClick={handleBack}>
-             Atrás
-           </Button>
-         )}
-         
-         {activeStep < steps.length - 1 ? (
-           <Button
-             variant="contained"
-             onClick={handleNext}
-           >
-             Siguiente
-           </Button>
-         ) : (
-           <Button
-             variant="contained"
-             color="success"
-             onClick={() => formik.submitForm()}
-             disabled={loading}
-             startIcon={<Receipt />}
-           >
-             Confirmar Transacción
-           </Button>
-         )}
-       </DialogActions>
-     </Dialog>
+      <Box sx={{ px: 3, pb: 1.5 }}>
+        <Stepper activeStep={step} alternativeLabel>
+          {steps.map((label, i) => (
+            <Step key={label} completed={i < step}>
+              <StepLabel sx={{
+                '& .MuiStepLabel-label': { fontSize: '0.75rem', fontWeight: 600 },
+                '& .MuiStepIcon-root.Mui-active': { color: TOKENS.blue },
+                '& .MuiStepIcon-root.Mui-completed': { color: TOKENS.green },
+              }}>
+                {label}
+              </StepLabel>
+            </Step>
+          ))}
+        </Stepper>
+      </Box>
 
-     <PinDialog
-       open={showPinDialog}
-       onClose={() => setShowPinDialog(false)}
-       onSubmit={handlePinSubmit}
-       title="Verificación de PIN"
-       message="Ingrese su PIN para confirmar la transacción"
-     />
-   </>
- );
+      <DialogContent sx={{ pt: 1.5 }}>
+        {isReportable && step === 0 && stepCliente}
+        {step === operStep && stepOperacion}
+        {step === confStep && stepConfirm}
+      </DialogContent>
+
+      {!success && (
+        <DialogActions sx={{ px: 3, pb: 2.5, pt: 1 }}>
+          <Button onClick={step === 0 ? handleClose : () => setStep(s => s - 1)}
+            sx={{ color: TOKENS.textSub }}>
+            {step === 0 ? 'Cancelar' : 'Atrás'}
+          </Button>
+          <Box flex={1} />
+          {step < confStep ? (
+            <Button variant="contained" onClick={handleNext} sx={{ px: 3 }}>
+              Siguiente →
+            </Button>
+          ) : (
+            <Button
+              variant="contained"
+              color="success"
+              onClick={handleSubmit}
+              disabled={loading}
+              startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <CheckCircle />}
+              sx={{ px: 3, fontWeight: 700, minWidth: 160 }}
+            >
+              {loading ? 'Procesando…' : 'Confirmar operación'}
+            </Button>
+          )}
+        </DialogActions>
+      )}
+    </Dialog>
+  );
 };
 
 export default TransactionForm;

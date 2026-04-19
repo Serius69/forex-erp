@@ -1,3 +1,4 @@
+// utils/formatters.ts
 export const formatCurrency = (
   amount: number | string | undefined,
   currency: string | boolean = 'BOB'  // acepta boolean por compatibilidad

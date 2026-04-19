@@ -1,12 +1,13 @@
 # predictions/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import PredictionModelViewSet, PredictionViewSet
+from .views import PredictionModelViewSet, PredictionViewSet, PredictionsDashboardView
 
 router = DefaultRouter()
 router.register(r'models',      PredictionModelViewSet, basename='prediction-models')
 router.register(r'predictions', PredictionViewSet,      basename='predictions')
 
 urlpatterns = [
+    path('dashboard/', PredictionsDashboardView.as_view(), name='predictions-dashboard'),
     path('', include(router.urls)),
 ]

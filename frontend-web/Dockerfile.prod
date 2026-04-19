@@ -1,0 +1,36 @@
+# frontend-web/Dockerfile.prod — Build optimizado para producción Kapitalya
+# Stage 1: Build con Node 20
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Instalar dependencias primero (aprovecha cache Docker)
+COPY package*.json ./
+RUN npm ci --include=dev
+
+# Build args: se pasan desde docker-compose al momento de build
+# En producción con nginx-proxy, las URLs son relativas (/api, /ws)
+ARG VITE_API_BASE_URL=/api
+ARG VITE_WS_BASE_URL=/ws
+ARG VITE_APP_NAME=Kapitalya ERP
+ARG VITE_APP_VERSION=1.0.0
+
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_WS_BASE_URL=$VITE_WS_BASE_URL
+ENV VITE_APP_NAME=$VITE_APP_NAME
+ENV VITE_APP_VERSION=$VITE_APP_VERSION
+
+COPY . .
+RUN npm run build
+
+# Stage 2: Imagen final solo con los archivos estáticos
+# nginx:alpine para servir archivos y popular el volumen compartido
+FROM nginx:1.25-alpine
+
+# Copiar build al directorio que el volumen compartido lee
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Verificar que el build fue exitoso
+RUN test -f /usr/share/nginx/html/index.html || (echo "ERROR: build falló, index.html no existe" && exit 1)
+
+EXPOSE 80

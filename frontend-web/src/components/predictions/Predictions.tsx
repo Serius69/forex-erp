@@ -1,141 +1,281 @@
-// src/components/predictions/Predictions.tsx
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Grid, Card, CardContent, Paper, Tabs, Tab,
   FormControl, InputLabel, Select, MenuItem, Button, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  CircularProgress, Alert, Tooltip, IconButton, LinearProgress,
+  CircularProgress, Alert, Tooltip, IconButton, LinearProgress, Skeleton,
 } from '@mui/material';
 import {
-  TrendingUp, TrendingDown, Refresh, Psychology,
-  BarChart, CheckCircle, Warning, Info,
+  TrendingUp, TrendingDown, TrendingFlat, Refresh, Psychology,
+  BarChart as BarChartIcon, CheckCircle, Warning, Info, ErrorOutline,
 } from '@mui/icons-material';
 import {
-  LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  LineChart, Line, AreaChart, Area, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, Legend, ResponsiveContainer, ReferenceLine,
-  ReferenceArea,
 } from 'recharts';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { formatCurrency, formatNumber } from '../../utils/formatters';
 
-// ── Tipos ─────────────────────────────────────────────────────────────────────
-interface PredictionPoint {
-  date:              string;
-  rate:              number;
-  buy_rate:          number;
-  sell_rate:         number;
-  confidence_lower:  number;
-  confidence_upper:  number;
-  confidence_score:  number;
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface ForecastPoint {
+  date: string;
+  predicted_transactions: number;
+  predicted_volume: number;
 }
 
-interface PredictionsData {
-  currency_pair:  string;
-  predictions:    Record<string, PredictionPoint[]>;
-  generated_at:   string;
+interface Anomaly {
+  date: string;
+  value: number;
+  expected: number;
+  z_score: number;
+  type: 'high' | 'low';
 }
 
-interface ModelPerformance {
-  model:            string;
-  type:             string;
-  currency_pair:    string;
-  average_error:    number;
-  predictions_count:number;
-  metrics:          Record<string, any>;
+interface DashboardData {
+  forecast_next_days: ForecastPoint[];
+  trend: 'up' | 'down' | 'stable';
+  anomalies: Anomaly[];
 }
 
-interface AccuracyReport {
-  [modelType: string]: {
-    total_predictions:        number;
-    average_error:            number;
-    max_error:                number;
-    min_error:                number;
-    within_confidence_interval:number;
-    confidence_accuracy:      number;
-  };
+interface MLPredictionPoint {
+  date: string;
+  rate: number;
+  buy_rate: number;
+  sell_rate: number;
+  confidence_lower: number;
+  confidence_upper: number;
+  confidence_score: number;
 }
 
-// ── Colores por modelo ────────────────────────────────────────────────────────
+interface MLPredictionsData {
+  currency_pair: string;
+  predictions: Record<string, MLPredictionPoint[]>;
+  generated_at: string;
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const GREEN  = '#22c55e';
+const RED    = '#ef4444';
+const BLUE   = '#3b82f6';
+const AMBER  = '#f59e0b';
+const PURPLE = '#8b5cf6';
+
 const MODEL_COLORS: Record<string, string> = {
-  PROPHET:  '#1976d2',
-  LSTM:     '#9c27b0',
-  ARIMA:    '#ff9800',
-  ENSEMBLE: '#4caf50',
+  PROPHET:  BLUE,
+  LSTM:     PURPLE,
+  ARIMA:    AMBER,
+  ENSEMBLE: GREEN,
 };
 
 const CURRENCY_PAIRS = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB'];
 
-// ── Tooltip personalizado ─────────────────────────────────────────────────────
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
+const TOOLTIP_STYLE = {
+  borderRadius: 8,
+  border: '1px solid #e2e8f0',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+  fontSize: 12,
+  fontWeight: 500,
+  background: '#fff',
+};
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+const TrendBadge = ({ trend }: { trend: 'up' | 'down' | 'stable' }) => {
+  const cfg = {
+    up:     { icon: <TrendingUp  />, label: 'Al alza',    color: GREEN,  bg: '#dcfce7' },
+    down:   { icon: <TrendingDown/>, label: 'A la baja',  color: RED,    bg: '#fee2e2' },
+    stable: { icon: <TrendingFlat/>, label: 'Estable',    color: BLUE,   bg: '#dbeafe' },
+  }[trend];
+
   return (
-    <Paper sx={{ p: 1.5, minWidth: 180 }}>
-      <Typography variant="caption" fontWeight="bold" display="block">
-        {label}
-      </Typography>
-      {payload.map((p: any) => (
-        <Box key={p.dataKey} display="flex" justifyContent="space-between" gap={2}>
-          <Typography variant="caption" color={p.color}>{p.name}</Typography>
-          <Typography variant="caption" fontWeight="bold">{p.value?.toFixed(4)}</Typography>
-        </Box>
-      ))}
-    </Paper>
+    <Box sx={{
+      display: 'inline-flex', alignItems: 'center', gap: 1,
+      px: 2, py: 0.75, borderRadius: 99,
+      bgcolor: cfg.bg, color: cfg.color, fontWeight: 700,
+    }}>
+      {cfg.icon}
+      <Typography fontWeight={700} fontSize={14}>{cfg.label}</Typography>
+    </Box>
   );
 };
 
-// ── Componente principal ──────────────────────────────────────────────────────
+const ForecastChart = ({ data, loading }: { data: ForecastPoint[]; loading: boolean }) => {
+  if (loading) return <Skeleton variant="rectangular" height={260} sx={{ borderRadius: 2 }} />;
+  if (data.length === 0) return (
+    <Box sx={{ py: 6, textAlign: 'center' }}>
+      <Typography color="text.secondary">Sin datos de forecast disponibles</Typography>
+    </Box>
+  );
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <BarChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }} barSize={28}>
+        <CartesianGrid vertical={false} stroke="#f1f5f9" />
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 11, fill: '#94a3b8' }}
+          tickFormatter={d => format(parseISO(d), 'dd/MM', { locale: es })}
+          axisLine={false} tickLine={false}
+        />
+        <YAxis
+          yAxisId="tx"
+          tick={{ fontSize: 11, fill: '#94a3b8' }}
+          axisLine={false} tickLine={false}
+          label={{ value: 'Transacciones', angle: -90, position: 'insideLeft', offset: 14, fontSize: 10, fill: '#94a3b8' }}
+        />
+        <YAxis
+          yAxisId="vol"
+          orientation="right"
+          tick={{ fontSize: 11, fill: '#94a3b8' }}
+          axisLine={false} tickLine={false}
+          tickFormatter={v => `${Math.round(v / 1000)}k`}
+        />
+        <RTooltip
+          contentStyle={TOOLTIP_STYLE}
+          labelFormatter={l => format(parseISO(l), 'EEEE dd/MM', { locale: es })}
+          formatter={(v: any, name: string) =>
+            name === 'Transacciones'
+              ? [formatNumber(v, 0), name]
+              : [formatCurrency(v), name]
+          }
+        />
+        <Legend iconSize={8} iconType="circle" wrapperStyle={{ fontSize: 11 }} />
+        <Bar yAxisId="tx"  dataKey="predicted_transactions" name="Transacciones" fill={BLUE}  radius={[5,5,0,0]} />
+        <Bar yAxisId="vol" dataKey="predicted_volume"        name="Volumen (BOB)" fill={GREEN} radius={[5,5,0,0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+};
+
+const AnomaliesTable = ({ anomalies, loading }: { anomalies: Anomaly[]; loading: boolean }) => {
+  if (loading) return <Skeleton variant="rectangular" height={120} sx={{ borderRadius: 2 }} />;
+  if (anomalies.length === 0) return (
+    <Alert severity="success" icon={<CheckCircle />}>
+      Sin anomalías detectadas en los últimos 90 días.
+    </Alert>
+  );
+  return (
+    <TableContainer>
+      <Table size="small">
+        <TableHead>
+          <TableRow sx={{ '& th': { fontWeight: 700, color: '#64748b', fontSize: 12 } }}>
+            <TableCell>Fecha</TableCell>
+            <TableCell align="right">Transacciones</TableCell>
+            <TableCell align="right">Esperado</TableCell>
+            <TableCell align="right">Z-Score</TableCell>
+            <TableCell align="center">Tipo</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {anomalies.map((a, i) => (
+            <TableRow key={i} hover>
+              <TableCell sx={{ fontFamily: 'monospace', fontSize: 13 }}>
+                {format(parseISO(a.date), 'dd/MM/yyyy', { locale: es })}
+              </TableCell>
+              <TableCell align="right" sx={{ fontWeight: 700 }}>
+                {formatNumber(a.value, 0)}
+              </TableCell>
+              <TableCell align="right" sx={{ color: '#64748b' }}>
+                {a.expected}
+              </TableCell>
+              <TableCell align="right" sx={{
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                color: a.z_score > 0 ? GREEN : RED,
+              }}>
+                {a.z_score > 0 ? '+' : ''}{a.z_score}
+              </TableCell>
+              <TableCell align="center">
+                <Chip
+                  label={a.type === 'high' ? 'Alto' : 'Bajo'}
+                  size="small"
+                  sx={{
+                    bgcolor: a.type === 'high' ? '#dcfce7' : '#fee2e2',
+                    color:   a.type === 'high' ? GREEN : RED,
+                    fontWeight: 700, fontSize: 11,
+                  }}
+                />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+};
+
+// ── Main component ────────────────────────────────────────────────────────────
 const Predictions: React.FC = () => {
   const [tab,           setTab]           = useState(0);
   const [currencyPair,  setCurrencyPair]  = useState('USD/BOB');
   const [activeModels,  setActiveModels]  = useState<string[]>(['PROPHET','LSTM','ENSEMBLE']);
-  const [predictions,   setPredictions]   = useState<PredictionsData | null>(null);
-  const [performance,   setPerformance]   = useState<ModelPerformance[]>([]);
-  const [accuracy,      setAccuracy]      = useState<AccuracyReport>({});
+
+  // Simple dashboard state
+  const [dashboard,  setDashboard]  = useState<DashboardData | null>(null);
+  const [dashLoading, setDashLoading] = useState(true);
+  const [dashError,   setDashError]   = useState<string | null>(null);
+
+  // ML state
+  const [mlPredictions, setMlPredictions] = useState<MLPredictionsData | null>(null);
+  const [performance,   setPerformance]   = useState<any[]>([]);
+  const [accuracy,      setAccuracy]      = useState<Record<string, any>>({});
   const [models,        setModels]        = useState<any[]>([]);
-  const [loading,       setLoading]       = useState(true);
+  const [mlLoading,     setMlLoading]     = useState(false);
   const [generating,    setGenerating]    = useState(false);
   const [training,      setTraining]      = useState(false);
-  const { user }                          = useAuth();
-  const { enqueueSnackbar }               = useSnackbar();
 
-  const loadPredictions = useCallback(async () => {
-    setLoading(true);
+  const { user }            = useAuth();
+  const { enqueueSnackbar } = useSnackbar();
+
+  // ── Load simple dashboard data ────────────────────────────────────────────
+  const loadDashboard = useCallback(async () => {
+    setDashLoading(true);
+    setDashError(null);
     try {
-      const [predRes, perfRes, accRes, modRes] = await Promise.all([
-        api.get('/predictions/predictions/current/', {
-          params: { currency_pair: currencyPair },
-        }),
+      const res = await api.get('/predictions/dashboard/');
+      setDashboard(res.data);
+    } catch {
+      setDashError('No se pudo cargar el resumen de predicciones.');
+    } finally {
+      setDashLoading(false);
+    }
+  }, []);
+
+  // ── Load ML predictions ───────────────────────────────────────────────────
+  const loadML = useCallback(async () => {
+    setMlLoading(true);
+    try {
+      const [predRes, perfRes, accRes, modRes] = await Promise.allSettled([
+        api.get('/predictions/predictions/current/', { params: { currency_pair: currencyPair } }),
         api.get('/predictions/models/performance/'),
         api.get('/predictions/predictions/accuracy-report/'),
         api.get('/predictions/models/'),
       ]);
-      setPredictions(predRes.data);
-      setPerformance(perfRes.data);
-      setAccuracy(accRes.data);
-      setModels(modRes.data.results ?? modRes.data);
-    } catch (e) {
-      enqueueSnackbar('Error al cargar predicciones', { variant: 'error' });
+      if (predRes.status === 'fulfilled') setMlPredictions(predRes.value.data);
+      if (perfRes.status === 'fulfilled') setPerformance(perfRes.value.data);
+      if (accRes.status  === 'fulfilled') setAccuracy(accRes.value.data);
+      if (modRes.status  === 'fulfilled') setModels(modRes.value.data?.results ?? modRes.value.data ?? []);
     } finally {
-      setLoading(false);
+      setMlLoading(false);
     }
-  }, [currencyPair, enqueueSnackbar]);
+  }, [currencyPair]);
 
-  useEffect(() => { loadPredictions(); }, [loadPredictions]);
+  useEffect(() => { loadDashboard(); }, [loadDashboard]);
+  useEffect(() => {
+    if (tab === 1 || tab === 2 || tab === 3) loadML();
+  }, [tab, loadML]);
 
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      await api.post('/predictions/predictions/generate/', {
-        currency_pair: currencyPair,
-        horizon:       24,
-      });
-      enqueueSnackbar('Predicciones generadas', { variant: 'success' });
-      loadPredictions();
+      await api.post('/predictions/predictions/generate/', { currency_pair: currencyPair, horizon: 24 });
+      enqueueSnackbar('Predicciones ML generadas', { variant: 'success' });
+      loadML();
     } catch {
-      enqueueSnackbar('Error al generar predicciones', { variant: 'error' });
+      enqueueSnackbar('Error al generar predicciones ML', { variant: 'error' });
     } finally {
       setGenerating(false);
     }
@@ -153,408 +293,350 @@ const Predictions: React.FC = () => {
     }
   };
 
-  // ── Preparar datos del gráfico ────────────────────────────────────────────
-  const chartData = React.useMemo(() => {
-    if (!predictions?.predictions) return [];
-
-    // Unir todos los puntos por fecha
+  // ── ML chart data ─────────────────────────────────────────────────────────
+  const mlChartData = React.useMemo(() => {
+    if (!mlPredictions?.predictions) return [];
     const allDates = new Set<string>();
-    Object.values(predictions.predictions).forEach((points) => {
-      points.forEach((p) => allDates.add(p.date as string));
-    });
-
-    return Array.from(allDates).sort().map((dateStr) => {
-      const point: any = {
-        date: format(parseISO(dateStr as string), 'HH:mm', { locale: es }),
-        full_date: dateStr,
-      };
-      Object.entries(predictions.predictions).forEach(([modelType, points]) => {
-        const match = points.find((p) => p.date === dateStr);
-        if (match) {
-          point[`${modelType}_rate`]    = match.rate;
-          point[`${modelType}_buy`]     = match.buy_rate;
-          point[`${modelType}_sell`]    = match.sell_rate;
-          point[`${modelType}_lower`]   = match.confidence_lower;
-          point[`${modelType}_upper`]   = match.confidence_upper;
+    Object.values(mlPredictions.predictions).forEach(pts => pts.forEach(p => allDates.add(p.date as string)));
+    return Array.from(allDates).sort().map(dateStr => {
+      const point: any = { date: format(parseISO(dateStr), 'HH:mm', { locale: es }), full_date: dateStr };
+      Object.entries(mlPredictions.predictions).forEach(([modelType, pts]) => {
+        const m = pts.find(p => p.date === dateStr);
+        if (m) {
+          point[`${modelType}_rate`]  = m.rate;
+          point[`${modelType}_buy`]   = m.buy_rate;
+          point[`${modelType}_sell`]  = m.sell_rate;
+          point[`${modelType}_lower`] = m.confidence_lower;
+          point[`${modelType}_upper`] = m.confidence_upper;
         }
       });
       return point;
     });
-  }, [predictions]);
+  }, [mlPredictions]);
 
-  // ── Obtener tasa actual del primer modelo ─────────────────────────────────
-  const currentRate = React.useMemo(() => {
-    if (!predictions?.predictions) return null;
-    const firstModel = Object.values(predictions.predictions)[0];
-    if (!firstModel?.length) return null;
-    return firstModel[0];
-  }, [predictions]);
+  const mlModelKeys = mlPredictions ? Object.keys(mlPredictions.predictions) : [];
 
-  const modelKeys = predictions ? Object.keys(predictions.predictions) : [];
-
-  if (loading) {
-    return (
-      <Box display="flex" flexDirection="column" alignItems="center"
-           justifyContent="center" minHeight={400} gap={2}>
-        <CircularProgress size={48} />
-        <Typography color="text.secondary">Cargando predicciones ML...</Typography>
-      </Box>
-    );
-  }
+  // ── KPIs for Tab 0 ────────────────────────────────────────────────────────
+  const avgForecastTx  = dashboard?.forecast_next_days.length
+    ? Math.round(dashboard.forecast_next_days.reduce((s, d) => s + d.predicted_transactions, 0) / dashboard.forecast_next_days.length)
+    : null;
+  const avgForecastVol = dashboard?.forecast_next_days.length
+    ? Math.round(dashboard.forecast_next_days.reduce((s, d) => s + d.predicted_volume, 0) / dashboard.forecast_next_days.length)
+    : null;
 
   return (
     <Box>
       {/* ── Header ── */}
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Box display="flex" alignItems="center" gap={1}>
-          <Psychology color="primary" sx={{ fontSize: 32 }} />
-          <Typography variant="h4" fontWeight="bold">Predicciones ML</Typography>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3} flexWrap="wrap" gap={1}>
+        <Box display="flex" alignItems="center" gap={1.5}>
+          <Psychology sx={{ fontSize: 32, color: BLUE }} />
+          <Box>
+            <Typography variant="h5" fontWeight={800} lineHeight={1.2}>Predicciones</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Análisis predictivo de transacciones
+            </Typography>
+          </Box>
         </Box>
-        <Box display="flex" gap={1}>
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel>Par de divisas</InputLabel>
-            <Select value={currencyPair}
-              onChange={(e) => setCurrencyPair(e.target.value)} label="Par de divisas">
-              {CURRENCY_PAIRS.map((pair) => (
-                <MenuItem key={pair} value={pair}>{pair}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Button variant="outlined" startIcon={<Refresh />}
-            onClick={loadPredictions} disabled={loading}>
+        <Box display="flex" gap={1} flexWrap="wrap">
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<Refresh />}
+            onClick={tab === 0 ? loadDashboard : loadML}
+            disabled={dashLoading || mlLoading}
+          >
             Actualizar
           </Button>
-          <Button variant="outlined" color="secondary"
-            startIcon={generating ? <CircularProgress size={16} /> : <TrendingUp />}
-            onClick={handleGenerate} disabled={generating}>
-            Generar
-          </Button>
-          {user?.role === 'ADMIN' && (
-            <Button variant="contained" color="warning"
-              startIcon={training ? <CircularProgress size={16} /> : <Psychology />}
-              onClick={handleTrainAll} disabled={training}>
-              Entrenar Modelos
-            </Button>
+          {(tab === 1 || tab === 2) && (
+            <>
+              <FormControl size="small" sx={{ minWidth: 130 }}>
+                <InputLabel>Par de divisas</InputLabel>
+                <Select value={currencyPair} onChange={e => setCurrencyPair(e.target.value)} label="Par de divisas">
+                  {CURRENCY_PAIRS.map(p => <MenuItem key={p} value={p}>{p}</MenuItem>)}
+                </Select>
+              </FormControl>
+              <Button
+                variant="outlined"
+                size="small"
+                color="secondary"
+                startIcon={generating ? <CircularProgress size={14} /> : <TrendingUp />}
+                onClick={handleGenerate}
+                disabled={generating}
+              >
+                Generar ML
+              </Button>
+              {user?.role === 'ADMIN' && (
+                <Button
+                  variant="contained"
+                  size="small"
+                  color="warning"
+                  startIcon={training ? <CircularProgress size={14} /> : <Psychology />}
+                  onClick={handleTrainAll}
+                  disabled={training}
+                >
+                  Entrenar
+                </Button>
+              )}
+            </>
           )}
         </Box>
       </Box>
 
-      {/* ── KPI Cards ── */}
-      <Grid container spacing={2} mb={3}>
-        <Grid xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">Tasa Actual (USD/BOB)</Typography>
-              <Typography variant="h4" color="primary.main" fontWeight="bold">
-                {currentRate ? currentRate.rate.toFixed(4) : '—'}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Compra: {currentRate?.buy_rate.toFixed(4) ?? '—'} |
-                Venta: {currentRate?.sell_rate.toFixed(4) ?? '—'}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">Modelos Activos</Typography>
-              <Typography variant="h4" fontWeight="bold">
-                {models.filter(m => m.is_active).length}
-              </Typography>
-              <Box display="flex" gap={0.5} mt={0.5} flexWrap="wrap">
-                {Object.entries(MODEL_COLORS).map(([type, color]) => (
-                  <Chip key={type} label={type} size="small"
-                    sx={{ bgcolor: color, color: 'white', fontSize: 10 }} />
-                ))}
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">Mejor Precisión</Typography>
-              {Object.entries(accuracy).length > 0 ? (() => {
-                const best = Object.entries(accuracy)
-                  .sort(([,a],[,b]) => a.average_error - b.average_error)[0];
-                return best ? (
-                  <>
-                    <Typography variant="h4" color="success.main" fontWeight="bold">
-                      {best[0]}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Error promedio: {best[1].average_error.toFixed(2)}%
-                    </Typography>
-                  </>
-                ) : null;
-              })() : (
-                <Typography variant="body2" color="text.secondary">Sin datos</Typography>
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid xs={12} sm={6} md={3}>
-          <Card>
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">Confianza Promedio</Typography>
-              <Typography variant="h4" fontWeight="bold">
-                {currentRate
-                  ? `${(currentRate.confidence_score * 100).toFixed(0)}%`
-                  : '—'}
-              </Typography>
-              {currentRate && (
-                <LinearProgress
-                  variant="determinate"
-                  value={currentRate.confidence_score * 100}
-                  color={currentRate.confidence_score > 0.7 ? 'success' :
-                         currentRate.confidence_score > 0.4 ? 'warning' : 'error'}
-                  sx={{ mt: 1, height: 6, borderRadius: 3 }}
-                />
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
-
       {/* ── Tabs ── */}
-      <Paper sx={{ mb: 3 }}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-          <Tab icon={<TrendingUp />}  iconPosition="start" label="Predicciones" />
-          <Tab icon={<BarChart />}    iconPosition="start" label="Precisión" />
-          <Tab icon={<Psychology />}  iconPosition="start" label="Modelos" />
+      <Paper sx={{ mb: 3, borderRadius: 2 }}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto">
+          <Tab icon={<TrendingUp   sx={{ fontSize: 18 }} />} iconPosition="start" label="Resumen" />
+          <Tab icon={<Psychology   sx={{ fontSize: 18 }} />} iconPosition="start" label="Modelo ML" />
+          <Tab icon={<BarChartIcon sx={{ fontSize: 18 }} />} iconPosition="start" label="Precisión" />
+          <Tab icon={<Info         sx={{ fontSize: 18 }} />} iconPosition="start" label="Gestión" />
         </Tabs>
       </Paper>
 
-      {/* ── Tab 0: Gráfico de predicciones ── */}
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 0 — Resumen: trend, forecast, anomalías
+         ══════════════════════════════════════════════════════════════════ */}
       {tab === 0 && (
         <Box>
-          {/* Selector de modelos */}
-          <Box display="flex" gap={1} mb={2} flexWrap="wrap">
-            <Typography variant="body2" color="text.secondary" alignSelf="center">
-              Modelos:
-            </Typography>
-            {Object.entries(MODEL_COLORS).map(([type, color]) => (
-              <Chip
-                key={type}
-                label={type}
-                size="small"
-                onClick={() => setActiveModels(prev =>
-                  prev.includes(type) ? prev.filter(m => m !== type) : [...prev, type]
-                )}
-                sx={{
-                  bgcolor:    activeModels.includes(type) ? color : 'transparent',
-                  color:      activeModels.includes(type) ? 'white' : color,
-                  border:     `2px solid ${color}`,
-                  fontWeight: 'bold',
-                  cursor:     'pointer',
-                }}
-              />
-            ))}
-          </Box>
-
-          {chartData.length === 0 ? (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              No hay predicciones disponibles para {currencyPair}.
-              Haz clic en "Generar" para crear nuevas predicciones.
+          {dashError && (
+            <Alert severity="error" sx={{ mb: 2 }}
+              action={<Button size="small" color="inherit" onClick={loadDashboard}>Reintentar</Button>}>
+              {dashError}
             </Alert>
-          ) : (
+          )}
+
+          {/* KPI cards */}
+          <Grid container spacing={2} mb={3}>
+            {/* Tendencia */}
+            <Grid item xs={12} sm={6} md={3}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>Tendencia</Typography>
+                  {dashLoading
+                    ? <Skeleton width={120} height={40} />
+                    : <TrendBadge trend={dashboard?.trend ?? 'stable'} />
+                  }
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Últimos 14 días vs anteriores
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Tx promedio */}
+            <Grid item xs={12} sm={6} md={3}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    Tx promedio / día (próx. 7d)
+                  </Typography>
+                  {dashLoading
+                    ? <Skeleton width={80} height={40} />
+                    : <Typography variant="h4" fontWeight={800} color={BLUE}>
+                        {avgForecastTx ?? '—'}
+                      </Typography>
+                  }
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Volumen promedio */}
+            <Grid item xs={12} sm={6} md={3}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    Volumen promedio / día
+                  </Typography>
+                  {dashLoading
+                    ? <Skeleton width={100} height={40} />
+                    : <Typography variant="h5" fontWeight={800} color={GREEN}>
+                        {avgForecastVol != null ? formatCurrency(avgForecastVol) : '—'}
+                      </Typography>
+                  }
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Anomalías detectadas */}
+            <Grid item xs={12} sm={6} md={3}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    Anomalías (90 días)
+                  </Typography>
+                  {dashLoading
+                    ? <Skeleton width={60} height={40} />
+                    : <Typography variant="h4" fontWeight={800}
+                        color={(dashboard?.anomalies.length ?? 0) > 0 ? AMBER : GREEN}>
+                        {dashboard?.anomalies.length ?? 0}
+                      </Typography>
+                  }
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+
+          {/* Forecast chart */}
+          <Paper sx={{ p: 2.5, mb: 3, borderRadius: 2 }}>
+            <Typography variant="h6" fontWeight={700} mb={2}>
+              Forecast próximos 7 días
+            </Typography>
+            <ForecastChart data={dashboard?.forecast_next_days ?? []} loading={dashLoading} />
+          </Paper>
+
+          {/* Anomalies */}
+          <Paper sx={{ p: 2.5, borderRadius: 2 }}>
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+              <Typography variant="h6" fontWeight={700}>Anomalías detectadas</Typography>
+              <Chip
+                label={`Z-score > 2σ`}
+                size="small"
+                sx={{ bgcolor: '#f1f5f9', color: '#475569', fontWeight: 600 }}
+              />
+            </Box>
+            <AnomaliesTable anomalies={dashboard?.anomalies ?? []} loading={dashLoading} />
+          </Paper>
+        </Box>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 1 — Modelo ML: predicciones de tasas (24h)
+         ══════════════════════════════════════════════════════════════════ */}
+      {tab === 1 && (
+        <Box>
+          {mlLoading && (
+            <Box display="flex" justifyContent="center" py={4}>
+              <CircularProgress />
+            </Box>
+          )}
+
+          {!mlLoading && mlChartData.length === 0 && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              No hay predicciones ML para {currencyPair}. Haz clic en "Generar ML" para crearlas.
+              Los modelos deben estar entrenados.
+            </Alert>
+          )}
+
+          {/* Model selector */}
+          {!mlLoading && mlChartData.length > 0 && (
             <>
-              {/* Gráfico de tasas predichas */}
-              <Paper sx={{ p: 2, mb: 3 }}>
-                <Typography variant="h6" mb={2}>
-                  Predicción de Tasas — {currencyPair} (próximas 24h)
+              <Box display="flex" gap={1} mb={2} flexWrap="wrap" alignItems="center">
+                <Typography variant="body2" color="text.secondary">Modelos activos:</Typography>
+                {Object.entries(MODEL_COLORS).map(([type, color]) => (
+                  <Chip key={type} label={type} size="small"
+                    onClick={() => setActiveModels(prev =>
+                      prev.includes(type) ? prev.filter(m => m !== type) : [...prev, type]
+                    )}
+                    sx={{
+                      bgcolor: activeModels.includes(type) ? color : 'transparent',
+                      color:   activeModels.includes(type) ? 'white' : color,
+                      border:  `2px solid ${color}`, fontWeight: 700, cursor: 'pointer',
+                    }}
+                  />
+                ))}
+              </Box>
+
+              <Paper sx={{ p: 2, mb: 3, borderRadius: 2 }}>
+                <Typography variant="h6" fontWeight={700} mb={2}>
+                  Predicción de tasas — {currencyPair} (próximas 24h)
                 </Typography>
-                <ResponsiveContainer width="100%" height={350}>
-                  <LineChart data={chartData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                <ResponsiveContainer width="100%" height={320}>
+                  <LineChart data={mlChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                    <YAxis
-                      domain={['auto', 'auto']}
-                      tick={{ fontSize: 11 }}
-                      tickFormatter={(v) => v.toFixed(3)}
-                    />
-                    <RTooltip content={<CustomTooltip />} />
+                    <YAxis domain={['auto', 'auto']} tick={{ fontSize: 11 }}
+                      tickFormatter={v => v.toFixed(3)} />
+                    <RTooltip contentStyle={TOOLTIP_STYLE}
+                      formatter={(v: any) => [Number(v).toFixed(4), '']} />
                     <Legend />
-                    {modelKeys
-                      .filter(m => activeModels.includes(m))
-                      .map((modelType) => (
-                        <Line
-                          key={modelType}
-                          type="monotone"
-                          dataKey={`${modelType}_rate`}
-                          name={modelType}
-                          stroke={MODEL_COLORS[modelType] ?? '#999'}
-                          strokeWidth={2}
-                          dot={false}
-                          activeDot={{ r: 4 }}
-                        />
-                      ))}
+                    {mlModelKeys.filter(m => activeModels.includes(m)).map(modelType => (
+                      <Line key={modelType} type="monotone" dataKey={`${modelType}_rate`}
+                        name={modelType} stroke={MODEL_COLORS[modelType] ?? '#999'}
+                        strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </Paper>
 
-              {/* Gráfico de compra/venta con banda de confianza */}
-              {modelKeys.length > 0 && activeModels.includes(modelKeys[0]) && (
-                <Paper sx={{ p: 2, mb: 3 }}>
-                  <Typography variant="h6" mb={2}>
-                    Tasas de Compra / Venta con Intervalo de Confianza — {modelKeys[0]}
+              {/* Confidence bands for first model */}
+              {mlModelKeys.length > 0 && activeModels.includes(mlModelKeys[0]) && (
+                <Paper sx={{ p: 2, borderRadius: 2 }}>
+                  <Typography variant="h6" fontWeight={700} mb={2}>
+                    Compra / Venta con intervalo de confianza — {mlModelKeys[0]}
                   </Typography>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <AreaChart data={chartData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                  <ResponsiveContainer width="100%" height={260}>
+                    <AreaChart data={mlChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                      <YAxis
-                        domain={['auto', 'auto']}
-                        tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => v.toFixed(3)}
-                      />
-                      <RTooltip content={<CustomTooltip />} />
+                      <YAxis domain={['auto', 'auto']} tick={{ fontSize: 11 }}
+                        tickFormatter={v => v.toFixed(3)} />
+                      <RTooltip contentStyle={TOOLTIP_STYLE}
+                        formatter={(v: any) => [Number(v).toFixed(4), '']} />
                       <Legend />
-                      {/* Banda de confianza */}
-                      <Area
-                        type="monotone"
-                        dataKey={`${modelKeys[0]}_upper`}
-                        name="Límite Superior"
-                        stroke="transparent"
-                        fill={MODEL_COLORS[modelKeys[0]] ?? '#1976d2'}
-                        fillOpacity={0.1}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey={`${modelKeys[0]}_lower`}
-                        name="Límite Inferior"
-                        stroke="transparent"
-                        fill="white"
-                        fillOpacity={1}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey={`${modelKeys[0]}_buy`}
-                        name="Compra"
-                        stroke="#4caf50"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey={`${modelKeys[0]}_sell`}
-                        name="Venta"
-                        stroke="#f44336"
-                        strokeWidth={2}
-                        dot={false}
-                      />
+                      <Area type="monotone" dataKey={`${mlModelKeys[0]}_upper`}
+                        name="Límite superior" stroke="transparent"
+                        fill={MODEL_COLORS[mlModelKeys[0]] ?? BLUE} fillOpacity={0.12} />
+                      <Area type="monotone" dataKey={`${mlModelKeys[0]}_lower`}
+                        name="Límite inferior" stroke="transparent" fill="white" fillOpacity={1} />
+                      <Line type="monotone" dataKey={`${mlModelKeys[0]}_buy`}
+                        name="Compra" stroke={GREEN} strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey={`${mlModelKeys[0]}_sell`}
+                        name="Venta" stroke={RED} strokeWidth={2} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </Paper>
               )}
-
-              {/* Tabla de predicciones */}
-              <Paper sx={{ p: 2 }}>
-                <Typography variant="h6" mb={2}>Detalle de Predicciones</Typography>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Hora</TableCell>
-                      {modelKeys.filter(m => activeModels.includes(m)).map(m => (
-                        <React.Fragment key={m}>
-                          <TableCell align="right" sx={{ color: MODEL_COLORS[m] }}>
-                            {m} — Tasa
-                          </TableCell>
-                          <TableCell align="right" sx={{ color: MODEL_COLORS[m] }}>
-                            Compra
-                          </TableCell>
-                          <TableCell align="right" sx={{ color: MODEL_COLORS[m] }}>
-                            Venta
-                          </TableCell>
-                        </React.Fragment>
-                      ))}
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {chartData.slice(0, 12).map((row, i) => (
-                      <TableRow key={i} hover>
-                        <TableCell>{row.date}</TableCell>
-                        {modelKeys.filter(m => activeModels.includes(m)).map(m => (
-                          <React.Fragment key={m}>
-                            <TableCell align="right" sx={{ fontFamily: 'monospace' }}>
-                              {row[`${m}_rate`]?.toFixed(4) ?? '—'}
-                            </TableCell>
-                            <TableCell align="right" sx={{ color: 'success.main', fontFamily: 'monospace' }}>
-                              {row[`${m}_buy`]?.toFixed(4) ?? '—'}
-                            </TableCell>
-                            <TableCell align="right" sx={{ color: 'error.main', fontFamily: 'monospace' }}>
-                              {row[`${m}_sell`]?.toFixed(4) ?? '—'}
-                            </TableCell>
-                          </React.Fragment>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Paper>
             </>
           )}
         </Box>
       )}
 
-      {/* ── Tab 1: Precisión de modelos ── */}
-      {tab === 1 && (
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 2 — Precisión de modelos
+         ══════════════════════════════════════════════════════════════════ */}
+      {tab === 2 && (
         <Box>
-          {Object.keys(accuracy).length === 0 ? (
+          {mlLoading && <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>}
+          {!mlLoading && Object.keys(accuracy).length === 0 && (
             <Alert severity="info">
-              No hay datos de precisión disponibles aún.
-              Los modelos necesitan predicciones evaluadas contra tasas reales.
+              Sin datos de precisión. Los modelos necesitan predicciones evaluadas contra tasas reales.
             </Alert>
-          ) : (
-            <Grid container spacing={3}>
+          )}
+          {!mlLoading && Object.keys(accuracy).length > 0 && (
+            <Grid container spacing={2}>
               {Object.entries(accuracy).map(([modelType, data]) => (
-                <Grid xs={12} md={6} lg={4} key={modelType}>
+                <Grid item xs={12} md={6} lg={4} key={modelType}>
                   <Card>
                     <CardContent>
                       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                        <Typography variant="h6" fontWeight="bold"
-                          sx={{ color: MODEL_COLORS[modelType] }}>
-                          {modelType}
-                        </Typography>
+                        <Typography variant="h6" fontWeight={700}
+                          sx={{ color: MODEL_COLORS[modelType] }}>{modelType}</Typography>
                         <Chip
-                          label={data.average_error < 1 ? 'Excelente' :
-                                 data.average_error < 3 ? 'Bueno' : 'Mejorable'}
-                          color={data.average_error < 1 ? 'success' :
-                                 data.average_error < 3 ? 'warning' : 'error'}
+                          label={data.average_error < 1 ? 'Excelente' : data.average_error < 3 ? 'Bueno' : 'Mejorable'}
+                          color={data.average_error < 1 ? 'success' : data.average_error < 3 ? 'warning' : 'error'}
                           size="small"
                         />
                       </Box>
-
                       {[
-                        ['Total predicciones',  data.total_predictions, null],
-                        ['Error promedio',       `${data.average_error.toFixed(2)}%`, null],
-                        ['Error máximo',         `${data.max_error.toFixed(2)}%`, null],
-                        ['Error mínimo',         `${data.min_error.toFixed(2)}%`, null],
-                        ['Dentro del intervalo', data.within_confidence_interval, null],
-                        ['Precisión confianza',  `${data.confidence_accuracy.toFixed(1)}%`, null],
+                        ['Total predicciones',  data.total_predictions],
+                        ['Error promedio',       `${data.average_error?.toFixed(2)}%`],
+                        ['Error máximo',         `${data.max_error?.toFixed(2)}%`],
+                        ['Error mínimo',         `${data.min_error?.toFixed(2)}%`],
+                        ['Dentro del intervalo', data.within_confidence_interval],
+                        ['Precisión confianza',  `${data.confidence_accuracy?.toFixed(1)}%`],
                       ].map(([label, value]) => (
                         <Box key={label as string} display="flex" justifyContent="space-between"
                           py={0.5} borderBottom="1px solid" borderColor="divider">
                           <Typography variant="body2" color="text.secondary">{label as string}</Typography>
-                          <Typography variant="body2" fontWeight="bold">{value as string}</Typography>
+                          <Typography variant="body2" fontWeight={700}>{String(value)}</Typography>
                         </Box>
                       ))}
-
-                      <Box mt={2}>
-                        <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
-                          Precisión del intervalo de confianza
-                        </Typography>
+                      <Box mt={1.5}>
                         <LinearProgress
                           variant="determinate"
-                          value={data.confidence_accuracy}
-                          color={data.confidence_accuracy > 80 ? 'success' :
-                                 data.confidence_accuracy > 60 ? 'warning' : 'error'}
-                          sx={{ height: 8, borderRadius: 4 }}
+                          value={data.confidence_accuracy ?? 0}
+                          color={data.confidence_accuracy > 80 ? 'success' : data.confidence_accuracy > 60 ? 'warning' : 'error'}
+                          sx={{ height: 6, borderRadius: 3 }}
                         />
-                        <Typography variant="caption" color="text.secondary">
-                          {data.confidence_accuracy.toFixed(1)}%
-                        </Typography>
                       </Box>
                     </CardContent>
                   </Card>
@@ -565,18 +647,22 @@ const Predictions: React.FC = () => {
         </Box>
       )}
 
-      {/* ── Tab 2: Gestión de modelos ── */}
-      {tab === 2 && (
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 3 — Gestión de modelos ML
+         ══════════════════════════════════════════════════════════════════ */}
+      {tab === 3 && (
         <Box>
-          {models.length === 0 ? (
+          {mlLoading && <Box display="flex" justifyContent="center" py={4}><CircularProgress /></Box>}
+          {!mlLoading && models.length === 0 && (
             <Alert severity="info">
-              No hay modelos entrenados. Haz clic en "Entrenar Modelos" para iniciar.
+              No hay modelos ML entrenados. Usa "Entrenar" para iniciar el proceso (requiere datos históricos).
             </Alert>
-          ) : (
-            <TableContainer component={Paper}>
+          )}
+          {!mlLoading && models.length > 0 && (
+            <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
               <Table>
                 <TableHead>
-                  <TableRow>
+                  <TableRow sx={{ '& th': { fontWeight: 700, color: '#64748b' } }}>
                     <TableCell>Nombre</TableCell>
                     <TableCell>Tipo</TableCell>
                     <TableCell>Par</TableCell>
@@ -587,29 +673,18 @@ const Predictions: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {models.map((model) => (
+                  {models.map(model => (
                     <TableRow key={model.id} hover>
+                      <TableCell><Typography fontWeight={700}>{model.name}</Typography></TableCell>
                       <TableCell>
-                        <Typography fontWeight="bold">{model.name}</Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={model.model_type}
-                          size="small"
-                          sx={{
-                            bgcolor: MODEL_COLORS[model.model_type] ?? '#999',
-                            color: 'white',
-                          }}
-                        />
+                        <Chip label={model.model_type} size="small"
+                          sx={{ bgcolor: MODEL_COLORS[model.model_type] ?? '#999', color: 'white' }} />
                       </TableCell>
                       <TableCell>{model.currency_pair}</TableCell>
                       <TableCell>
-                        <Chip
-                          icon={model.is_active ? <CheckCircle /> : <Warning />}
+                        <Chip icon={model.is_active ? <CheckCircle /> : <Warning />}
                           label={model.is_active ? 'Activo' : 'Inactivo'}
-                          color={model.is_active ? 'success' : 'default'}
-                          size="small"
-                        />
+                          color={model.is_active ? 'success' : 'default'} size="small" />
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption">
@@ -624,28 +699,18 @@ const Predictions: React.FC = () => {
                             <IconButton size="small"><Info /></IconButton>
                           </Tooltip>
                         ) : (
-                          <Typography variant="caption" color="text.secondary">
-                            Sin métricas
-                          </Typography>
+                          <Typography variant="caption" color="text.secondary">—</Typography>
                         )}
                       </TableCell>
                       {user?.role === 'ADMIN' && (
                         <TableCell>
-                          <Button
-                            size="small"
-                            variant="outlined"
+                          <Button size="small" variant="outlined"
                             color={model.is_active ? 'error' : 'success'}
                             onClick={async () => {
                               try {
-                                await api.post(
-                                  `/predictions/models/${model.id}/activate/`,
-                                  { is_active: !model.is_active }
-                                );
-                                enqueueSnackbar(
-                                  `Modelo ${model.is_active ? 'desactivado' : 'activado'}`,
-                                  { variant: 'success' }
-                                );
-                                loadPredictions();
+                                await api.post(`/predictions/models/${model.id}/activate/`, { is_active: !model.is_active });
+                                enqueueSnackbar(`Modelo ${model.is_active ? 'desactivado' : 'activado'}`, { variant: 'success' });
+                                loadML();
                               } catch {
                                 enqueueSnackbar('Error', { variant: 'error' });
                               }
@@ -660,32 +725,6 @@ const Predictions: React.FC = () => {
                 </TableBody>
               </Table>
             </TableContainer>
-          )}
-
-          {/* Performance de modelos */}
-          {performance.length > 0 && (
-            <Box mt={3}>
-              <Typography variant="h6" mb={2}>Rendimiento Reciente (últimos 7 días)</Typography>
-              <Grid container spacing={2}>
-                {performance.map((p, i) => (
-                  <Grid xs={12} sm={6} md={4} key={i}>
-                    <Card variant="outlined">
-                      <CardContent>
-                        <Typography fontWeight="bold" color={MODEL_COLORS[p.type] ?? '#999'}>
-                          {p.model} — {p.currency_pair}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Error promedio: {p.average_error?.toFixed(2) ?? '—'}%
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Predicciones evaluadas: {p.predictions_count}
-                        </Typography>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                ))}
-              </Grid>
-            </Box>
           )}
         </Box>
       )}

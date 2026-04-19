@@ -1,6 +1,7 @@
+import logging
 from django.db import transaction as db_transaction
 from django.core.exceptions import ValidationError
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import io
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
@@ -10,6 +11,326 @@ from reportlab.lib.units import inch
 from django.core.files.base import ContentFile
 import qrcode
 from datetime import datetime
+
+log = logging.getLogger('transactions')
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Constantes contables
+# ─────────────────────────────────────────────────────────────────────────────
+
+MONEY_Q = Decimal('0.01')
+
+# Mapeo: método de pago → campo de CapitalComposicion que se ve afectado.
+# Regla de negocio:
+#   Efectivo y cheques → "fuertes" (billetes físicos de alta denominación por defecto)
+#   QR, transferencias y tarjetas → "qr_transferencias" (digital)
+PAYMENT_CASH_FIELD: dict = {
+    'CASH':     'fuertes',
+    'CHECK':    'fuertes',
+    'QR':       'qr_transferencias',
+    'TRANSFER': 'qr_transferencias',
+    'CARD':     'qr_transferencias',
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers privados
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _q(val) -> Decimal:
+    return Decimal(str(val or 0)).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
+
+
+def _composicion_snapshot(comp) -> dict:
+    """Serializa CapitalComposicion a dict para historial."""
+    return {
+        'fuertes':              str(comp.fuertes),
+        'caja_chica':           str(comp.caja_chica),
+        'monedas':              str(comp.monedas),
+        'rotos':                str(comp.rotos),
+        'sueltos':              str(comp.sueltos),
+        'qr_transferencias':    str(comp.qr_transferencias),
+        'tarjetas_telefonicas': str(comp.tarjetas_telefonicas),
+        'pasivos':              str(comp.pasivos),
+    }
+
+
+def _broadcast_capital_updated(branch_id) -> None:
+    """
+    Emite evento WebSocket 'capital_updated' al grupo 'capital_updates'.
+    Fire-and-forget: nunca propaga excepciones al caller.
+    """
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        layer = get_channel_layer()
+        if layer:
+            async_to_sync(layer.group_send)(
+                'capital_updates',
+                {
+                    'type':      'capital_update',   # → consumer.capital_update()
+                    'branch_id': branch_id,
+                }
+            )
+    except Exception as exc:
+        log.warning('WS_CAPITAL_BROADCAST_FAIL branch=%s err=%s', branch_id, exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# apply_transaction_effects
+# ─────────────────────────────────────────────────────────────────────────────
+
+def apply_transaction_effects(transaction) -> None:
+    """
+    Aplica los efectos monetarios BOB de una transacción completada
+    sobre CapitalComposicion y registra el movimiento en CashFlowLog.
+
+    Regla contable:
+        BUY  → empresa paga BOB al cliente  → efectivo_bob DISMINUYE
+        SELL → empresa recibe BOB del cliente → efectivo_bob AUMENTA
+
+    El campo exacto que se modifica depende del método de pago
+    (ver PAYMENT_CASH_FIELD).
+
+    IMPORTANTE:
+        · Debe llamarse dentro de db_transaction.atomic() o justo después
+          (la función crea su propio atomic() interno).
+        · La transacción debe estar guardada (pk disponible, created_at seteado).
+        · Si no existe CapitalComposicion para hoy, la crea con valores en 0.
+
+    Args:
+        transaction: instancia de transactions.Transaction ya guardada.
+
+    Raises:
+        ValidationError: si el movimiento resultaría en saldo negativo
+                         y KAPITALYA_ALLOW_NEGATIVE_EFECTIVO=False (default).
+    """
+    from django.conf import settings
+    from django.utils import timezone
+    from capital.models import CapitalComposicion, CapitalComposicionHistory, CashFlowLog
+
+    # Solo afecta transacciones completadas
+    if transaction.status != 'COMPLETED':
+        return
+    # Transacciones BOB-BOB no afectan la composición de efectivo extranjero
+    if (transaction.currency_from.code == 'BOB'
+            and transaction.currency_to.code == 'BOB'):
+        return
+
+    monto_bob = _q(transaction.amount_to)
+    campo     = PAYMENT_CASH_FIELD.get(transaction.payment_method, 'fuertes')
+
+    if transaction.transaction_type == 'BUY':
+        # Casa COMPRA divisa extranjera → PAGA bolivianos → efectivo BAJA
+        delta      = -monto_bob
+        tipo_flujo = 'OUT'
+        concepto   = (
+            f"COMPRA {transaction.currency_from.code} "
+            f"× {transaction.amount_from} @ {transaction.exchange_rate}"
+        )
+    else:
+        # Casa VENDE divisa extranjera → RECIBE bolivianos → efectivo SUBE
+        delta      = +monto_bob
+        tipo_flujo = 'IN'
+        concepto   = (
+            f"VENTA {transaction.currency_from.code} "
+            f"× {transaction.amount_from} @ {transaction.exchange_rate}"
+        )
+
+    allow_negative = getattr(settings, 'KAPITALYA_ALLOW_NEGATIVE_EFECTIVO', False)
+
+    with db_transaction.atomic():
+        comp, created = (
+            CapitalComposicion.objects
+            .select_for_update()
+            .get_or_create(
+                branch=transaction.branch,
+                fecha=timezone.localdate(),
+                defaults={
+                    'fuertes':              Decimal('0'),
+                    'caja_chica':           Decimal('0'),
+                    'monedas':              Decimal('0'),
+                    'rotos':                Decimal('0'),
+                    'sueltos':              Decimal('0'),
+                    'qr_transferencias':    Decimal('0'),
+                    'tarjetas_telefonicas': Decimal('0'),
+                    'pasivos':              Decimal('0'),
+                    'registrado_por':       transaction.cashier,
+                }
+            )
+        )
+
+        prev_val  = _q(getattr(comp, campo))
+        prev_snap = _composicion_snapshot(comp)
+        nuevo_val = prev_val + delta
+
+        # Validación: no permitir saldo negativo (configurable)
+        if nuevo_val < Decimal('0') and not allow_negative:
+            raise ValidationError(
+                f"La transacción resultaría en {campo} = {nuevo_val} BOB (negativo). "
+                f"Saldo actual: {prev_val} BOB | Movimiento: {delta:+} BOB. "
+                f"Verifique la caja antes de continuar o ajuste KAPITALYA_ALLOW_NEGATIVE_EFECTIVO."
+            )
+
+        setattr(comp, campo, nuevo_val)
+        comp.save(update_fields=[campo, 'updated_at'])
+
+        # Historial de composición (auditoría)
+        CapitalComposicionHistory.objects.create(
+            composicion    = comp,
+            snapshot_prev  = prev_snap,
+            snapshot_new   = _composicion_snapshot(comp),
+            motivo         = f"TX {transaction.transaction_number}: {concepto}",
+            modificado_por = transaction.cashier,
+        )
+
+        # CashFlowLog (registro contable permanente)
+        CashFlowLog.objects.create(
+            transaction      = transaction,
+            tipo             = tipo_flujo,
+            concepto         = concepto,
+            monto_bob        = monto_bob,
+            campo_afectado   = campo,
+            saldo_anterior   = prev_val,
+            saldo_resultante = nuevo_val,
+            branch           = transaction.branch,
+            fecha            = timezone.localdate(),
+        )
+
+    log.info(
+        'CASH_FLOW tx=%s tipo=%s campo=%s delta=%+.2f saldo_prev=%.2f saldo_new=%.2f',
+        transaction.transaction_number, tipo_flujo, campo,
+        delta, prev_val, nuevo_val,
+    )
+
+    # Registrar P&L en ledger analítico (fire-and-forget: nunca bloquea)
+    try:
+        from analytics.services import ProfitEngine
+        ProfitEngine.record_transaction_profit(transaction)
+    except Exception as exc:
+        log.error('PROFIT_LEDGER_FAIL tx=%s err=%s', transaction.transaction_number, exc)
+
+    # Guardar spread snapshot de esta transacción
+    try:
+        from analytics.services import SpreadService
+        SpreadService.guardar_snapshot()
+    except Exception as exc:
+        log.warning('SPREAD_SNAPSHOT_FAIL tx=%s err=%s', transaction.transaction_number, exc)
+
+    # Broadcast fuera del atomic — fire-and-forget
+    _broadcast_capital_updated(transaction.branch_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# reverse_transaction_effects
+# ─────────────────────────────────────────────────────────────────────────────
+
+def reverse_transaction_effects(transaction) -> None:
+    """
+    Revierte los efectos monetarios BOB de una transacción.
+    Operación inversa exacta de apply_transaction_effects().
+
+    Crea un CashFlowLog de compensación (tipo opuesto al original)
+    para mantener el rastro contable completo.
+
+    Se llama cuando:
+        · Una transacción es revertida (Transaction.reverse())
+        · Una transacción es eliminada (destroy en la vista)
+
+    Args:
+        transaction: instancia original de Transaction a revertir.
+                     Puede estar en cualquier estado (el reverso siempre procede).
+    """
+    from django.utils import timezone
+    from capital.models import CapitalComposicion, CapitalComposicionHistory, CashFlowLog
+
+    # Transacciones BOB-BOB no tienen efectos de caja que revertir
+    if (transaction.currency_from.code == 'BOB'
+            and transaction.currency_to.code == 'BOB'):
+        return
+
+    monto_bob = _q(transaction.amount_to)
+    campo     = PAYMENT_CASH_FIELD.get(transaction.payment_method, 'fuertes')
+
+    if transaction.transaction_type == 'BUY':
+        # El BUY original había DECREMENTADO el efectivo → reversa lo INCREMENTA
+        delta      = +monto_bob
+        tipo_flujo = 'IN'
+        concepto   = (
+            f"REVERSA COMPRA {transaction.currency_from.code} "
+            f"× {transaction.amount_from} (TX {transaction.transaction_number})"
+        )
+    else:
+        # El SELL original había INCREMENTADO el efectivo → reversa lo DECREMENTA
+        delta      = -monto_bob
+        tipo_flujo = 'OUT'
+        concepto   = (
+            f"REVERSA VENTA {transaction.currency_from.code} "
+            f"× {transaction.amount_from} (TX {transaction.transaction_number})"
+        )
+
+    with db_transaction.atomic():
+        try:
+            comp = (
+                CapitalComposicion.objects
+                .select_for_update()
+                .get(branch=transaction.branch, fecha=timezone.localdate())
+            )
+        except CapitalComposicion.DoesNotExist:
+            # Sin composición hoy: el movimiento original no afectó la caja de hoy.
+            # Si la TX fue de otro día, el saldo ya no es recuperable automáticamente.
+            log.warning(
+                'CASH_REVERSE_SKIP no CapitalComposicion hoy para branch=%s tx=%s',
+                transaction.branch_id, transaction.transaction_number,
+            )
+            return
+
+        prev_val  = _q(getattr(comp, campo))
+        prev_snap = _composicion_snapshot(comp)
+        nuevo_val = prev_val + delta
+
+        setattr(comp, campo, nuevo_val)
+        comp.save(update_fields=[campo, 'updated_at'])
+
+        CapitalComposicionHistory.objects.create(
+            composicion    = comp,
+            snapshot_prev  = prev_snap,
+            snapshot_new   = _composicion_snapshot(comp),
+            motivo         = concepto,
+            modificado_por = transaction.cashier,
+        )
+
+        CashFlowLog.objects.create(
+            transaction      = transaction,
+            tipo             = tipo_flujo,
+            concepto         = concepto,
+            monto_bob        = monto_bob,
+            campo_afectado   = campo,
+            saldo_anterior   = prev_val,
+            saldo_resultante = nuevo_val,
+            branch           = transaction.branch,
+            fecha            = timezone.localdate(),
+        )
+
+    log.info(
+        'CASH_REVERSE tx=%s tipo=%s campo=%s delta=%+.2f saldo_prev=%.2f saldo_new=%.2f',
+        transaction.transaction_number, tipo_flujo, campo,
+        delta, prev_val, nuevo_val,
+    )
+
+    # Compensar P&L del ledger analítico
+    try:
+        from analytics.services import ProfitEngine
+        ProfitEngine.record_reversal_profit(transaction)
+    except Exception as exc:
+        log.error('REVERSAL_LEDGER_FAIL tx=%s err=%s', transaction.transaction_number, exc)
+
+    _broadcast_capital_updated(transaction.branch_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TransactionService
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TransactionService:
     """Servicio para gestión de transacciones"""
@@ -53,9 +374,12 @@ class TransactionService:
         # Guardar transacción
         transaction.save()
         
-        # Actualizar inventario
+        # Actualizar inventario de divisas
         self._update_inventory(transaction)
-        
+
+        # Aplicar efectos sobre el efectivo BOB (CapitalComposicion + CashFlowLog)
+        apply_transaction_effects(transaction)
+
         # Generar comprobante
         receipt_file = self._generate_receipt(transaction)
         transaction.receipt_number = f"R-{transaction.transaction_number}"
@@ -105,60 +429,115 @@ class TransactionService:
         raise ValidationError("PIN de supervisor inválido")
     
     def _validate_inventory(self, transaction):
-        """Valida disponibilidad en inventario"""
         from inventory.models import CurrencyInventory
-        
-        if transaction.transaction_type == 'SELL':
-            # Verificar que hay suficiente divisa para vender
+
+        # Solo validar si vendemos divisa extranjera (no BOB)
+        if transaction.transaction_type == 'SELL' and transaction.currency_from.code != 'BOB':
             try:
                 inventory = CurrencyInventory.objects.get(
                     currency=transaction.currency_from,
                     branch=transaction.branch
                 )
-                
                 if inventory.total_balance < transaction.amount_from:
                     raise ValidationError(
                         f"Saldo insuficiente de {transaction.currency_from.code}. "
-                        f"Disponible: {inventory.total_balance}"
+                        f"Disponible: {inventory.total_balance:.2f}"
                     )
             except CurrencyInventory.DoesNotExist:
-                raise ValidationError(
-                    f"No hay inventario de {transaction.currency_from.code} en esta sucursal"
+                # Si no hay inventario registrado, permitir pero loguear
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"No inventory record for {transaction.currency_from.code} "
+                    f"in branch {transaction.branch.code}"
                 )
-    
-    def _update_inventory(self, transaction):
-        """Actualiza el inventario después de la transacción"""
-        from inventory.models import CurrencyInventory, InventoryMovement
         
+    def _update_inventory(self, transaction):
+        """
+        Actualiza el inventario después de la transacción.
+        Usa select_for_update() para prevenir race conditions en operaciones concurrentes.
+        Debe llamarse dentro de db_transaction.atomic().
+        """
+        from inventory.models import CurrencyInventory, InventoryMovement
+
         if transaction.transaction_type == 'BUY':
-            # Casa compra divisas (aumenta inventario de divisa extranjera)
-            inventory, created = CurrencyInventory.objects.get_or_create(
+            # Casa compra divisas — aumenta inventario de divisa extranjera
+            inventory, _ = CurrencyInventory.objects.select_for_update().get_or_create(
                 currency=transaction.currency_from,
                 branch=transaction.branch,
                 defaults={
-                    'physical_balance': Decimal('0'),
-                    'digital_balance': Decimal('0'),
-                    'minimum_stock': Decimal('1000'),
-                    'maximum_stock': Decimal('50000'),
-                    'weighted_average_cost': transaction.exchange_rate
+                    'physical_balance':       Decimal('0'),
+                    'digital_balance':        Decimal('0'),
+                    'minimum_stock':          Decimal('1000'),
+                    'maximum_stock':          Decimal('50000'),
+                    'weighted_average_cost':  transaction.exchange_rate,
                 }
             )
             inventory.add_currency(
                 transaction.amount_from,
                 transaction.exchange_rate,
-                transaction.cashier
+                transaction.cashier,
             )
         else:
-            # Casa vende divisas (disminuye inventario)
-            inventory = CurrencyInventory.objects.get(
-                currency=transaction.currency_from,
-                branch=transaction.branch
-            )
+            # Casa vende divisas — disminuye inventario
+            try:
+                inventory = CurrencyInventory.objects.select_for_update().get(
+                    currency=transaction.currency_from,
+                    branch=transaction.branch,
+                )
+            except CurrencyInventory.DoesNotExist:
+                raise ValueError(
+                    f"No existe inventario de {transaction.currency_from.code} "
+                    f"en sucursal {transaction.branch.code}"
+                )
             inventory.remove_currency(
                 transaction.amount_from,
-                transaction.cashier
+                transaction.cashier,
             )
     
+    def _reverse_inventory(self, transaction):
+        """
+        Revierte el efecto de una transacción sobre el inventario.
+        Operación inversa exacta de _update_inventory().
+        Debe llamarse dentro de db_transaction.atomic().
+        """
+        from inventory.models import CurrencyInventory
+
+        if transaction.transaction_type == 'BUY':
+            # La compra había aumentado la divisa — deshacer: disminuir
+            try:
+                inventory = CurrencyInventory.objects.select_for_update().get(
+                    currency=transaction.currency_from,
+                    branch=transaction.branch,
+                )
+                inventory.remove_currency(
+                    transaction.amount_from,
+                    transaction.cashier,
+                )
+            except CurrencyInventory.DoesNotExist:
+                import logging
+                logging.getLogger('transactions').warning(
+                    "REVERSE_INVENTORY_SKIP no record for %s in %s",
+                    transaction.currency_from.code, transaction.branch.code,
+                )
+        else:
+            # La venta había disminuido la divisa — deshacer: aumentar
+            inventory, _ = CurrencyInventory.objects.select_for_update().get_or_create(
+                currency=transaction.currency_from,
+                branch=transaction.branch,
+                defaults={
+                    'physical_balance':      Decimal('0'),
+                    'digital_balance':       Decimal('0'),
+                    'minimum_stock':         Decimal('100'),
+                    'maximum_stock':         Decimal('50000'),
+                    'weighted_average_cost': transaction.exchange_rate,
+                }
+            )
+            inventory.add_currency(
+                transaction.amount_from,
+                transaction.exchange_rate,
+                transaction.cashier,
+            )
+
     def _generate_receipt(self, transaction):
         """Genera comprobante PDF de la transacción"""
         buffer = io.BytesIO()

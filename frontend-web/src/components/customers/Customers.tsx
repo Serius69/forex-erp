@@ -228,7 +228,7 @@ const Customers: React.FC = () => {
         <DialogTitle>{selected ? 'Editar Cliente' : 'Nuevo Cliente'}</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid xs={4}>
+            <Grid item xs={4}>
               <FormControl fullWidth>
                 <InputLabel>Tipo Doc.</InputLabel>
                 <Select name="document_type" value={formik.values.document_type} onChange={formik.handleChange} label="Tipo Doc.">
@@ -239,33 +239,33 @@ const Customers: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid xs={8}>
+            <Grid item xs={8}>
               <TextField fullWidth label="Número de Documento" name="document_number"
                 value={formik.values.document_number} onChange={formik.handleChange}
                 error={formik.touched.document_number && Boolean(formik.errors.document_number)}
                 helperText={formik.touched.document_number && formik.errors.document_number} />
             </Grid>
-            <Grid xs={12}>
+            <Grid item xs={12}>
               <TextField fullWidth label="Nombre Completo" name="full_name"
                 value={formik.values.full_name} onChange={formik.handleChange}
                 error={formik.touched.full_name && Boolean(formik.errors.full_name)}
                 helperText={formik.touched.full_name && formik.errors.full_name} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Teléfono" name="phone"
                 value={formik.values.phone} onChange={formik.handleChange} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Email" name="email" type="email"
                 value={formik.values.email} onChange={formik.handleChange}
                 error={formik.touched.email && Boolean(formik.errors.email)}
                 helperText={formik.touched.email && formik.errors.email} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Nacionalidad" name="nationality"
                 value={formik.values.nationality} onChange={formik.handleChange} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <FormControl fullWidth>
                 <InputLabel>PEP</InputLabel>
                 <Select name="is_pep" value={formik.values.is_pep as any} onChange={formik.handleChange} label="PEP">

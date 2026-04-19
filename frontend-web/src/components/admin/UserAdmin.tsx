@@ -247,7 +247,7 @@ const UserAdmin: React.FC = () => {
 
       {/* ── KPIs ── */}
       <Grid container spacing={2} mb={3}>
-        <Grid xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={3}>
           <Card>
             <CardContent sx={{ py: 1.5 }}>
               <Typography variant="body2" color="text.secondary">Total Usuarios</Typography>
@@ -255,7 +255,7 @@ const UserAdmin: React.FC = () => {
             </CardContent>
           </Card>
         </Grid>
-        <Grid xs={12} sm={6} md={3}>
+        <Grid item xs={12} sm={6} md={3}>
           <Card sx={{ borderLeft: 4, borderColor: 'success.main' }}>
             <CardContent sx={{ py: 1.5 }}>
               <Typography variant="body2" color="text.secondary">Activos</Typography>
@@ -264,7 +264,7 @@ const UserAdmin: React.FC = () => {
           </Card>
         </Grid>
         {byRole.map(({ role, count }) => (
-          <Grid xs={12} sm={6} md={2} key={role}>
+          <Grid item xs={12} sm={6} md={2} key={role}>
             <Card>
               <CardContent sx={{ py: 1.5 }}>
                 <Typography variant="body2" color="text.secondary">{role}</Typography>
@@ -405,7 +405,7 @@ const UserAdmin: React.FC = () => {
       {tab === 1 && (
         <Grid container spacing={2}>
           {branches.map((b) => (
-            <Grid xs={12} sm={6} md={4} key={b.id}>
+            <Grid item xs={12} sm={6} md={4} key={b.id}>
               <Card>
                 <CardContent>
                   <Box display="flex" alignItems="center" gap={1} mb={1}>
@@ -444,32 +444,32 @@ const UserAdmin: React.FC = () => {
         </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Nombre" name="first_name"
                 value={formik.values.first_name} onChange={formik.handleChange}
                 error={formik.touched.first_name && Boolean(formik.errors.first_name)}
                 helperText={formik.touched.first_name && formik.errors.first_name} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Apellido" name="last_name"
                 value={formik.values.last_name} onChange={formik.handleChange}
                 error={formik.touched.last_name && Boolean(formik.errors.last_name)}
                 helperText={formik.touched.last_name && formik.errors.last_name} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Usuario" name="username"
                 value={formik.values.username} onChange={formik.handleChange}
                 error={formik.touched.username && Boolean(formik.errors.username)}
                 helperText={formik.touched.username && formik.errors.username}
                 disabled={!isNew} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Email" name="email" type="email"
                 value={formik.values.email} onChange={formik.handleChange}
                 error={formik.touched.email && Boolean(formik.errors.email)}
                 helperText={formik.touched.email && formik.errors.email} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <FormControl fullWidth>
                 <InputLabel>Rol</InputLabel>
                 <Select name="role" value={formik.values.role}
@@ -480,7 +480,7 @@ const UserAdmin: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <FormControl fullWidth>
                 <InputLabel>Sucursal</InputLabel>
                 <Select name="branch" value={formik.values.branch}
@@ -492,11 +492,11 @@ const UserAdmin: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Teléfono" name="phone"
                 value={formik.values.phone} onChange={formik.handleChange} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <FormControlLabel
                 control={
                   <Switch checked={formik.values.is_active}
@@ -506,7 +506,7 @@ const UserAdmin: React.FC = () => {
               />
             </Grid>
             {isNew && (
-              <Grid xs={12}>
+              <Grid item xs={12}>
                 <Divider sx={{ my: 1 }} />
                 <TextField fullWidth label="Contraseña inicial" name="password"
                   type="password" value={formik.values.password}

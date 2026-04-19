@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/Scripts/python.exe manage.py check --settings=core.settings.development)",
+      "Bash(venv/Scripts/python.exe manage.py makemigrations rates --name add_market_type_to_exchangerate)",
+      "Bash(npx tsc:*)",
+      "Bash(cmd /c \"cd /d e:\\\\data\\\\forex-erp\\\\frontend-web && npx tsc --noEmit 2>&1\")",
+      "Bash(cmd /c \"cd /d e:\\\\data\\\\forex-erp\\\\frontend-web && npx tsc --noEmit\")",
+      "Bash(cmd /c \"cd /d e:\\\\data\\\\forex-erp\\\\frontend-web && npx tsc --noEmit > tsc_out.txt 2>&1 & echo exit:%errorlevel%\")",
+      "Bash(cmd /c \"cd /d e:\\\\data\\\\forex-erp\\\\frontend-web && npx tsc --noEmit && echo TS_OK || echo TS_FAIL\")",
+      "Bash(cmd /c \"type e:\\\\data\\\\forex-erp\\\\frontend-web\\\\tsc_out.txt\")",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(../../backend/../venv/Scripts/python.exe manage.py migrate capital)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(\"e:/data/forex-erp/venv/Scripts/python.exe\" \"e:/data/forex-erp/backend/manage.py\" migrate capital)",
+      "Bash(cmd /c '\"e:\\\\data\\\\forex-erp\\\\venv\\\\Scripts\\\\python.exe\" \"e:\\\\data\\\\forex-erp\\\\backend\\\\manage.py\" migrate capital 2>&1')",
+      "Bash(cmd /c \"e:\\\\data\\\\forex-erp\\\\venv\\\\Scripts\\\\python.exe e:\\\\data\\\\forex-erp\\\\backend\\\\manage.py migrate capital --verbosity 2 > e:\\\\data\\\\forex-erp\\\\migrate_out.txt 2>&1\")",
+      "Bash(echo \"TS_EXIT:$?\")",
+      "Bash(cmd /c \"e:\\\\data\\\\forex-erp\\\\venv\\\\Scripts\\\\python.exe -c \\\\\"import django; print\\(django.__version__\\)\\\\\"\")",
+      "Bash(powershell -Command \"& 'e:\\\\data\\\\forex-erp\\\\venv\\\\Scripts\\\\python.exe' 'e:\\\\data\\\\forex-erp\\\\backend\\\\manage.py' migrate capital --verbosity 1\")",
+      "Bash(\"/e/data/forex-erp/backend/venv/Scripts/python.exe\" \"/e/data/forex-erp/backend/manage.py\" migrate capital --verbosity 1)",
+      "Read(//c/Users/serio/AppData/Local/Temp/claude/e--data-forex-erp/b1840722-90ca-4381-b130-969d6027924c/tasks/**)",
+      "Bash(\"/e/data/forex-erp/backend/venv/Scripts/python.exe\" \"/e/data/forex-erp/backend/manage.py\" check --deploy)",
+      "Bash(\"/e/data/forex-erp/backend/venv/Scripts/python.exe\" \"/e/data/forex-erp/backend/manage.py\" check)",
+      "Bash(grep -v \"^$\")",
+      "Bash(\"/e/data/forex-erp/backend/venv/Scripts/python.exe\" \"/e/data/forex-erp/backend/manage.py\" migrate analytics)"
+    ]
+  }
+}

@@ -6,12 +6,13 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField,
 } from '@mui/material';
-import { Tune, History, Refresh, Warning, CheckCircle } from '@mui/icons-material';
+import { Tune, History, Refresh, Warning, CheckCircle, AccountBalance } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { api } from '../../services/api';
 import { formatNumber } from '../../utils/formatters';
+import { isScaled, formatScale, realAmount } from '../../utils/finance';
 import { useAuth } from '../../contexts/AuthContext';
 
 const InventoryStock: React.FC = () => {
@@ -29,12 +30,17 @@ const InventoryStock: React.FC = () => {
     try {
       const [invRes, alertRes] = await Promise.all([
         api.get('/inventory/stock/'),
-        api.get('/inventory/alerts/', { params: { is_resolved: false } }),
+        api.get('/inventory/alerts/', { params: { is_resolved: false } }).catch(() => ({ data: [] })),
       ]);
-      setInventory(invRes.data.results   ?? invRes.data);
-      setAlerts(alertRes.data.results    ?? alertRes.data);
+      // Siempre array
+      const inv   = invRes.data?.results   ?? invRes.data   ?? [];
+      const alerts = alertRes.data?.results ?? alertRes.data ?? [];
+      setInventory(Array.isArray(inv)    ? inv    : []);
+      setAlerts(   Array.isArray(alerts) ? alerts : []);
     } catch {
       enqueueSnackbar('Error al cargar inventario', { variant: 'error' });
+      setInventory([]);
+      setAlerts([]);
     } finally {
       setLoading(false);
     }
@@ -100,7 +106,7 @@ const InventoryStock: React.FC = () => {
           ['Sobrestock',     inventory.filter(i => i.is_overstocked).length,      'warning'],
           ['Alertas Activas',alerts.length,                                        'warning'],
         ].map(([label, value, color]) => (
-          <Grid xs={12} sm={6} md={3} key={label as string}>
+          <Grid item xs={12} sm={6} md={3} key={label as string}>
             <Card sx={{ borderLeft: 4, borderColor: `${color}.main` }}>
               <CardContent sx={{ py: 1.5 }}>
                 <Typography variant="body2" color="text.secondary">{label as string}</Typography>
@@ -120,7 +126,8 @@ const InventoryStock: React.FC = () => {
               <TableCell>Sucursal</TableCell>
               <TableCell align="right">Físico</TableCell>
               <TableCell align="right">Digital</TableCell>
-              <TableCell align="right">Total</TableCell>
+              <TableCell align="right">Total (lotes)</TableCell>
+              <TableCell align="right">Total real</TableCell>
               <TableCell>Nivel</TableCell>
               <TableCell>Estado</TableCell>
               <TableCell>Actualizado</TableCell>
@@ -128,18 +135,46 @@ const InventoryStock: React.FC = () => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {inventory.map((item) => (
+            {inventory.map((item) => {
+              const scale  = item.currency?.scale_factor ?? 1;
+              const scaled = isScaled(scale);
+              const total  = item.total_balance ?? 0;
+              // Preferir real_total_balance del backend si existe, calcular en su defecto
+              const realTotal = item.real_total_balance ?? realAmount(total, scale);
+              return (
               <TableRow key={item.id} hover
                 sx={{ bgcolor: item.needs_replenishment ? 'error.50' : 'inherit' }}>
                 <TableCell>
-                  <Typography fontWeight="bold">{item.currency?.code}</Typography>
-                  <Typography variant="caption" color="text.secondary">{item.currency?.name}</Typography>
+                  <Box display="flex" alignItems="center" gap={0.75}>
+                    <Box>
+                      <Typography fontWeight="bold">{item.currency?.code}</Typography>
+                      <Typography variant="caption" color="text.secondary">{item.currency?.name}</Typography>
+                    </Box>
+                    {scaled && (
+                      <Chip label={`×${formatScale(scale)}`} size="small"
+                        sx={{ bgcolor: 'warning.main', color: 'warning.contrastText', fontSize: '0.55rem', height: 16 }} />
+                    )}
+                  </Box>
                 </TableCell>
                 <TableCell>{item.branch?.name}</TableCell>
                 <TableCell align="right">{formatNumber(item.physical_balance)}</TableCell>
                 <TableCell align="right">{formatNumber(item.digital_balance)}</TableCell>
                 <TableCell align="right">
-                  <Typography fontWeight="bold">{formatNumber(item.total_balance)}</Typography>
+                  <Typography fontWeight="bold">{formatNumber(total)}</Typography>
+                  {scaled && (
+                    <Typography variant="caption" color="text.secondary" display="block">lotes</Typography>
+                  )}
+                </TableCell>
+                <TableCell align="right">
+                  {scaled ? (
+                    <Tooltip title={`${formatNumber(total)} lotes × ${formatScale(scale)} = ${new Intl.NumberFormat('es-BO').format(realTotal)} ${item.currency?.code} reales`} arrow>
+                      <Typography fontWeight="medium" color="info.main" sx={{ cursor: 'help' }}>
+                        {new Intl.NumberFormat('es-BO', { maximumFractionDigits: 0 }).format(realTotal)}
+                      </Typography>
+                    </Tooltip>
+                  ) : (
+                    <Typography color="text.secondary">—</Typography>
+                  )}
                 </TableCell>
                 <TableCell sx={{ minWidth: 120 }}>
                   <LinearProgress
@@ -183,7 +218,26 @@ const InventoryStock: React.FC = () => {
                   </TableCell>
                 )}
               </TableRow>
-            ))}
+              );
+            })}
+            {!loading && inventory.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} align="center">
+                  <Box py={5} display="flex" flexDirection="column" alignItems="center" gap={1.5}>
+                    <AccountBalance sx={{ fontSize: 56, color: 'action.disabled' }} />
+                    <Typography variant="h6" color="text.secondary">
+                      Sin inventario registrado
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Ejecuta el script seed_kapitalya.py para cargar datos iniciales
+                    </Typography>
+                    <Button variant="outlined" size="small" onClick={load} startIcon={<Refresh />}>
+                      Recargar
+                    </Button>
+                  </Box>
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </TableContainer>
@@ -239,17 +293,17 @@ const InventoryStock: React.FC = () => {
         </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 0.5 }}>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Balance Físico" type="number"
                 value={adjValues.physical_count}
                 onChange={(e) => setAdjValues({ ...adjValues, physical_count: e.target.value })} />
             </Grid>
-            <Grid xs={6}>
+            <Grid item xs={6}>
               <TextField fullWidth label="Balance Digital" type="number"
                 value={adjValues.digital_count}
                 onChange={(e) => setAdjValues({ ...adjValues, digital_count: e.target.value })} />
             </Grid>
-            <Grid xs={12}>
+            <Grid item xs={12}>
               <TextField fullWidth label="Razón del ajuste" multiline rows={2}
                 value={adjValues.reason}
                 onChange={(e) => setAdjValues({ ...adjValues, reason: e.target.value })} />

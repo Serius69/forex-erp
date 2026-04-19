@@ -1,6 +1,7 @@
 # predictions/models.py
 from django.db import models
 from django.contrib.postgres.fields import ArrayField
+from decimal import Decimal
 import json
 
 class PredictionModel(models.Model):
@@ -22,6 +23,7 @@ class PredictionModel(models.Model):
     last_trained = models.DateTimeField(null=True, blank=True)
     
     class Meta:
+        ordering = ['name']
         verbose_name = 'Modelo de Predicción'
         verbose_name_plural = 'Modelos de Predicción'
         unique_together = ['model_type', 'currency_pair']
@@ -54,18 +56,22 @@ class Prediction(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
-        ordering = ['-prediction_date']
+        ordering = ['-created_at']
         indexes = [
             models.Index(fields=['currency_pair', 'prediction_date']),
             models.Index(fields=['created_at']),
         ]
     
     def calculate_error(self):
-        """Calcula el error de predicción si hay tasa real"""
-        if self.actual_rate and self.predicted_rate:
-            error = abs(self.actual_rate - self.predicted_rate)
-            self.error_percentage = (error / self.actual_rate) * 100
-            self.save()
+        """Calcula el error de predicción si hay tasa real (Decimal, MAPE)."""
+        if self.actual_rate and self.predicted_rate and self.actual_rate != 0:
+            actual    = Decimal(str(self.actual_rate))
+            predicted = Decimal(str(self.predicted_rate))
+            error_pct = (abs(actual - predicted) / actual * Decimal('100'))
+            self.error_percentage = float(
+                error_pct.quantize(Decimal('0.0001'))
+            )
+            self.save(update_fields=['error_percentage'])
 
 class TrainingData(models.Model):
     """Datos históricos para entrenamiento"""

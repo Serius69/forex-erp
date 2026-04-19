@@ -60,7 +60,7 @@ const ReportsScheduled: React.FC = () => {
 
       <Grid container spacing={2}>
         {['ASFI', 'GERENCIAL'].map((tipo) => (
-          <Grid xs={12} md={6} key={tipo}>
+          <Grid item xs={12} md={6} key={tipo}>
             <Paper sx={{ p: 2 }}>
               <Typography variant="h6" mb={2} color="primary">
                 Reportes {tipo}
