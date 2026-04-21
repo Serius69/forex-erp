@@ -2,10 +2,15 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.contrib.auth.hashers import make_password, check_password
+from django.utils import timezone
+from datetime import timedelta
 import pyotp # type: ignore
 import qrcode
 from io import BytesIO
 import base64
+
+_LOCKOUT_THRESHOLD = 5
+_LOCKOUT_MINUTES   = 15
 
 class Branch(models.Model):
     name = models.CharField(max_length=100)
@@ -28,19 +33,41 @@ class User(AbstractUser):
         ('SUPERVISOR', 'Supervisor'),
         ('CASHIER', 'Cajero'),
     ]
-    
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='CASHIER')
-    branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, blank=True)
-    pin = models.CharField(max_length=128, blank=True)
-    phone = models.CharField(max_length=20, blank=True)
-    two_factor_secret = models.CharField(max_length=32, blank=True)
-    is_two_factor_enabled = models.BooleanField(default=False)
-    
+
+    email                  = models.EmailField(unique=True)
+    role                   = models.CharField(max_length=20, choices=ROLE_CHOICES, default='CASHIER')
+    branch                 = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, blank=True)
+    pin                    = models.CharField(max_length=128, blank=True)
+    phone                  = models.CharField(max_length=20, blank=True)
+    two_factor_secret      = models.CharField(max_length=32, blank=True)
+    is_two_factor_enabled  = models.BooleanField(default=False)
+    # Security fields
+    is_verified            = models.BooleanField(default=False)
+    failed_login_attempts  = models.PositiveSmallIntegerField(default=0)
+    lockout_until          = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ['username']
         verbose_name = 'Usuario'
         verbose_name_plural = 'Usuarios'
-    
+
+    # ── Lockout helpers ───────────────────────────────────────────────────────
+
+    def is_locked_out(self) -> bool:
+        return bool(self.lockout_until and timezone.now() < self.lockout_until)
+
+    def record_failed_login(self) -> None:
+        self.failed_login_attempts += 1
+        if self.failed_login_attempts >= _LOCKOUT_THRESHOLD:
+            self.lockout_until = timezone.now() + timedelta(minutes=_LOCKOUT_MINUTES)
+        self.save(update_fields=['failed_login_attempts', 'lockout_until'])
+
+    def reset_login_attempts(self) -> None:
+        if self.failed_login_attempts or self.lockout_until:
+            self.failed_login_attempts = 0
+            self.lockout_until = None
+            self.save(update_fields=['failed_login_attempts', 'lockout_until'])
+
     def set_pin(self, raw_pin):
         """Establece el PIN del usuario"""
         self.pin = make_password(raw_pin)

@@ -1,6 +1,7 @@
 // src/contexts/WebSocketContext.tsx
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from './AuthContext';
+import { getAccessToken } from '../services/api';
 import { useSnackbar } from 'notistack';
 
 interface WebSocketContextType {
@@ -47,7 +48,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     if (!mountedRef.current || !user) return;
 
-    const token  = localStorage.getItem('access_token');
+    const token  = getAccessToken();
     const WS_URL = import.meta.env.VITE_WS_BASE_URL || '/ws';
     // En dev el proxy Vite convierte '/ws' → 'ws://localhost:8000/ws'
     // Si WS_URL ya es relativo, construir URL absoluta con el host actual

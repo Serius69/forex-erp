@@ -728,3 +728,458 @@ def analytics_snapshot(request):
     PnLService.recalcular_snapshot_hoy(branch)
 
     return Response({'status': 'ok', 'message': 'Snapshots guardados correctamente'})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/analytics/overview/  — resumen ejecutivo unificado
+# ─────────────────────────────────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def analytics_overview(request):
+    """
+    Resumen ejecutivo del negocio: KPIs del día, semana y mes.
+
+    Query params:
+      all_branches  (ADMIN: agrega todas las sucursales)
+
+    Response:
+      {
+        kpis: {
+          today:   { ganancia_neta, volumen_bob, num_transacciones, spread_promedio },
+          week:    { ... },
+          month:   { ... },
+        },
+        exposure:    { total_exposure_bob, divisas: [...] },
+        top_currencies: [{ currency_code, ganancia_bob, ops }],
+        inventory_health: { healthy, low_stock, overstocked },
+        alerts_summary: { critical, high, medium, unacknowledged },
+        calculado_en: ISO-8601,
+      }
+    """
+    from django.db.models import Sum, Count, Avg
+    from alerts.models import AlertLog
+    from inventory.models import CurrencyInventory
+    from django.db.models import F
+
+    branch = _branch(request)
+    today  = date.today()
+
+    def _pnl_kpi(d_from, d_to):
+        qs = TransactionProfitLedger.objects.filter(
+            transaction_type='SELL',
+            fecha__gte=d_from,
+            fecha__lte=d_to,
+        )
+        if branch:
+            qs = qs.filter(branch=branch)
+        agg = qs.aggregate(
+            ganancia_neta=Sum('profit_bob'),
+            volumen_bob=Sum('amount_bob'),
+            num_ops=Count('id'),
+            spread_prom=Avg('spread_bob'),
+        )
+        return {
+            'ganancia_neta_bob':  str(agg['ganancia_neta'] or 0),
+            'volumen_bob':        str(agg['volumen_bob'] or 0),
+            'num_transacciones':  agg['num_ops'] or 0,
+            'spread_promedio_bob': str(agg['spread_prom'] or 0),
+        }
+
+    week_start  = today - timedelta(days=today.weekday())
+    month_start = today.replace(day=1)
+
+    # KPIs
+    kpis = {
+        'today': _pnl_kpi(today, today),
+        'week':  _pnl_kpi(week_start, today),
+        'month': _pnl_kpi(month_start, today),
+    }
+
+    # Exposure
+    try:
+        exposure = ExposureService.calcular_exposicion(branch=branch)
+    except Exception:
+        exposure = {}
+
+    # Top currencies (this month)
+    top_qs = TransactionProfitLedger.objects.filter(
+        transaction_type='SELL', fecha__gte=month_start
+    )
+    if branch:
+        top_qs = top_qs.filter(branch=branch)
+    top_currencies = list(
+        top_qs.values('currency_code')
+        .annotate(ganancia_bob=Sum('profit_bob'), ops=Count('id'))
+        .order_by('-ganancia_bob')[:6]
+    )
+    for row in top_currencies:
+        row['ganancia_bob'] = str(row['ganancia_bob'] or 0)
+
+    # Inventory health
+    inv_qs = CurrencyInventory.objects.all()
+    if branch:
+        inv_qs = inv_qs.filter(branch=branch)
+    inv_total    = inv_qs.count()
+    low_stock    = inv_qs.filter(physical_balance__lte=F('minimum_stock')).count()
+    overstocked  = inv_qs.filter(physical_balance__gte=F('maximum_stock')).count()
+    inventory_health = {
+        'total':       inv_total,
+        'healthy':     max(0, inv_total - low_stock - overstocked),
+        'low_stock':   low_stock,
+        'overstocked': overstocked,
+    }
+
+    # Alerts summary (last 24h)
+    from django.db.models import Q as DQ
+    cutoff = timezone.now() - timedelta(hours=24)
+    alerts_qs = AlertLog.objects.filter(created_at__gte=cutoff)
+    if branch:
+        alerts_qs = alerts_qs.filter(branch=branch)
+    alerts_summary = alerts_qs.aggregate(
+        critical=Count('id', filter=DQ(severity='CRITICAL')),
+        high=Count('id', filter=DQ(severity='HIGH')),
+        medium=Count('id', filter=DQ(severity='MEDIUM')),
+        unacknowledged=Count('id', filter=DQ(is_acknowledged=False)),
+    )
+
+    return Response({
+        'kpis':             kpis,
+        'exposure':         exposure,
+        'top_currencies':   top_currencies,
+        'inventory_health': inventory_health,
+        'alerts_summary':   alerts_summary,
+        'calculado_en':     timezone.now().isoformat(),
+        'branch':           branch.code if branch else 'global',
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/analytics/trends/  — series de tiempo multi-KPI
+# ─────────────────────────────────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def analytics_trends(request):
+    """
+    Series temporales de KPIs financieros para gráficos de tendencia.
+
+    Query params:
+      date_from     (default: 30 días atrás)
+      date_to       (default: hoy)
+      granularity   daily | weekly (default: daily)
+      metrics       comma-separated: pnl,volume,spread,transactions (default: all)
+
+    Response:
+      {
+        period: { desde, hasta, granularity },
+        series: {
+          pnl:          [{ fecha, ganancia_neta_bob, ganancia_bruta_bob }],
+          volume:       [{ fecha, volumen_bob, num_transacciones }],
+          spread:       [{ fecha, spread_promedio_bob }],
+          transactions: [{ fecha, buy_count, sell_count }],
+        },
+        summary: { trend_direction, growth_pct_mom, best_day, worst_day },
+      }
+    """
+    from django.db.models import Sum, Count, Avg
+    from transactions.models import Transaction
+
+    branch    = _branch(request)
+    date_from, date_to = _parse_dates(request, default_days=30)
+    granularity = request.query_params.get('granularity', 'daily')
+    metrics_param = request.query_params.get('metrics', 'pnl,volume,spread,transactions')
+    requested_metrics = {m.strip() for m in metrics_param.split(',')}
+
+    # P&L y volumen diario desde PnLDailySnapshot si existe, sino desde ledger
+    series = {}
+
+    if 'pnl' in requested_metrics or 'volume' in requested_metrics:
+        pnl_data = PnLService.series_pnl(branch, date_from, date_to)
+        if 'pnl' in requested_metrics:
+            series['pnl'] = [
+                {
+                    'fecha':             str(r['fecha']),
+                    'ganancia_neta_bob': str(r.get('ganancia_neta_bob') or 0),
+                    'ganancia_bruta_bob': str(r.get('ganancia_bruta_bob') or 0),
+                    'margen_neto_pct':   str(r.get('margen_neto_pct') or 0),
+                }
+                for r in pnl_data
+            ]
+        if 'volume' in requested_metrics:
+            series['volume'] = [
+                {
+                    'fecha':              str(r['fecha']),
+                    'volumen_bob':        str(r.get('ingreso_ventas_bob') or 0),
+                    'num_transacciones':  r.get('num_ops', 0),
+                }
+                for r in pnl_data
+            ]
+
+    if 'spread' in requested_metrics:
+        spreads_data = SpreadService.series_spread('USD', 'paralelo_fisico_empresa',
+                                                    (date_to - date_from).days or 30)
+        series['spread'] = [
+            {
+                'fecha':              r['timestamp'].split('T')[0] if 'T' in str(r.get('timestamp', '')) else str(r.get('timestamp', '')),
+                'spread_promedio_bob': str(r.get('spread_bob') or 0),
+                'spread_pct':         str(r.get('spread_pct') or 0),
+            }
+            for r in spreads_data
+        ]
+
+    if 'transactions' in requested_metrics:
+        from django.db.models import Q as DQ
+        tx_qs = Transaction.objects.filter(
+            status='COMPLETED',
+            created_at__date__gte=date_from,
+            created_at__date__lte=date_to,
+        )
+        if branch:
+            tx_qs = tx_qs.filter(branch=branch)
+
+        tx_daily = (
+            tx_qs
+            .values('created_at__date')
+            .annotate(
+                buy_count=Count('id', filter=DQ(transaction_type='BUY')),
+                sell_count=Count('id', filter=DQ(transaction_type='SELL')),
+            )
+            .order_by('created_at__date')
+        )
+        series['transactions'] = [
+            {
+                'fecha':      str(r['created_at__date']),
+                'buy_count':  r['buy_count'],
+                'sell_count': r['sell_count'],
+                'total':      r['buy_count'] + r['sell_count'],
+            }
+            for r in tx_daily
+        ]
+
+    # Summary: trend direction
+    pnl_series = series.get('pnl', [])
+    trend_direction = 'STABLE'
+    growth_pct_mom  = '0'
+    if len(pnl_series) >= 2:
+        try:
+            from decimal import Decimal as D
+            first_half = sum(D(r['ganancia_neta_bob']) for r in pnl_series[:len(pnl_series)//2])
+            second_half = sum(D(r['ganancia_neta_bob']) for r in pnl_series[len(pnl_series)//2:])
+            if first_half > 0:
+                growth = (second_half - first_half) / first_half * 100
+                growth_pct_mom = str(growth.quantize(D('0.01')))
+                trend_direction = 'UP' if growth > 1 else ('DOWN' if growth < -1 else 'STABLE')
+        except Exception:
+            pass
+
+    return Response({
+        'period': {
+            'desde':       str(date_from),
+            'hasta':       str(date_to),
+            'granularity': granularity,
+        },
+        'series':  series,
+        'summary': {
+            'trend_direction': trend_direction,
+            'growth_pct':      growth_pct_mom,
+        },
+        'calculado_en': timezone.now().isoformat(),
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/analytics/anomalies/  — detección de anomalías en tiempo real
+# ─────────────────────────────────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def analytics_anomalies(request):
+    """
+    Detección de anomalías financieras: spreads, volumen, inventario, tasas.
+
+    Query params:
+      severity   CRITICAL | HIGH | MEDIUM | LOW (default: all)
+      source     RATES | INVENTORY | TRANSACTIONS | CAPITAL (default: all)
+      limit      max anomalies to return (default: 20)
+
+    Response:
+      {
+        anomalies: [
+          {
+            type, severity, title, description,
+            value, threshold, deviation_pct, detected_at,
+            recommendation,
+          }
+        ],
+        summary: { total, critical, high, medium, low },
+        last_checked: ISO-8601,
+      }
+    """
+    from decimal import Decimal as D
+    from rates.models import ExchangeRate, Currency
+    from inventory.models import CurrencyInventory
+    from transactions.models import Transaction
+    from django.db.models import Avg, StdDev, Q as DQ, F
+
+    branch   = _branch(request)
+    severity_filter = request.query_params.get('severity', '').upper()
+    source_filter   = request.query_params.get('source', '').upper()
+    limit           = min(int(request.query_params.get('limit', 20)), 100)
+
+    anomalies = []
+    now = timezone.now()
+
+    # ── 1. Spread anomalies (spread > 3x historical average) ──────────────────
+    try:
+        spreads = SpreadService.calcular_spreads(branch=branch)
+        spread_list = spreads.get('spreads', spreads) if isinstance(spreads, dict) else spreads
+        if isinstance(spread_list, list):
+            for sp in spread_list:
+                spread_pct = float(sp.get('spread_pct', 0) or 0)
+                if spread_pct > 5.0:
+                    anomalies.append({
+                        'type':           'SPREAD_ANOMALY',
+                        'source':         'RATES',
+                        'severity':       'HIGH' if spread_pct > 8 else 'MEDIUM',
+                        'title':          f'Spread anómalo — {sp.get("currency_code", "?")}',
+                        'description':    f'Spread del {spread_pct:.2f}% supera el umbral normal (5%).',
+                        'value':          str(spread_pct),
+                        'threshold':      '5.0',
+                        'deviation_pct':  str(round((spread_pct - 5.0) / 5.0 * 100, 2)),
+                        'detected_at':    now.isoformat(),
+                        'recommendation': 'Revisar tasas de compra/venta y competencia.',
+                    })
+    except Exception:
+        pass
+
+    # ── 2. Rate divergence (parallel vs official > 15%) ──────────────────────
+    try:
+        bob = Currency.objects.filter(code='BOB').first()
+        if bob:
+            rates_map = {}
+            for r in (ExchangeRate.objects
+                      .filter(currency_to=bob, valid_until__isnull=True)
+                      .select_related('currency_from')):
+                code = r.currency_from.code
+                if code not in rates_map:
+                    rates_map[code] = {}
+                rates_map[code][r.market_type] = r
+
+            for code, mmap in rates_map.items():
+                official = mmap.get('bcb_oficial') or mmap.get('official')
+                parallel = mmap.get('paralelo_fisico_empresa') or mmap.get('paralelo_digital')
+                if official and parallel:
+                    off_sell = float(official.sell_rate or 0)
+                    par_sell = float(parallel.sell_rate or 0)
+                    if off_sell > 0:
+                        divergence = abs(par_sell - off_sell) / off_sell * 100
+                        if divergence > 15:
+                            anomalies.append({
+                                'type':           'RATE_DIVERGENCE',
+                                'source':         'RATES',
+                                'severity':       'CRITICAL' if divergence > 25 else 'HIGH',
+                                'title':          f'Divergencia tasa oficial/paralela — {code}',
+                                'description':    f'Diferencia del {divergence:.1f}% entre mercado oficial y paralelo.',
+                                'value':          str(round(divergence, 2)),
+                                'threshold':      '15',
+                                'deviation_pct':  str(round(divergence - 15, 2)),
+                                'detected_at':    now.isoformat(),
+                                'recommendation': f'Verificar fuentes de tasas para {code}.',
+                            })
+    except Exception:
+        pass
+
+    # ── 3. Inventory anomalies ─────────────────────────────────────────────────
+    try:
+        inv_qs = CurrencyInventory.objects.select_related('currency')
+        if branch:
+            inv_qs = inv_qs.filter(branch=branch)
+        for inv in inv_qs:
+            bal = float(inv.physical_balance or 0)
+            mn  = float(inv.minimum_stock or 0)
+            mx  = float(inv.maximum_stock or 0)
+            if mn > 0 and bal < mn:
+                deficit_pct = (mn - bal) / mn * 100
+                anomalies.append({
+                    'type':          'LOW_STOCK',
+                    'source':        'INVENTORY',
+                    'severity':      'CRITICAL' if deficit_pct > 50 else 'HIGH',
+                    'title':         f'Stock bajo — {inv.currency.code}',
+                    'description':   f'Balance {bal:,.0f} < mínimo {mn:,.0f} ({deficit_pct:.0f}% deficit).',
+                    'value':         str(bal),
+                    'threshold':     str(mn),
+                    'deviation_pct': str(round(-deficit_pct, 2)),
+                    'detected_at':   now.isoformat(),
+                    'recommendation': f'Reponer inventario de {inv.currency.code} urgentemente.',
+                })
+            if mx > 0 and bal > mx * 1.5:
+                excess_pct = (bal - mx) / mx * 100
+                anomalies.append({
+                    'type':          'OVERSTOCK',
+                    'source':        'INVENTORY',
+                    'severity':      'MEDIUM',
+                    'title':         f'Sobrestock — {inv.currency.code}',
+                    'description':   f'Balance {bal:,.0f} > máximo {mx:,.0f} ({excess_pct:.0f}% exceso).',
+                    'value':         str(bal),
+                    'threshold':     str(mx),
+                    'deviation_pct': str(round(excess_pct, 2)),
+                    'detected_at':   now.isoformat(),
+                    'recommendation': f'Considerar venta de excedente de {inv.currency.code}.',
+                })
+    except Exception:
+        pass
+
+    # ── 4. Transaction volume spike (> 3x hourly average) ─────────────────────
+    try:
+        last_hour_start = now - timedelta(hours=1)
+        prev_hour_start = now - timedelta(hours=2)
+        tx_qs_base = Transaction.objects.filter(status='COMPLETED')
+        if branch:
+            tx_qs_base = tx_qs_base.filter(branch=branch)
+        last_hour_count = tx_qs_base.filter(created_at__gte=last_hour_start).count()
+        prev_hour_count = tx_qs_base.filter(
+            created_at__gte=prev_hour_start, created_at__lt=last_hour_start
+        ).count()
+        if prev_hour_count > 0 and last_hour_count > prev_hour_count * 3:
+            spike_pct = (last_hour_count - prev_hour_count) / prev_hour_count * 100
+            anomalies.append({
+                'type':          'VOLUME_SPIKE',
+                'source':        'TRANSACTIONS',
+                'severity':      'MEDIUM',
+                'title':         'Spike de volumen de transacciones',
+                'description':   f'{last_hour_count} tx en la última hora vs {prev_hour_count} en la hora anterior (+{spike_pct:.0f}%).',
+                'value':         str(last_hour_count),
+                'threshold':     str(prev_hour_count * 3),
+                'deviation_pct': str(round(spike_pct, 2)),
+                'detected_at':   now.isoformat(),
+                'recommendation': 'Monitorear transacciones sospechosas por posible fraude.',
+            })
+    except Exception:
+        pass
+
+    # ── Filter & sort ──────────────────────────────────────────────────────────
+    severity_order = {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3}
+    if severity_filter:
+        anomalies = [a for a in anomalies if a['severity'] == severity_filter]
+    if source_filter:
+        anomalies = [a for a in anomalies if a['source'] == source_filter]
+
+    anomalies.sort(key=lambda a: severity_order.get(a['severity'], 99))
+    anomalies = anomalies[:limit]
+
+    from collections import Counter
+    sev_counts = Counter(a['severity'] for a in anomalies)
+
+    return Response({
+        'anomalies': anomalies,
+        'summary': {
+            'total':    len(anomalies),
+            'critical': sev_counts.get('CRITICAL', 0),
+            'high':     sev_counts.get('HIGH', 0),
+            'medium':   sev_counts.get('MEDIUM', 0),
+            'low':      sev_counts.get('LOW', 0),
+        },
+        'branch':       branch.code if branch else 'global',
+        'last_checked': now.isoformat(),
+    })

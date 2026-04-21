@@ -1,12 +1,17 @@
 export interface User {
-  id: number;
-  username: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  role: 'ADMIN' | 'SUPERVISOR' | 'CASHIER';
-  branch: Branch;
+  id:                    number;
+  username:              string;
+  email:                 string;
+  first_name:            string;
+  last_name:             string;
+  role:                  'ADMIN' | 'SUPERVISOR' | 'CASHIER';
+  branch:                Branch | null;
+  branch_id?:            number | null;
+  is_active:             boolean;
+  is_verified:           boolean;
   is_two_factor_enabled: boolean;
+  date_joined?:          string;
+  last_login?:           string | null;
 }
 
 export interface Branch {

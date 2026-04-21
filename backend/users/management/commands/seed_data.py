@@ -39,14 +39,14 @@ log = logging.getLogger(__name__)
 # -------------------------------------------------------------------------
 
 CURRENCIES = [
-    {'code': 'BOB', 'name': 'Boliviano',       'symbol': 'Bs.',  'scale_factor': 1,    'is_active': True},
-    {'code': 'USD', 'name': 'Dólar EE.UU.',    'symbol': '$',    'scale_factor': 1,    'is_active': True},
-    {'code': 'EUR', 'name': 'Euro',             'symbol': '€',    'scale_factor': 1,    'is_active': True},
-    {'code': 'CLP', 'name': 'Peso Chileno',     'symbol': 'CLP',  'scale_factor': 1000, 'is_active': True},
-    {'code': 'PEN', 'name': 'Sol Peruano',      'symbol': 'S/.',  'scale_factor': 1,    'is_active': True},
-    {'code': 'BRL', 'name': 'Real Brasileño',   'symbol': 'R$',   'scale_factor': 1,    'is_active': True},
-    {'code': 'ARS', 'name': 'Peso Argentino',   'symbol': '$',    'scale_factor': 1000, 'is_active': True},
-    {'code': 'GBP', 'name': 'Libra Esterlina',  'symbol': '£',    'scale_factor': 1,    'is_active': True},
+    {'code': 'BOB', 'name_en': 'Boliviano',       'name_es': 'Boliviano',       'symbol': 'Bs.',  'scale_factor': 1,    'is_active': True, 'is_base_currency': True,  'use_exchange_rate': False},
+    {'code': 'USD', 'name_en': 'US Dollar',        'name_es': 'Dolar Americano', 'symbol': '$',    'scale_factor': 1,    'is_active': True, 'is_base_currency': False, 'use_exchange_rate': True},
+    {'code': 'EUR', 'name_en': 'Euro',             'name_es': 'Euro',            'symbol': 'EUR',  'scale_factor': 1,    'is_active': True, 'is_base_currency': False, 'use_exchange_rate': True},
+    {'code': 'CLP', 'name_en': 'Chilean Peso',     'name_es': 'Peso Chileno',    'symbol': 'CLP',  'scale_factor': 1000, 'is_active': True, 'is_base_currency': False, 'use_exchange_rate': True},
+    {'code': 'PEN', 'name_en': 'Peruvian Sol',     'name_es': 'Sol Peruano',     'symbol': 'S/.',  'scale_factor': 1,    'is_active': True, 'is_base_currency': False, 'use_exchange_rate': True},
+    {'code': 'BRL', 'name_en': 'Brazilian Real',   'name_es': 'Real Brasileno',  'symbol': 'R$',   'scale_factor': 1,    'is_active': True, 'is_base_currency': False, 'use_exchange_rate': True},
+    {'code': 'ARS', 'name_en': 'Argentine Peso',   'name_es': 'Peso Argentino',  'symbol': 'ARS',  'scale_factor': 1000, 'is_active': True, 'is_base_currency': False, 'use_exchange_rate': True},
+    {'code': 'GBP', 'name_en': 'British Pound',    'name_es': 'Libra Esterlina', 'symbol': 'GBP',  'scale_factor': 1,    'is_active': True, 'is_base_currency': False, 'use_exchange_rate': True},
 ]
 
 BRANCHES = [
@@ -352,14 +352,14 @@ class Command(BaseCommand):
 
     def _seed_currencies(self):
         from rates.models import Currency
-        self.stdout.write('\n? Divisas...')
+        self.stdout.write('\n[1/10] Divisas...')
         for c in CURRENCIES:
             obj, created = Currency.objects.get_or_create(
                 code=c['code'],
                 defaults={k: v for k, v in c.items() if k != 'code'},
             )
-            mark = '  [+]' if created else '  .'
-            self.stdout.write(f'{mark} {obj.code:5} {obj.name}')
+            mark = '  [+]' if created else '  [ ]'
+            self.stdout.write(f'{mark} {obj.code:5} {obj.name_en}')
         self._currencies = {c.code: c for c in Currency.objects.all()}
 
     def _seed_branches(self):
@@ -450,12 +450,15 @@ class Command(BaseCommand):
                 ).exists()
 
                 if not exists:
+                    avg_var = _q((buy_var + sell_var) / Decimal('2'), 4)
                     ExchangeRate.objects.create(
                         currency_from=currency,
                         currency_to=bob,
                         official_rate=off_base,
                         buy_rate=buy_var,
                         sell_rate=sell_var,
+                        avg_rate=avg_var,          # pre-quantized → bypasses save() auto-compute
+                        source_method='MANUAL',
                         market_type='paralelo_fisico_empresa',
                         rate_source=source_paralelo,
                         source='Paralelo Fisico',
@@ -477,12 +480,15 @@ class Command(BaseCommand):
                     valid_until__isnull=True,
                 ).exists()
                 if not exists_bcb:
+                    bcb_avg = _q((bcb_buy + bcb_sell) / Decimal('2'), 4)
                     ExchangeRate.objects.create(
                         currency_from=currency,
                         currency_to=bob,
                         official_rate=off_base,
                         buy_rate=bcb_buy,
                         sell_rate=bcb_sell,
+                        avg_rate=bcb_avg,
+                        source_method='MANUAL',
                         market_type='bcb',
                         rate_source=source_bcb,
                         source='BCB',
@@ -1073,7 +1079,7 @@ class Command(BaseCommand):
                         timestamp=now - timedelta(hours=random.randint(0, 6)),
                         branch=branch,
                         currency_code=code,
-                        currency_name=cur_obj.name if cur_obj else code,
+                        currency_name=cur_obj.name_en if cur_obj else code,
                         scale_factor=cur_obj.scale_factor if cur_obj else 1,
                         stock_units=stock,
                         wac=wac,

@@ -10,7 +10,7 @@ import {
   ExpandMore, ExpandLess, Refresh,
 } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
-import { parseRates } from '../../services/api';
+import { parseRates, getAccessToken } from '../../services/api';
 import { formatRate, isScaled, formatScale } from '../../utils/finance';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ const API_BASE = (import.meta as any).env?.VITE_API_URL ?? '/api';
 async function fetchEnginePrimary(): Promise<Record<string, any>> {
   try {
     const res = await fetch(`${API_BASE}/rates/engine/primary/`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('access_token') ?? ''}` },
+      headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
     });
     if (!res.ok) return {};
     const data = await res.json();
@@ -32,7 +32,7 @@ async function fetchEnginePrimary(): Promise<Record<string, any>> {
 async function fetchEngineSummary(currency: string): Promise<any | null> {
   try {
     const res = await fetch(`${API_BASE}/rates/engine/summary/?currency=${currency}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('access_token') ?? ''}` },
+      headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` },
     });
     if (!res.ok) return null;
     return await res.json();

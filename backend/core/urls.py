@@ -3,9 +3,9 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from rest_framework_simplejwt.views import TokenRefreshView, TokenBlacklistView
 from rest_framework.routers import DefaultRouter
-from users.views import ForexTokenView, dashboard_stats
+from rest_framework_simplejwt.views import TokenRefreshView, TokenBlacklistView
+from users.views import ForexTokenView, SignupView, GoogleAuthView, dashboard_stats
 from transactions.views import TransactionViewSet, CustomerViewSet
 from core.health import health_check, readiness_check, metrics_view
 from core.exceptions import handler_404, handler_500
@@ -34,9 +34,11 @@ urlpatterns = [
     path('health/metrics/',  metrics_view,    name='metrics'),
 
     # Auth
-    path('api/auth/login/',    ForexTokenView.as_view(),      name='token_obtain_pair'),
-    path('api/auth/refresh/',  TokenRefreshView.as_view(),    name='token_refresh'),
-    path('api/auth/logout/',   TokenBlacklistView.as_view(),  name='token_blacklist'),
+    path('api/auth/signup/',  SignupView.as_view(),       name='auth_signup'),
+    path('api/auth/login/',   ForexTokenView.as_view(),   name='token_obtain_pair'),
+    path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/auth/logout/',  TokenBlacklistView.as_view(), name='token_blacklist'),
+    path('api/auth/google/',  GoogleAuthView.as_view(),   name='auth_google'),
 
     # Users
     path('api/users/',         include('users.urls')),

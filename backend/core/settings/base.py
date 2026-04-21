@@ -78,6 +78,13 @@ WSGI_APPLICATION = 'core.wsgi.application'
 ASGI_APPLICATION = 'core.asgi.application'
 AUTH_USER_MODEL  = 'users.User'
 
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'users.auth_backends.EmailOrUsernameBackend',
+]
+
+GOOGLE_CLIENT_ID = env('GOOGLE_CLIENT_ID', default='')
+
 TEMPLATES = [{
     'BACKEND': 'django.template.backends.django.DjangoTemplates',
     'DIRS': [BASE_DIR / 'templates'],
@@ -116,6 +123,20 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'core.throttling.ForexBurstThrottle',
+        'core.throttling.ForexSustainedThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'burst':        '60/min',
+        'sustained':    '1000/hour',
+        'auth':         '10/min',
+        'transactions': '30/min',
+        'analytics':    '120/min',
+        'rates':        '60/min',
+        'anon':         '20/min',
+        'none':         None,
+    },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 25,
     'DEFAULT_RENDERER_CLASSES': [
@@ -125,8 +146,8 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME':    timedelta(hours=8),
-    'REFRESH_TOKEN_LIFETIME':   timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME':    timedelta(minutes=15),
+    'REFRESH_TOKEN_LIFETIME':   timedelta(days=1),
     'ROTATE_REFRESH_TOKENS':    True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN':        True,

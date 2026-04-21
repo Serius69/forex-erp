@@ -6,6 +6,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFnsV3';
 import { SnackbarProvider } from 'notistack';
 import { Provider } from 'react-redux';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { es as esLocale } from 'date-fns/locale';
 
 import { store } from './store';
@@ -13,9 +14,11 @@ import { theme } from './styles/theme';
 import { AuthProvider } from './contexts/AuthContext';
 import { WebSocketProvider } from './contexts/WebSocketContext';
 import PrivateRoute from './components/common/PrivateRoute';
+import RoleRoute from './components/common/RoleRoute';
 import MainLayout from './components/common/MainLayout';
 
 const Login        = lazy(() => import('./components/auth/Login'));
+const Signup       = lazy(() => import('./components/auth/Signup'));
 const Dashboard    = lazy(() => import('./components/dashboard/Dashboard'));
 const Transactions = lazy(() => import('./components/transactions/Transactions'));
 const Inventory    = lazy(() => import('./components/inventory/Inventory'));
@@ -36,6 +39,8 @@ const ExecutiveDashboard  = lazy(() => import('./components/executive/ExecutiveD
 const AlertasPage         = lazy(() => import('./components/alertas/AlertasPage'));
 const DecisionesPage      = lazy(() => import('./components/decisiones/DecisionesPage'));
 
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+
 const LoadingScreen = () => (
   <Box display="flex" alignItems="center" justifyContent="center" height="100vh">
     <CircularProgress size={60} />
@@ -44,57 +49,67 @@ const LoadingScreen = () => (
 
 function App() {
   return (
-    <Provider store={store}>
-      <ThemeProvider theme={theme}>
-        <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={esLocale}>
-          <SnackbarProvider maxSnack={3} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
-            <CssBaseline />
-            {/* ✅ Router envuelve AuthProvider */}
-            <Router>
-              <AuthProvider>
-                <Suspense fallback={<LoadingScreen />}>
-                  <Routes>
-                    <Route path="/login" element={<Login />} />
-                    <Route
-                      path="/"
-                      element={
-                        <PrivateRoute>
-                          <WebSocketProvider>
-                            <MainLayout />
-                          </WebSocketProvider>
-                        </PrivateRoute>
-                      }
-                    >
-                      <Route index element={<Navigate to="/dashboard" replace />} />
-                      <Route path="dashboard"      element={<Dashboard />} />
-                      <Route path="transactions/*" element={<Transactions />} />
-                      <Route path="inventory/*"    element={<Inventory />} />
-                      <Route path="predictions"    element={<Predictions />} />
-                      <Route path="reports/*"      element={<Reports />} />
-                      <Route path="customers/*"    element={<Customers />} />
-                      <Route path="settings/*"     element={<Settings />} />
-                      <Route path="rates/*"      element={<Rates />} />
-                      <Route path="admin/users"       element={<UserAdmin />} />
-                      <Route path="admin/audit"       element={<AuditLog />} />
-                      <Route path="admin/maintenance" element={<MaintenancePanel />} />
-                      <Route path="tarjetas"     element={<Tarjetas />} />
-                      <Route path="capital"      element={<Capital />} />
-                      <Route path="ganancias"    element={<Ganancias />} />
-                      <Route path="analytics"    element={<Analytics />} />
-                      <Route path="executive"    element={<ExecutiveDashboard />} />
-                      <Route path="import"       element={<ImportData />} />
-                      <Route path="alertas"      element={<AlertasPage />} />
-                      <Route path="decisiones"   element={<DecisionesPage />} />
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <Provider store={store}>
+        <ThemeProvider theme={theme}>
+          <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={esLocale}>
+            <SnackbarProvider maxSnack={3} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
+              <CssBaseline />
+              <Router>
+                <AuthProvider>
+                  <Suspense fallback={<LoadingScreen />}>
+                    <Routes>
+                      {/* Public auth routes */}
+                      <Route path="/login"  element={<Login />} />
+                      <Route path="/signup" element={<Signup />} />
 
-                    </Route>
-                  </Routes>
-                </Suspense>
-              </AuthProvider>
-            </Router>
-          </SnackbarProvider>
-        </LocalizationProvider>
-      </ThemeProvider>
-    </Provider>
+                      {/* Protected app shell */}
+                      <Route
+                        path="/"
+                        element={
+                          <PrivateRoute>
+                            <WebSocketProvider>
+                              <MainLayout />
+                            </WebSocketProvider>
+                          </PrivateRoute>
+                        }
+                      >
+                        <Route index element={<Navigate to="/dashboard" replace />} />
+
+                        {/* All roles */}
+                        <Route path="dashboard"      element={<Dashboard />} />
+                        <Route path="transactions/*" element={<Transactions />} />
+                        <Route path="customers/*"    element={<Customers />} />
+                        <Route path="inventory/*"    element={<Inventory />} />
+                        <Route path="rates/*"        element={<Rates />} />
+                        <Route path="tarjetas"       element={<Tarjetas />} />
+                        <Route path="settings/*"     element={<Settings />} />
+                        <Route path="alertas"        element={<AlertasPage />} />
+
+                        {/* Supervisor + Admin */}
+                        <Route path="analytics"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Analytics /></RoleRoute>} />
+                        <Route path="capital"     element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Capital /></RoleRoute>} />
+                        <Route path="ganancias"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Ganancias /></RoleRoute>} />
+                        <Route path="reports/*"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Reports /></RoleRoute>} />
+                        <Route path="predictions" element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Predictions /></RoleRoute>} />
+                        <Route path="decisiones"  element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><DecisionesPage /></RoleRoute>} />
+
+                        {/* Admin only */}
+                        <Route path="executive"         element={<RoleRoute roles={['ADMIN']}><ExecutiveDashboard /></RoleRoute>} />
+                        <Route path="import"            element={<RoleRoute roles={['ADMIN']}><ImportData /></RoleRoute>} />
+                        <Route path="admin/users"       element={<RoleRoute roles={['ADMIN']}><UserAdmin /></RoleRoute>} />
+                        <Route path="admin/audit"       element={<RoleRoute roles={['ADMIN']}><AuditLog /></RoleRoute>} />
+                        <Route path="admin/maintenance" element={<RoleRoute roles={['ADMIN']}><MaintenancePanel /></RoleRoute>} />
+                      </Route>
+                    </Routes>
+                  </Suspense>
+                </AuthProvider>
+              </Router>
+            </SnackbarProvider>
+          </LocalizationProvider>
+        </ThemeProvider>
+      </Provider>
+    </GoogleOAuthProvider>
   );
 }
 
