@@ -87,6 +87,7 @@ class GlobalAlertService:
 
         GlobalAlertService._push_websocket(alert_log, severity_norm, title, message, source)
         GlobalAlertService._push_system_cache(source, message, severity_norm)
+        GlobalAlertService._send_email(severity_norm, title, message, source, alert_type)
         GlobalAlertService._log(severity_norm, source, alert_type, message)
 
         return alert_log
@@ -151,7 +152,41 @@ class GlobalAlertService:
         except Exception as exc:
             log.debug('ALERT_CACHE_FAILED err=%s', exc)
 
-    # ── Paso 4: logger ───────────────────────────────────────────────────────
+    # ── Paso 4: email para alertas CRITICAL/HIGH ─────────────────────────────
+
+    @staticmethod
+    def _send_email(severity: str, title: str, message: str, source: str, alert_type: str) -> None:
+        if severity not in ('CRITICAL', 'HIGH'):
+            return
+        try:
+            from django.conf import settings as djset
+            from django.core.mail import send_mail
+
+            recipients = getattr(djset, 'ALERT_EMAIL_RECIPIENTS', [])
+            if not recipients:
+                return
+
+            severity_label = '🔴 CRÍTICO' if severity == 'CRITICAL' else '🟠 ALTO'
+            subject = f'[Kapitalya] {severity_label}: {title}'
+            body = (
+                f'Se ha generado una alerta {severity_label} en Kapitalya ERP.\n\n'
+                f'Fuente : {source}\n'
+                f'Tipo   : {alert_type}\n'
+                f'Título : {title}\n\n'
+                f'Detalle:\n{message}\n\n'
+                f'-- Kapitalya Sistema Financiero --'
+            )
+            send_mail(
+                subject,
+                body,
+                djset.DEFAULT_FROM_EMAIL,
+                recipients,
+                fail_silently=True,
+            )
+        except Exception as exc:
+            log.debug('ALERT_EMAIL_FAILED err=%s', exc)
+
+    # ── Paso 5: logger ───────────────────────────────────────────────────────
 
     @staticmethod
     def _log(severity, source, alert_type, message):

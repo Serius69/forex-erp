@@ -2,6 +2,7 @@ import re
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 from .models import User, Branch, UserActivity
+from tenants.serializers import CompanyPublicSerializer
 
 
 def _validate_password_strength(value: str) -> str:
@@ -18,26 +19,40 @@ def _validate_password_strength(value: str) -> str:
 
 
 class BranchSerializer(serializers.ModelSerializer):
+    company_name = serializers.SerializerMethodField()
+
     class Meta:
         model  = Branch
-        fields = ['id', 'name', 'code', 'address', 'phone', 'is_active', 'created_at']
+        fields = [
+            'id', 'name', 'code', 'city', 'address', 'phone',
+            'is_main', 'is_active', 'company_id', 'company_name', 'created_at',
+        ]
+
+    def get_company_name(self, obj):
+        return obj.company.name if obj.company_id else None
 
 
 class UserSerializer(serializers.ModelSerializer):
-    branch    = BranchSerializer(read_only=True)
-    branch_id = serializers.PrimaryKeyRelatedField(
+    branch     = BranchSerializer(read_only=True)
+    branch_id  = serializers.PrimaryKeyRelatedField(
         queryset=Branch.objects.all(), source='branch', write_only=True,
-        required=False, allow_null=True)
+        required=False, allow_null=True,
+    )
+    company    = CompanyPublicSerializer(read_only=True)
+    company_id = serializers.PrimaryKeyRelatedField(
+        source='company',
+        read_only=True,
+    )
 
     class Meta:
         model  = User
         fields = [
             'id', 'username', 'first_name', 'last_name', 'email',
-            'role', 'branch', 'branch_id', 'phone',
+            'role', 'branch', 'branch_id', 'company', 'company_id', 'phone',
             'is_two_factor_enabled', 'is_active', 'is_verified',
             'date_joined', 'last_login',
         ]
-        read_only_fields = ['date_joined', 'last_login', 'is_verified']
+        read_only_fields = ['date_joined', 'last_login', 'is_verified', 'company', 'company_id']
 
     def create(self, validated_data):
         password = validated_data.pop('password', None)
@@ -51,7 +66,8 @@ class UserSerializer(serializers.ModelSerializer):
 class UserCreateSerializer(serializers.ModelSerializer):
     password  = serializers.CharField(write_only=True, min_length=8)
     branch_id = serializers.PrimaryKeyRelatedField(
-        queryset=Branch.objects.all(), source='branch', required=False, allow_null=True)
+        queryset=Branch.objects.all(), source='branch', required=False, allow_null=True,
+    )
 
     class Meta:
         model  = User
@@ -104,15 +120,20 @@ class SignupSerializer(serializers.Serializer):
             username = f'{base}{counter}'
             counter += 1
 
+        # Assign to default company if it exists
+        from tenants.models import Company
+        default_company = Company.objects.filter(is_active=True).order_by('id').first()
+
         return User.objects.create_user(
-            username   = username,
-            email      = email,
-            password   = validated_data['password'],
-            first_name = validated_data.get('first_name', ''),
-            last_name  = validated_data.get('last_name', ''),
-            role       = 'CASHIER',
-            is_active  = True,
-            is_verified= False,
+            username    = username,
+            email       = email,
+            password    = validated_data['password'],
+            first_name  = validated_data.get('first_name', ''),
+            last_name   = validated_data.get('last_name', ''),
+            role        = 'CASHIER',
+            is_active   = True,
+            is_verified = False,
+            company     = default_company,
         )
 
 
@@ -121,10 +142,7 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, data):
-        user = authenticate(
-            username=data['username'],
-            password=data['password']
-        )
+        user = authenticate(username=data['username'], password=data['password'])
         if not user:
             raise serializers.ValidationError('Credenciales incorrectas')
         if not user.is_active:

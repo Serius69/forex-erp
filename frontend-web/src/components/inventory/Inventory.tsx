@@ -4,6 +4,7 @@ import { Box, Typography, Tabs, Tab } from '@mui/material';
 import InventoryStock     from './InventoryStock';
 import InventoryMovements from './InventoryMovements';
 import InventoryTransfers from './InventoryTransfers';
+import InventoryCards     from './InventoryCards';
 
 const Inventory: React.FC = () => {
   const navigate  = useNavigate();
@@ -13,6 +14,7 @@ const Inventory: React.FC = () => {
     { label: 'Resumen',        path: '/inventory' },
     { label: 'Movimientos',    path: '/inventory/movements' },
     { label: 'Transferencias', path: '/inventory/transfers' },
+    { label: 'Tarjetas',       path: '/inventory/cards' },
   ];
 
   const currentTab = tabs.findIndex(t =>
@@ -35,6 +37,7 @@ const Inventory: React.FC = () => {
         <Route index            element={<InventoryStock />} />
         <Route path="movements" element={<InventoryMovements />} />
         <Route path="transfers" element={<InventoryTransfers />} />
+        <Route path="cards"     element={<InventoryCards />} />
       </Routes>
     </Box>
   );

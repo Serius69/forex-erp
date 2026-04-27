@@ -57,7 +57,7 @@ const ChartTooltip = ({ active, payload, label, isCurrency = true }: any) => {
         </Typography>
       )}
       {payload.map((p: any, i: number) => (
-        <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.25 }}>
+        <Box key={`${p.name}-${i}`} sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.25 }}>
           <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: p.color, flexShrink: 0 }} />
           <Typography variant="body2" fontWeight={600}>
             {p.name}: {isCurrency ? formatCurrency(p.value) : formatNumber(p.value, 0)}
@@ -189,7 +189,7 @@ const ActivityFeed = memo(({ transactions, loading }: { transactions: any[]; loa
             const amount   = tx.amount_to ?? tx.total_bob ?? 0;
             return (
               <Box
-                key={i}
+                key={tx.id ?? `tx-${i}`}
                 sx={{
                   display: 'flex', alignItems: 'center', gap: 1.5, py: 0.875,
                   borderBottom: i < transactions.length - 1 ? `1px solid ${TOKENS.border}` : 'none',
@@ -254,7 +254,7 @@ const HourlyChart = memo(({ data, loading }: { data: { hour: string; count: numb
           <Bar dataKey="count" radius={[5, 5, 0, 0]}>
             {data.map((entry, i) => (
               <Cell
-                key={i}
+                key={`hour-${i}`}
                 fill={entry.count === max ? TOKENS.blue : entry.count > 0 ? alpha(TOKENS.blue, 0.45) : TOKENS.border}
               />
             ))}
@@ -496,8 +496,8 @@ const Dashboard: React.FC = () => {
                   innerRadius={36}
                   paddingAngle={2}
                 >
-                  {incomeDistribution.map((_, i) => (
-                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                  {incomeDistribution.map((entry: any, i: number) => (
+                    <Cell key={`pie-${entry.name ?? i}`} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                   ))}
                 </Pie>
                 <RTooltip

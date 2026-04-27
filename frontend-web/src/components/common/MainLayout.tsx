@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   Box, AppBar, Toolbar, Typography, IconButton,
-  Avatar, Menu, MenuItem, Divider, Chip,
+  Avatar, Menu, MenuItem, Divider, Chip, Button,
   Badge, Drawer, List, ListItemButton, ListItemIcon,
   ListItemText, Collapse, Tooltip,
 } from '@mui/material';
@@ -23,7 +23,21 @@ import {
   Menu as MenuIcon,
   ChevronLeft,
   Circle,
+  Psychology,
+  TrendingUp,
+  AccountBalance,
+  CreditCard,
+  NotificationsActive,
+  BarChart,
+  SmartToy,
+  BusinessCenter,
+  CloudUpload,
+  Language,
+  Business,
+  Store,
+  AutoAwesome,
 } from '@mui/icons-material';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import NotificationPanel from './NotificationPanel';
@@ -33,67 +47,167 @@ import { alpha } from '@mui/material/styles';
 const DRAWER_W   = 252;
 const COLLAPSED_W = 68;
 
-// ── Nav config ────────────────────────────────────────────────────────────────
-const NAV_ITEMS = [
+// ── Nav section labels ────────────────────────────────────────────────────────
+interface NavGroup {
+  label:    string;
+  items:    NavItemDef[];
+  roles?:   string[];  // if set, only show to these roles
+}
+
+interface NavItemDef {
+  id:        string;
+  label:     string;
+  path:      string;
+  icon:      React.ReactNode;
+  children?: { label: string; path: string }[];
+  roles?:    string[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
   {
-    id: 'dashboard', label: 'Dashboard', path: '/dashboard',
-    icon: <DashboardIcon fontSize="small" />,
-  },
-  {
-    id: 'operaciones', label: 'Operaciones', path: '/transactions',
-    icon: <SwapHoriz fontSize="small" />,
-    children: [
-      { label: 'Transacciones', path: '/transactions' },
-      { label: 'Aprobaciones',  path: '/transactions/pending' },
+    label: 'Principal',
+    items: [
+      {
+        id: 'dashboard', label: 'Dashboard', path: '/dashboard',
+        icon: <DashboardIcon fontSize="small" />,
+      },
     ],
   },
   {
-    id: 'inventory', label: 'Inventario', path: '/inventory',
-    icon: <Inventory2 fontSize="small" />,
-    children: [
-      { label: 'Resumen',        path: '/inventory' },
-      { label: 'Movimientos',    path: '/inventory/movements' },
-      { label: 'Transferencias', path: '/inventory/transfers' },
+    label: 'Operaciones',
+    items: [
+      {
+        id: 'operaciones', label: 'Transacciones', path: '/transactions',
+        icon: <SwapHoriz fontSize="small" />,
+        children: [
+          { label: 'Transacciones', path: '/transactions' },
+          { label: 'Aprobaciones',  path: '/transactions/pending' },
+        ],
+      },
+      {
+        id: 'customers', label: 'Clientes', path: '/customers',
+        icon: <People fontSize="small" />,
+      },
     ],
   },
   {
-    id: 'rates', label: 'Tasas de Cambio', path: '/rates',
-    icon: <CurrencyExchange fontSize="small" />,
+    label: 'Inventario',
+    items: [
+      {
+        id: 'inventory', label: 'Inventario', path: '/inventory',
+        icon: <Inventory2 fontSize="small" />,
+        children: [
+          { label: 'Resumen',        path: '/inventory' },
+          { label: 'Movimientos',    path: '/inventory/movements' },
+          { label: 'Transferencias', path: '/inventory/transfers' },
+          { label: 'Tarjetas',       path: '/inventory/cards' },
+        ],
+      },
+      {
+        id: 'tarjetas', label: 'Tarjetas', path: '/tarjetas',
+        icon: <CreditCard fontSize="small" />,
+      },
+    ],
   },
   {
-    id: 'customers', label: 'Clientes', path: '/customers',
-    icon: <People fontSize="small" />,
+    label: 'Finanzas',
+    items: [
+      {
+        id: 'rates', label: 'Tasas de Cambio', path: '/rates',
+        icon: <CurrencyExchange fontSize="small" />,
+      },
+      {
+        id: 'capital', label: 'Capital & Gastos', path: '/capital',
+        icon: <AccountBalance fontSize="small" />,
+        roles: ['ADMIN', 'SUPERVISOR'],
+      },
+      {
+        id: 'ganancias', label: 'Ganancias', path: '/ganancias',
+        icon: <TrendingUp fontSize="small" />,
+        roles: ['ADMIN', 'SUPERVISOR'],
+      },
+    ],
   },
   {
-    id: 'reports', label: 'Reportes', path: '/reports',
-    icon: <Assessment fontSize="small" />,
+    label: 'Inteligencia',
+    roles: ['ADMIN', 'SUPERVISOR'],
+    items: [
+      {
+        id: 'predictions', label: 'Predicciones', path: '/predictions',
+        icon: <Psychology fontSize="small" />,
+        roles: ['ADMIN', 'SUPERVISOR'],
+      },
+      {
+        id: 'analytics', label: 'Analytics', path: '/analytics',
+        icon: <BarChart fontSize="small" />,
+        roles: ['ADMIN', 'SUPERVISOR'],
+      },
+      {
+        id: 'decisiones', label: 'Motor IA', path: '/decisiones',
+        icon: <SmartToy fontSize="small" />,
+        roles: ['ADMIN', 'SUPERVISOR'],
+      },
+      {
+        id: 'ai-insights', label: 'IA Insights', path: '/ai-insights',
+        icon: <AutoAwesome fontSize="small" />,
+        roles: ['ADMIN', 'SUPERVISOR'],
+      },
+      {
+        id: 'branch-analytics', label: 'Analítica Sucursal', path: '/branch-analytics',
+        icon: <Store fontSize="small" />,
+        roles: ['ADMIN', 'SUPERVISOR'],
+      },
+      {
+        id: 'executive', label: 'CEO Dashboard', path: '/executive',
+        icon: <BusinessCenter fontSize="small" />,
+        roles: ['ADMIN'],
+      },
+    ],
+  },
+  {
+    label: 'Reportes',
+    items: [
+      {
+        id: 'reports', label: 'Reportes', path: '/reports',
+        icon: <Assessment fontSize="small" />,
+        roles: ['ADMIN', 'SUPERVISOR'],
+      },
+      {
+        id: 'alertas', label: 'Alertas', path: '/alertas',
+        icon: <NotificationsActive fontSize="small" />,
+      },
+    ],
   },
 ];
 
-// Titles for routes not listed in NAV_ITEMS (still accessible via direct links)
-const EXTRA_TITLES: Record<string, string> = {
-  '/ganancias':  'Ganancias',
-  '/analytics':  'Analytics',
-  '/executive':  'CEO Dashboard',
-  '/tarjetas':   'Tarjetas',
-  '/capital':    'Capital & Gastos',
-  '/predictions':'Predicciones',
-  '/import':     'Importar Datos',
-  '/alertas':    'Alertas',
-  '/decisiones': 'Motor IA',
-};
-
-const BOTTOM_ITEMS = [
-  { id: 'settings', label: 'Configuración', path: '/settings', icon: <Settings fontSize="small" /> },
+const BOTTOM_ITEMS: NavItemDef[] = [
+  {
+    id: 'settings', label: 'Configuración', path: '/settings',
+    icon: <Settings fontSize="small" />,
+  },
+  {
+    id: 'import', label: 'Importar Datos', path: '/import',
+    icon: <CloudUpload fontSize="small" />,
+    roles: ['ADMIN'],
+  },
   {
     id: 'admin', label: 'Administración', path: '/admin/users',
-    icon: <AdminPanelSettings fontSize="small" />, adminOnly: true,
+    icon: <AdminPanelSettings fontSize="small" />,
+    roles: ['ADMIN'],
     children: [
       { label: 'Usuarios',      path: '/admin/users' },
+      { label: 'Sucursales',    path: '/admin/branches' },
+      { label: 'Empresa',       path: '/admin/company' },
       { label: 'Auditoría',     path: '/admin/audit' },
       { label: 'Mantenimiento', path: '/admin/maintenance' },
     ],
   },
+];
+
+// Flat list for page title lookup
+const ALL_NAV_ITEMS: NavItemDef[] = [
+  ...NAV_GROUPS.flatMap(g => g.items),
+  ...BOTTOM_ITEMS,
 ];
 
 // ── Role badge ────────────────────────────────────────────────────────────────
@@ -110,7 +224,7 @@ const ROLE_LABEL: Record<string, string> = {
 const NavItem = ({
   item, active, collapsed, expanded, onToggle, onNavigate, badge,
 }: {
-  item: typeof NAV_ITEMS[0];
+  item: NavItemDef;
   active: (path: string) => boolean;
   collapsed: boolean;
   expanded: string[];
@@ -215,7 +329,7 @@ const NavItem = ({
 export default function MainLayout() {
   const [mobileOpen,    setMobileOpen]    = useState(false);
   const [collapsed,     setCollapsed]     = useState(false);
-  const [expanded,      setExpanded]      = useState<string[]>(['operaciones', 'inventory']);
+  const [expanded,      setExpanded]      = useState<string[]>(['operaciones', 'inventory', 'admin']);
   const [anchorEl,      setAnchorEl]      = useState<null | HTMLElement>(null);
   const [notifOpen,     setNotifOpen]     = useState(false);
 
@@ -223,8 +337,10 @@ export default function MainLayout() {
   const location           = useLocation();
   const { user, logout }   = useAuth();
   const { connected, alerts } = useWebSocket();
+  const { i18n }           = useTranslation();
 
-  const unread = alerts.filter(a => !a.read).length;
+  const role    = user?.role ?? 'CASHIER';
+  const unread  = alerts.filter((a: any) => !a.read).length;
   const drawerW = collapsed ? COLLAPSED_W : DRAWER_W;
 
   const isActive = (path: string) => {
@@ -242,17 +358,16 @@ export default function MainLayout() {
     setMobileOpen(false);
   };
 
+  const itemVisible = (item: NavItemDef) =>
+    !item.roles || item.roles.includes(role);
+
   const pageTitle = () => {
-    const all = [...NAV_ITEMS, ...BOTTOM_ITEMS];
-    for (const item of all) {
-      if ('children' in item && item.children) {
+    for (const item of ALL_NAV_ITEMS) {
+      if (item.children) {
         const child = item.children.find(c => location.pathname === c.path);
         if (child) return `${item.label} · ${child.label}`;
       }
       if (location.pathname.startsWith(item.path) && item.path !== '/') return item.label;
-    }
-    for (const [path, title] of Object.entries(EXTRA_TITLES)) {
-      if (location.pathname.startsWith(path)) return title;
     }
     return 'Kapitalya';
   };
@@ -307,6 +422,18 @@ export default function MainLayout() {
           bgcolor: alpha('#fff', 0.05),
           border: `1px solid ${alpha('#fff', 0.07)}`,
         }}>
+          {/* Company badge */}
+          {user?.company && (
+            <Box sx={{
+              display: 'flex', alignItems: 'center', gap: 0.75,
+              mb: 1, pb: 1, borderBottom: `1px solid ${alpha('#fff', 0.07)}`,
+            }}>
+              <Business sx={{ fontSize: 11, color: alpha('#fff', 0.4) }} />
+              <Typography variant="caption" sx={{ color: alpha('#fff', 0.45), fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.04em' }} noWrap>
+                {user.company.name}
+              </Typography>
+            </Box>
+          )}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
             <Avatar sx={{ width: 34, height: 34, bgcolor: TOKENS.blue, fontSize: '0.875rem', fontWeight: 700 }}>
               {user?.first_name?.[0] ?? user?.username?.[0] ?? 'U'}
@@ -316,55 +443,84 @@ export default function MainLayout() {
                 {user?.first_name ?? user?.username}
               </Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: ROLE_COLOR[user?.role ?? 'CASHIER'] }} />
+                <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: ROLE_COLOR[role] }} />
                 <Typography variant="caption" sx={{ color: alpha('#fff', 0.5), fontSize: '0.7rem' }}>
-                  {ROLE_LABEL[user?.role ?? 'CASHIER']} · {user?.branch?.name ?? 'Sin sucursal'}
+                  {ROLE_LABEL[role]}
                 </Typography>
               </Box>
+              {user?.branch && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                  <Store sx={{ fontSize: 10, color: alpha('#fff', 0.3) }} />
+                  <Typography variant="caption" sx={{ color: alpha('#fff', 0.35), fontSize: '0.65rem' }} noWrap>
+                    {user.branch.name}
+                  </Typography>
+                </Box>
+              )}
             </Box>
           </Box>
         </Box>
       )}
 
-      {/* Nav items */}
+      {/* Nav groups */}
       <Box sx={{ flex: 1, overflow: 'auto', py: 1,
         '&::-webkit-scrollbar': { width: 3 },
         '&::-webkit-scrollbar-track': { background: 'transparent' },
         '&::-webkit-scrollbar-thumb': { background: alpha('#fff', 0.1), borderRadius: 2 },
       }}>
-        {/* Main label */}
-        {!collapsed && (
-          <Typography sx={{ px: 2.5, py: 0.5, fontSize: '0.625rem', fontWeight: 700, letterSpacing: '0.12em', color: alpha('#fff', 0.3), textTransform: 'uppercase' }}>
-            Principal
-          </Typography>
-        )}
-        <List disablePadding>
-          {NAV_ITEMS
-            .filter(item => !('adminOnly' in item) || !(item as any).adminOnly || user?.role === 'ADMIN')
-            .map(item => (
-              <NavItem key={item.id} item={item}
-                active={isActive} collapsed={collapsed}
-                expanded={expanded} onToggle={handleToggle} onNavigate={handleNav}
-                badge={undefined} />
-            ))}
-        </List>
+        {NAV_GROUPS.map((group, gi) => {
+          const visibleItems = group.items.filter(itemVisible);
+          if (visibleItems.length === 0) return null;
+          if (group.roles && !group.roles.includes(role)) return null;
+          return (
+            <Box key={group.label}>
+              {gi > 0 && <Divider sx={{ my: 0.75, borderColor: alpha('#fff', 0.07) }} />}
+              {!collapsed && (
+                <Typography sx={{
+                  px: 2.5, py: 0.5,
+                  fontSize: '0.6rem', fontWeight: 700,
+                  letterSpacing: '0.12em',
+                  color: alpha('#fff', 0.3),
+                  textTransform: 'uppercase',
+                }}>
+                  {group.label}
+                </Typography>
+              )}
+              <List disablePadding>
+                {visibleItems.map(item => (
+                  <NavItem
+                    key={item.id}
+                    item={item}
+                    active={isActive}
+                    collapsed={collapsed}
+                    expanded={expanded}
+                    onToggle={handleToggle}
+                    onNavigate={handleNav}
+                  />
+                ))}
+              </List>
+            </Box>
+          );
+        })}
 
-        <Divider sx={{ my: 1, borderColor: alpha('#fff', 0.07) }} />
+        <Divider sx={{ my: 0.75, borderColor: alpha('#fff', 0.07) }} />
 
-        {/* System label */}
         {!collapsed && (
-          <Typography sx={{ px: 2.5, py: 0.5, fontSize: '0.625rem', fontWeight: 700, letterSpacing: '0.12em', color: alpha('#fff', 0.3), textTransform: 'uppercase' }}>
+          <Typography sx={{ px: 2.5, py: 0.5, fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.12em', color: alpha('#fff', 0.3), textTransform: 'uppercase' }}>
             Sistema
           </Typography>
         )}
         <List disablePadding>
-          {BOTTOM_ITEMS
-            .filter(item => !item.adminOnly || user?.role === 'ADMIN')
-            .map(item => (
-              <NavItem key={item.id} item={item}
-                active={isActive} collapsed={collapsed}
-                expanded={expanded} onToggle={handleToggle} onNavigate={handleNav} />
-            ))}
+          {BOTTOM_ITEMS.filter(itemVisible).map(item => (
+            <NavItem
+              key={item.id}
+              item={item}
+              active={isActive}
+              collapsed={collapsed}
+              expanded={expanded}
+              onToggle={handleToggle}
+              onNavigate={handleNav}
+            />
+          ))}
         </List>
       </Box>
 
@@ -458,6 +614,28 @@ export default function MainLayout() {
               {connected ? 'En línea' : 'Sin conexión'}
             </Typography>
           </Box>
+
+          {/* Language toggle */}
+          <Tooltip
+            title={i18n.language === 'es' ? 'Switch to English' : 'Cambiar a Español'}
+            arrow
+          >
+            <Button
+              size="small"
+              onClick={() => i18n.changeLanguage(i18n.language === 'es' ? 'en' : 'es')}
+              startIcon={<Language sx={{ fontSize: '14px !important' }} />}
+              sx={{
+                minWidth: 0, px: 1, py: 0.5,
+                color: TOKENS.textSub,
+                fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.04em',
+                border: `1px solid ${TOKENS.border}`,
+                borderRadius: '6px',
+                '&:hover': { color: TOKENS.text, borderColor: TOKENS.blue, bgcolor: alpha(TOKENS.blue, 0.04) },
+              }}
+            >
+              {i18n.language === 'es' ? 'EN' : 'ES'}
+            </Button>
+          </Tooltip>
 
           {/* Notifications */}
           <Tooltip title="Notificaciones" arrow>

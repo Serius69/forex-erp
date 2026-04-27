@@ -1,3 +1,24 @@
+export interface Company {
+  id:            number;
+  name:          string;
+  slug:          string;
+  base_currency: string;
+  country:       string;
+  logo_url?:     string;
+}
+
+export interface Subscription {
+  plan:                 'FREE' | 'STARTER' | 'GROWTH' | 'ENTERPRISE';
+  is_active:            boolean;
+  trial_ends?:          string | null;
+  is_in_trial:          boolean;
+  max_branches:         number;
+  max_users:            number;
+  max_transactions_mo:  number;
+  billing_email?:       string;
+  next_billing_date?:   string | null;
+}
+
 export interface User {
   id:                    number;
   username:              string;
@@ -7,6 +28,8 @@ export interface User {
   role:                  'ADMIN' | 'SUPERVISOR' | 'CASHIER';
   branch:                Branch | null;
   branch_id?:            number | null;
+  company:               Company | null;
+  company_id?:           number | null;
   is_active:             boolean;
   is_verified:           boolean;
   is_two_factor_enabled: boolean;
@@ -15,12 +38,16 @@ export interface User {
 }
 
 export interface Branch {
-  id: number;
-  name: string;
-  code: string;
-  address: string;
-  phone: string;
-  is_active: boolean;
+  id:          number;
+  name:        string;
+  code:        string;
+  city?:       string;
+  address:     string;
+  phone:       string;
+  is_main:     boolean;
+  is_active:   boolean;
+  company_id?: number;
+  company_name?: string;
 }
 
 export interface Currency {

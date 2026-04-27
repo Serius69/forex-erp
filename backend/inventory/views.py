@@ -6,6 +6,7 @@ from django.db.models import Sum, Count, Q, F, ExpressionWrapper, DecimalField
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
+from tenants.permissions import IsCompanyMember
 
 # total_balance es @property, no campo DB — usar esta expresión en queries
 _TOTAL_BAL = ExpressionWrapper(
@@ -26,14 +27,19 @@ from .serializers import (
 class CurrencyInventoryViewSet(viewsets.ModelViewSet):
     queryset = CurrencyInventory.objects.all()
     serializer_class = CurrencyInventorySerializer
-    permission_classes = [IsAuthenticated]
-    
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filtrar por sucursal si no es admin
-        if self.request.user.role != 'ADMIN':
-            queryset = queryset.filter(branch=self.request.user.branch)
+        user = self.request.user
+
+        # Tenant isolation
+        if getattr(user, 'company_id', None):
+            queryset = queryset.filter(branch__company_id=user.company_id)
+
+        # Branch isolation for CASHIER
+        if user.role == 'CASHIER' and user.branch_id:
+            queryset = queryset.filter(branch_id=user.branch_id)
         
         # Filtros adicionales
         branch_id = self.request.query_params.get('branch_id')

@@ -25,6 +25,22 @@ TELEGRAM_CHAT_ID   = env('TELEGRAM_CHAT_ID',   default='')
 # Umbral para considerar una transacción de "alto monto" (en BOB)
 LARGE_TX_THRESHOLD_BOB = env.int('LARGE_TX_THRESHOLD_BOB', default=100_000)
 
+# ── Email / Alertas ──────────────────────────────────────────────────
+# Configurar SMTP para alertas de email. Ejemplo Gmail:
+#   EMAIL_HOST=smtp.gmail.com
+#   EMAIL_HOST_USER=tu@gmail.com
+#   EMAIL_HOST_PASSWORD=app-password
+# Si EMAIL_HOST está vacío, el backend usará ConsoleEmailBackend (imprime en log).
+EMAIL_BACKEND     = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST        = env('EMAIL_HOST',        default='')
+EMAIL_PORT        = env.int('EMAIL_PORT',    default=587)
+EMAIL_USE_TLS     = env.bool('EMAIL_USE_TLS', default=True)
+EMAIL_HOST_USER   = env('EMAIL_HOST_USER',   default='')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL  = env('DEFAULT_FROM_EMAIL',  default='Kapitalya ERP <noreply@kapitalya.bo>')
+# Destinatarios de alertas CRITICAL/HIGH — lista separada por comas
+ALERT_EMAIL_RECIPIENTS = env.list('ALERT_EMAIL_RECIPIENTS', default=[])
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -41,6 +57,7 @@ INSTALLED_APPS = [
     'django_filters',
     'django_celery_beat',
     'django_celery_results',
+    'tenants',
     'users',
     'rates',
     'transactions',

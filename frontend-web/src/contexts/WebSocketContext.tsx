@@ -49,13 +49,22 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!mountedRef.current || !user) return;
 
     const token  = getAccessToken();
+    // If token not yet available, retry in 500ms (race between auth init and WS connect)
+    if (!token) {
+      setTimeout(connect, 500);
+      return;
+    }
     const WS_URL = import.meta.env.VITE_WS_BASE_URL || '/ws';
     // En dev el proxy Vite convierte '/ws' → 'ws://localhost:8000/ws'
     // Si WS_URL ya es relativo, construir URL absoluta con el host actual
     const wsBase = WS_URL.startsWith('ws')
       ? WS_URL
       : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${WS_URL}`;
-    const ws     = new WebSocket(`${wsBase}/rates/?token=${token}`);
+    // Scope WebSocket by company + branch for tenant isolation
+    const companyId = user?.company_id ?? '';
+    const branchId  = user?.branch_id  ?? '';
+    const wsUrl     = `${wsBase}/rates/?token=${token}&company=${companyId}&branch=${branchId}`;
+    const ws        = new WebSocket(wsUrl);
     socketRef.current = ws;
 
     ws.onopen = () => {

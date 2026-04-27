@@ -23,6 +23,7 @@ from rest_framework.response import Response
 
 from .models import AlertLog
 from .serializers import AlertLogSerializer, AlertSummarySerializer
+from tenants.permissions import IsCompanyMember
 
 log = logging.getLogger('kapitalya.alerts')
 
@@ -37,13 +38,22 @@ class AlertLogViewSet(viewsets.ReadOnlyModelViewSet):
     API de sólo lectura + acciones de reconocimiento.
     No se crean ni eliminan alertas desde aquí — sólo el backend las genera.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
     serializer_class   = AlertLogSerializer
     filter_backends    = [DjangoFilterBackend]
     filterset_fields   = ['severity', 'source', 'is_acknowledged']
 
     def get_queryset(self):
-        qs = _BASE_QS.order_by('-created_at')
+        user = self.request.user
+        qs   = _BASE_QS.order_by('-created_at')
+
+        # Tenant isolation
+        if getattr(user, 'company_id', None):
+            qs = qs.filter(branch__company_id=user.company_id)
+
+        # Branch isolation for CASHIER
+        if user.role == 'CASHIER' and user.branch_id:
+            qs = qs.filter(branch_id=user.branch_id)
 
         date_from = self.request.query_params.get('date_from')
         date_to   = self.request.query_params.get('date_to')

@@ -13,30 +13,55 @@ _LOCKOUT_THRESHOLD = 5
 _LOCKOUT_MINUTES   = 15
 
 class Branch(models.Model):
-    name = models.CharField(max_length=100)
-    code = models.CharField(max_length=10, unique=True)
-    address = models.TextField()
-    phone = models.CharField(max_length=20)
-    is_active = models.BooleanField(default=True)
+    company    = models.ForeignKey(
+        'tenants.Company',
+        on_delete=models.CASCADE,
+        related_name='branches',
+        null=True,      # null during data migration; set NOT NULL after
+        blank=True,
+    )
+    name       = models.CharField(max_length=100)
+    code       = models.CharField(max_length=10, unique=True)
+    city       = models.CharField(max_length=100, blank=True)
+    address    = models.TextField()
+    phone      = models.CharField(max_length=20)
+    is_main    = models.BooleanField(default=False, help_text='Principal / matriz')
+    is_active  = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     class Meta:
-        verbose_name = 'Sucursal'
+        verbose_name        = 'Sucursal'
         verbose_name_plural = 'Sucursales'
-        ordering = ['-created_at']
+        ordering            = ['-created_at']
+        indexes             = [models.Index(fields=['company', 'is_active'])]
+
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.company.name if self.company_id else '—'})"
 
 class User(AbstractUser):
     ROLE_CHOICES = [
-        ('ADMIN', 'Administrador'),
+        ('ADMIN',      'Administrador'),
         ('SUPERVISOR', 'Supervisor'),
-        ('CASHIER', 'Cajero'),
+        ('CASHIER',    'Cajero'),
     ]
 
     email                  = models.EmailField(unique=True)
     role                   = models.CharField(max_length=20, choices=ROLE_CHOICES, default='CASHIER')
-    branch                 = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, blank=True)
+    # Multi-tenant fields
+    company                = models.ForeignKey(
+        'tenants.Company',
+        on_delete=models.CASCADE,
+        related_name='users',
+        null=True,
+        blank=True,
+    )
+    branch                 = models.ForeignKey(
+        Branch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='users',
+    )
     pin                    = models.CharField(max_length=128, blank=True)
     phone                  = models.CharField(max_length=20, blank=True)
     two_factor_secret      = models.CharField(max_length=32, blank=True)
@@ -47,9 +72,10 @@ class User(AbstractUser):
     lockout_until          = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ['username']
-        verbose_name = 'Usuario'
+        ordering            = ['username']
+        verbose_name        = 'Usuario'
         verbose_name_plural = 'Usuarios'
+        indexes             = [models.Index(fields=['company', 'role'])]
 
     # ── Lockout helpers ───────────────────────────────────────────────────────
 

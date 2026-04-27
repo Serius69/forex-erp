@@ -5,6 +5,7 @@ from .views import (
     analytics_decision_history, analytics_snapshot,
     analytics_overview, analytics_trends, analytics_anomalies,
 )
+from .branch_stats import branch_stats
 
 urlpatterns = [
     # ── Aggregated / dashboard endpoints ─────────────────────────────────────
@@ -25,4 +26,7 @@ urlpatterns = [
 
     # ── Manual snapshots ──────────────────────────────────────────────────────
     path('snapshot/',             analytics_snapshot,           name='analytics-snapshot'),
+
+    # ── Multi-branch comparative stats ───────────────────────────────────────
+    path('branch-stats/',         branch_stats,                 name='analytics-branch-stats'),
 ]

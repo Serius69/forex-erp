@@ -20,30 +20,38 @@ class Customer(models.Model):
         ('PASSPORT', 'Pasaporte'),
         ('RUC', 'RUC'),
     ]
-    
-    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES, default='CI')
-    document_number = models.CharField(max_length=50, unique=True)
-    full_name = models.CharField(max_length=200)
-    phone = models.CharField(max_length=20, blank=True)
-    email = models.EmailField(blank=True)
-    address = models.TextField(blank=True)
-    birth_date = models.DateField(null=True, blank=True)
-    nationality = models.CharField(max_length=50, default='Boliviana')
-    is_pep = models.BooleanField(
-        default=False,
-        help_text="Persona Expuesta Políticamente"
+
+    # Multi-tenant isolation
+    company = models.ForeignKey(
+        'tenants.Company',
+        on_delete=models.CASCADE,
+        related_name='customers',
+        null=True,
+        blank=True,
     )
-    is_frequent = models.BooleanField(default=False)
-    notes = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
+
+    document_type   = models.CharField(max_length=20, choices=DOCUMENT_TYPES, default='CI')
+    document_number = models.CharField(max_length=50, db_index=True)
+    full_name       = models.CharField(max_length=200)
+    phone           = models.CharField(max_length=20, blank=True)
+    email           = models.EmailField(blank=True)
+    address         = models.TextField(blank=True)
+    birth_date      = models.DateField(null=True, blank=True)
+    nationality     = models.CharField(max_length=50, default='Boliviana')
+    is_pep          = models.BooleanField(default=False, help_text='Persona Expuesta Políticamente')
+    is_frequent     = models.BooleanField(default=False)
+    notes           = models.TextField(blank=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
+
     class Meta:
-        verbose_name = 'Cliente'
+        verbose_name        = 'Cliente'
         verbose_name_plural = 'Clientes'
+        # document_number unique PER company (not globally)
+        unique_together = [('company', 'document_number')]
         indexes = [
-            models.Index(fields=['document_number']),
-            models.Index(fields=['full_name']),
+            models.Index(fields=['company', 'document_number']),
+            models.Index(fields=['company', 'full_name']),
         ]
     
     def __str__(self):

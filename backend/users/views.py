@@ -26,6 +26,30 @@ def _get_client_ip(request) -> str:
 def _token_response(user: User, http_status=status.HTTP_200_OK) -> Response:
     """Build {access, refresh, user} response for any auth endpoint."""
     refresh = RefreshToken.for_user(user)
+
+    branch_data = None
+    if user.branch_id:
+        branch_data = {
+            'id':      user.branch_id,
+            'name':    user.branch.name if user.branch else None,
+            'code':    user.branch.code if user.branch else None,
+            'is_main': user.branch.is_main if user.branch else False,
+        }
+
+    company_data = None
+    if getattr(user, 'company_id', None):
+        try:
+            c = user.company
+            company_data = {
+                'id':            c.id,
+                'name':          c.name,
+                'slug':          c.slug,
+                'base_currency': c.base_currency,
+                'country':       c.country,
+            }
+        except Exception:
+            pass
+
     return Response(
         {
             'access':  str(refresh.access_token),
@@ -37,6 +61,9 @@ def _token_response(user: User, http_status=status.HTTP_200_OK) -> Response:
                 'full_name':             user.get_full_name(),
                 'role':                  user.role,
                 'branch_id':             user.branch_id,
+                'branch':                branch_data,
+                'company_id':            getattr(user, 'company_id', None),
+                'company':               company_data,
                 'is_two_factor_enabled': user.is_two_factor_enabled,
                 'is_verified':           user.is_verified,
             },
@@ -154,6 +181,23 @@ class ForexTokenView(TokenObtainPairView):
             if user:
                 user.reset_login_attempts()
                 _log_activity(user, 'LOGIN', request, {'method': 'jwt'})
+                branch_data = None
+                if user.branch_id:
+                    b = user.branch
+                    branch_data = {
+                        'id': b.id, 'name': b.name,
+                        'code': b.code, 'is_main': b.is_main,
+                    }
+                company_data = None
+                if getattr(user, 'company_id', None):
+                    try:
+                        c = user.company
+                        company_data = {
+                            'id': c.id, 'name': c.name,
+                            'slug': c.slug, 'base_currency': c.base_currency,
+                        }
+                    except Exception:
+                        pass
                 response.data['user'] = {
                     'id':                    user.id,
                     'username':              user.username,
@@ -161,6 +205,9 @@ class ForexTokenView(TokenObtainPairView):
                     'full_name':             user.get_full_name(),
                     'role':                  user.role,
                     'branch_id':             user.branch_id,
+                    'branch':                branch_data,
+                    'company_id':            getattr(user, 'company_id', None),
+                    'company':               company_data,
                     'is_two_factor_enabled': user.is_two_factor_enabled,
                     'is_verified':           user.is_verified,
                 }
@@ -189,10 +236,21 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = super().get_queryset().select_related('branch')
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(branch=self.request.user.branch)
+        user = self.request.user
+        qs = super().get_queryset().select_related('branch', 'company')
+
+        # Tenant isolation: always restrict to same company
+        if getattr(user, 'company_id', None):
+            qs = qs.filter(company_id=user.company_id)
+
+        # Branch isolation for CASHIER
+        if user.role == 'CASHIER' and user.branch_id:
+            qs = qs.filter(branch_id=user.branch_id)
+
         return qs
+
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.user.company)
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -245,6 +303,15 @@ class UserViewSet(viewsets.ModelViewSet):
         activities = UserActivity.objects.filter(user=request.user).order_by('-timestamp')[:50]
         return Response(UserActivitySerializer(activities, many=True).data)
 
+    @action(detail=False, methods=['GET'], url_path='activities')
+    def activities_list(self, request):
+        """GET /api/users/activities/ — admin can view all recent activities."""
+        if request.user.role != 'ADMIN':
+            activities = UserActivity.objects.filter(user=request.user).order_by('-timestamp')[:50]
+        else:
+            activities = UserActivity.objects.select_related('user').order_by('-timestamp')[:200]
+        return Response(UserActivitySerializer(activities, many=True).data)
+
     @action(detail=False, methods=['POST'], url_path='set-pin')
     def set_pin(self, request):
         pin         = request.data.get('pin')
@@ -292,7 +359,33 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['GET'], url_path='branches')
     def branches(self, request):
-        return Response(BranchSerializer(Branch.objects.filter(is_active=True), many=True).data)
+        qs = Branch.objects.filter(is_active=True)
+        if getattr(request.user, 'company_id', None):
+            qs = qs.filter(company_id=request.user.company_id)
+        return Response(BranchSerializer(qs, many=True).data)
+
+
+# ── BranchViewSet (company-scoped) ─────────────────────────────────────────────
+
+class BranchViewSet(viewsets.ModelViewSet):
+    serializer_class   = BranchSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Branch.objects.select_related('company').filter(is_active=True)
+        if getattr(user, 'company_id', None):
+            qs = qs.filter(company_id=user.company_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.user.company)
+
+    def get_permissions(self):
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            from tenants.permissions import IsAdminRole
+            return [IsAuthenticated(), IsAdminRole()]
+        return super().get_permissions()
 
 
 # ── Dashboard Stats ────────────────────────────────────────────────────────────
@@ -307,7 +400,11 @@ def dashboard_stats(request):
     yesterday = today - timedelta(days=1)
 
     tx_qs = Transaction.objects.filter(status='COMPLETED')
-    if request.user.role != 'ADMIN':
+    # Tenant isolation
+    if getattr(request.user, 'company_id', None):
+        tx_qs = tx_qs.filter(branch__company_id=request.user.company_id)
+    # Branch isolation for CASHIER
+    if request.user.role == 'CASHIER' and request.user.branch_id:
         tx_qs = tx_qs.filter(branch=request.user.branch)
 
     today_txs     = tx_qs.filter(created_at__date=today)
@@ -328,19 +425,65 @@ def dashboard_stats(request):
     buy_vol  = float(today_txs.filter(transaction_type='BUY').aggregate(s=Sum('amount_to'))['s'] or 0)
     sell_vol = float(today_txs.filter(transaction_type='SELL').aggregate(s=Sum('amount_to'))['s'] or 0)
 
+    # Month stats
+    month_start   = today.replace(day=1)
+    month_txs     = tx_qs.filter(created_at__date__gte=month_start)
+    month_revenue = float(month_txs.aggregate(s=Sum('amount_to'))['s'] or 0)
+
+    # Average ticket
+    avg_ticket = (today_volume / today_count) if today_count > 0 else 0
+
+    # Avg spread from today's rates
+    avg_spread = 0.0
+
     current_rates = {}
     try:
         bob = Currency.objects.get(code='BOB')
-        for rate in (ExchangeRate.objects
-                     .filter(currency_to=bob, valid_until__isnull=True)
-                     .select_related('currency_from')
-                     .order_by('currency_from__code')):
+        rates_qs = (ExchangeRate.objects
+                    .filter(currency_to=bob, valid_until__isnull=True)
+                    .select_related('currency_from')
+                    .order_by('currency_from__code'))
+        spread_vals = []
+        for rate in rates_qs:
             current_rates[rate.currency_from.code] = {
                 'buy':      float(rate.buy_rate),
                 'sell':     float(rate.sell_rate),
                 'official': float(rate.official_rate),
             }
+            if float(rate.buy_rate) > 0:
+                spread_vals.append(
+                    (float(rate.sell_rate) - float(rate.buy_rate)) / float(rate.buy_rate) * 100
+                )
+        if spread_vals:
+            avg_spread = sum(spread_vals) / len(spread_vals)
     except Currency.DoesNotExist:
+        pass
+
+    # Pending transactions
+    pending_qs = Transaction.objects.filter(status='PENDING')
+    if request.user.role != 'ADMIN':
+        pending_qs = pending_qs.filter(branch=request.user.branch)
+    pending_transactions = pending_qs.count()
+
+    # Current capital
+    current_capital   = 0.0
+    daily_variation   = 0.0
+    daily_cash_flow   = today_volume
+    try:
+        from capital.models import CapitalSnapshot
+        snap_qs = CapitalSnapshot.objects.all()
+        if request.user.branch:
+            snap_qs = snap_qs.filter(branch=request.user.branch)
+        latest = snap_qs.order_by('-fecha', '-created_at').first()
+        if latest:
+            current_capital = float(latest.total_bob or 0)
+        yesterday_snap = snap_qs.filter(fecha=yesterday).order_by('-created_at').first()
+        if yesterday_snap and float(yesterday_snap.total_bob or 0) > 0:
+            daily_variation = (
+                (current_capital - float(yesterday_snap.total_bob)) /
+                float(yesterday_snap.total_bob) * 100
+            )
+    except Exception:
         pass
 
     by_hour = [
@@ -360,13 +503,22 @@ def dashboard_stats(request):
         'unique_customers':      today_txs.values('customer').distinct().count(),
         'current_rates':         current_rates,
         'transactions_by_hour':  by_hour,
+        'month_revenue':         round(month_revenue, 2),
+        'avg_ticket':            round(avg_ticket, 2),
+        'avg_spread':            round(avg_spread, 4),
+        'pending_transactions':  pending_transactions,
+        'current_capital':       round(current_capital, 2),
+        'daily_cash_flow':       round(daily_cash_flow, 2),
+        'daily_variation_pct':   round(daily_variation, 2),
         'recent_transactions': [{
             'id':                 t.id,
             'transaction_number': t.transaction_number,
             'customer':           t.customer.full_name,
             'type':               t.transaction_type,
-            'currency':           t.currency_from.code,
+            'currency_from':      {'code': t.currency_from.code},
+            'transaction_type':   t.transaction_type,
             'amount':             float(t.amount_from),
+            'amount_to':          float(t.amount_to),
             'total_bob':          float(t.amount_to),
             'created_at':         t.created_at.isoformat(),
         } for t in recent],

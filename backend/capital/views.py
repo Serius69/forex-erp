@@ -23,14 +23,24 @@ from .serializers import (
 )
 from .services import CapitalService, GananciaService, CashBOBService, InsufficientCashError
 from users.permissions import IsAdminOrSupervisor
+from tenants.permissions import IsCompanyMember
 
 log = logging.getLogger('capital')
+
+
+def _company_branch_filter(qs, user, branch_field='branch'):
+    """Apply tenant + branch isolation to any queryset."""
+    if getattr(user, 'company_id', None):
+        qs = qs.filter(**{f'{branch_field}__company_id': user.company_id})
+    if user.role == 'CASHIER' and user.branch_id:
+        qs = qs.filter(**{branch_field: user.branch_id})
+    return qs
 
 
 class GastoViewSet(viewsets.ModelViewSet):
     """CRUD de gastos operativos."""
     queryset           = Gasto.objects.select_related('branch', 'registrado_por').all()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -38,9 +48,7 @@ class GastoViewSet(viewsets.ModelViewSet):
         return GastoSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(branch=self.request.user.branch)
+        qs = _company_branch_filter(super().get_queryset(), self.request.user)
 
         fecha_desde = self.request.query_params.get('date_from')
         fecha_hasta = self.request.query_params.get('date_to')
@@ -88,12 +96,10 @@ class CapitalSnapshotViewSet(viewsets.ModelViewSet):
         'branch', 'generado_por'
     ).all()
     serializer_class   = CapitalSnapshotSerializer
-    permission_classes = [IsAdminOrSupervisor]
+    permission_classes = [IsAdminOrSupervisor, IsCompanyMember]
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(branch=self.request.user.branch)
+        qs = _company_branch_filter(super().get_queryset(), self.request.user)
         date_from = self.request.query_params.get('date_from')
         date_to   = self.request.query_params.get('date_to')
         if date_from:
@@ -174,7 +180,7 @@ class CapitalManualEntryViewSet(viewsets.ModelViewSet):
     PATCH  /api/capital/caja/{id}/    — editar con historial automático
     GET    /api/capital/caja/{id}/historia/ — ver historial de cambios
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
     serializer_class   = CapitalManualEntrySerializer
 
     def get_queryset(self):
@@ -182,8 +188,7 @@ class CapitalManualEntryViewSet(viewsets.ModelViewSet):
             'branch', 'registrado_por'
         ).prefetch_related('history__modificado_por')
 
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(branch=self.request.user.branch)
+        qs = _company_branch_filter(qs, self.request.user)
 
         date_from = self.request.query_params.get('date_from')
         date_to   = self.request.query_params.get('date_to')
@@ -298,7 +303,7 @@ class CapitalComposicionViewSet(viewsets.ModelViewSet):
     Campos editables: fuertes, caja_chica, monedas, rotos, sueltos,
                       qr_transferencias, tarjetas_telefonicas, pasivos, notas
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
     serializer_class   = CapitalComposicionSerializer
 
     def get_queryset(self):
@@ -306,8 +311,7 @@ class CapitalComposicionViewSet(viewsets.ModelViewSet):
             'branch', 'registrado_por'
         ).prefetch_related('history__modificado_por')
 
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(branch=self.request.user.branch)
+        qs = _company_branch_filter(qs, self.request.user)
 
         date_from = self.request.query_params.get('date_from')
         date_to   = self.request.query_params.get('date_to')
@@ -385,12 +389,11 @@ class CashBOBViewSet(viewsets.ReadOnlyModelViewSet):
     POST /api/capital/cash-bob/update/  — manual update (upsert today)
     """
     serializer_class   = CashBOBSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyMember]
 
     def get_queryset(self):
         qs = CashBOB.objects.select_related('branch', 'registrado_por').all()
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(branch=self.request.user.branch)
+        qs = _company_branch_filter(qs, self.request.user)
         date_from = self.request.query_params.get('date_from')
         date_to   = self.request.query_params.get('date_to')
         if date_from:

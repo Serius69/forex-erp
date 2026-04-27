@@ -35,9 +35,12 @@ const Capital           = lazy(() => import('./components/capital/Capital'));
 const Ganancias         = lazy(() => import('./components/ganancias/Ganancias'));
 const ImportData        = lazy(() => import('./components/import/ImportData'));
 const Analytics           = lazy(() => import('./components/analytics/Analytics'));
+const BranchAnalytics     = lazy(() => import('./components/analytics/BranchAnalytics'));
 const ExecutiveDashboard  = lazy(() => import('./components/executive/ExecutiveDashboard'));
 const AlertasPage         = lazy(() => import('./components/alertas/AlertasPage'));
 const DecisionesPage      = lazy(() => import('./components/decisiones/DecisionesPage'));
+const AIInsights          = lazy(() => import('./components/ai/AIInsights'));
+const CompanyManagement   = lazy(() => import('./components/admin/CompanyManagement'));
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
@@ -92,12 +95,16 @@ function App() {
                         <Route path="ganancias"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Ganancias /></RoleRoute>} />
                         <Route path="reports/*"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Reports /></RoleRoute>} />
                         <Route path="predictions" element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Predictions /></RoleRoute>} />
-                        <Route path="decisiones"  element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><DecisionesPage /></RoleRoute>} />
+                        <Route path="decisiones"       element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><DecisionesPage /></RoleRoute>} />
+                        <Route path="ai-insights"      element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><AIInsights /></RoleRoute>} />
+                        <Route path="branch-analytics" element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><BranchAnalytics /></RoleRoute>} />
 
                         {/* Admin only */}
                         <Route path="executive"         element={<RoleRoute roles={['ADMIN']}><ExecutiveDashboard /></RoleRoute>} />
                         <Route path="import"            element={<RoleRoute roles={['ADMIN']}><ImportData /></RoleRoute>} />
                         <Route path="admin/users"       element={<RoleRoute roles={['ADMIN']}><UserAdmin /></RoleRoute>} />
+                        <Route path="admin/branches"    element={<RoleRoute roles={['ADMIN']}><BranchAnalytics /></RoleRoute>} />
+                        <Route path="admin/company"     element={<RoleRoute roles={['ADMIN']}><CompanyManagement /></RoleRoute>} />
                         <Route path="admin/audit"       element={<RoleRoute roles={['ADMIN']}><AuditLog /></RoleRoute>} />
                         <Route path="admin/maintenance" element={<RoleRoute roles={['ADMIN']}><MaintenancePanel /></RoleRoute>} />
                       </Route>

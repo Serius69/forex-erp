@@ -17,18 +17,26 @@ from django.db import transaction as db_transaction
 from .services import TransactionService
 from .permissions import CanReverseTransaction
 from core.ratelimit import rate_limit
+from tenants.permissions import IsCompanyMember
 
 class TransactionViewSet(viewsets.ModelViewSet):
     queryset = Transaction.objects.all()
     serializer_class = TransactionSerializer
-    permission_classes = [IsAuthenticated]
-    
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filtrar por sucursal si no es admin
-        if not self.request.user.has_perm('transactions.can_view_all_branches'):
-            queryset = queryset.filter(branch=self.request.user.branch)
+        user = self.request.user
+
+        # ── Tenant isolation: always scope to user's company ─────────────────
+        if getattr(user, 'company_id', None):
+            queryset = queryset.filter(branch__company_id=user.company_id)
+
+        # ── Branch isolation: CASHIER only sees own branch ───────────────────
+        if user.role == 'CASHIER' and user.branch_id:
+            queryset = queryset.filter(branch_id=user.branch_id)
+        elif not user.has_perm('transactions.can_view_all_branches') and user.role not in ('ADMIN', 'SUPERVISOR'):
+            queryset = queryset.filter(branch=user.branch)
         
         # Filtros adicionales
         customer_id = self.request.query_params.get('customer_id')
@@ -620,14 +628,20 @@ class TransactionViewSet(viewsets.ModelViewSet):
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
-    permission_classes = [IsAuthenticated]
-    
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
     def get_queryset(self):
         from django.db.models import Count, Sum
+        user = self.request.user
+
         queryset = Customer.objects.annotate(
             tx_count=Count('transactions', distinct=True),
             tx_volume=Sum('transactions__amount_from'),
         )
+
+        # Tenant isolation
+        if getattr(user, 'company_id', None):
+            queryset = queryset.filter(company_id=user.company_id)
 
         search = self.request.query_params.get('search')
         if search:
@@ -642,7 +656,10 @@ class CustomerViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_frequent=True)
 
         return queryset.order_by('-created_at')
-    
+
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.user.company)
+
     @action(detail=False, methods=['GET'], url_path='search')
     def search(self, request):
         document = request.query_params.get('document')

@@ -40,6 +40,9 @@ urlpatterns = [
     path('api/auth/logout/',  TokenBlacklistView.as_view(), name='token_blacklist'),
     path('api/auth/google/',  GoogleAuthView.as_view(),   name='auth_google'),
 
+    # Tenants (companies, subscriptions)
+    path('api/tenants/',       include('tenants.urls')),
+
     # Users
     path('api/users/',         include('users.urls')),
 
@@ -78,6 +81,9 @@ urlpatterns = [
 
     # Alertas del sistema (log persistente + reconocimiento)
     path('api/alerts/', include('alerts.urls')),
+
+    # AI Business Intelligence
+    path('api/ai/',        include('analytics.ai_urls')),
 
     # Migración de datos desde Google Sheets
     path('api/migration/', include('data_migration.urls')),
