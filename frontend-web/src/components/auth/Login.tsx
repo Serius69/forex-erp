@@ -6,18 +6,9 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { Link as RouterLink } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../../contexts/AuthContext';
 import { TOKENS } from '../../styles/theme';
-
-// Google login: imported lazily so the app doesn't crash if the package
-// is not yet installed or VITE_GOOGLE_CLIENT_ID is not configured.
-let _GoogleLogin: React.ComponentType<any> | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  _GoogleLogin = require('@react-oauth/google').GoogleLogin;
-} catch {
-  _GoogleLogin = null;
-}
 
 const Login: React.FC = () => {
   const { login, loginGoogle } = useAuth();
@@ -83,7 +74,7 @@ const Login: React.FC = () => {
   }, []);
 
   const googleEnabled = Boolean(
-    _GoogleLogin && import.meta.env.VITE_GOOGLE_CLIENT_ID,
+    import.meta.env.VITE_GOOGLE_CLIENT_ID,
   );
 
   return (
@@ -173,10 +164,10 @@ const Login: React.FC = () => {
           )}
 
           {/* Google sign-in */}
-          {googleEnabled && _GoogleLogin && (
+          {googleEnabled && (
             <>
               <Box sx={{ mb: 2 }}>
-                <_GoogleLogin
+                <GoogleLogin
                   onSuccess={handleGoogleSuccess}
                   onError={handleGoogleError}
                   width="100%"

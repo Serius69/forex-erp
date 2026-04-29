@@ -5,11 +5,9 @@ import { CssBaseline, CircularProgress, Box } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFnsV3';
 import { SnackbarProvider } from 'notistack';
-import { Provider } from 'react-redux';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { es as esLocale } from 'date-fns/locale';
 
-import { store } from './store';
 import { theme } from './styles/theme';
 import { AuthProvider } from './contexts/AuthContext';
 import { WebSocketProvider } from './contexts/WebSocketContext';
@@ -45,15 +43,54 @@ const CompanyManagement   = lazy(() => import('./components/admin/CompanyManagem
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
 const LoadingScreen = () => (
-  <Box display="flex" alignItems="center" justifyContent="center" height="100vh">
-    <CircularProgress size={60} />
+  <Box
+    display="flex"
+    flexDirection="column"
+    alignItems="center"
+    justifyContent="center"
+    height="100vh"
+    sx={{ bgcolor: '#0F172A', gap: 3 }}
+  >
+    {/* Logo mark */}
+    <Box sx={{
+      width: 56, height: 56, borderRadius: '16px',
+      background: 'linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      boxShadow: '0 8px 32px rgba(37,99,235,0.45)',
+      animation: 'app-logo-pulse 2s ease-in-out infinite',
+    }}>
+      <Box component="span" sx={{ fontSize: 28, color: 'white', fontWeight: 900, fontFamily: 'Inter, sans-serif', lineHeight: 1 }}>K</Box>
+    </Box>
+
+    {/* Brand name */}
+    <Box sx={{ textAlign: 'center' }}>
+      <Box component="span" sx={{ display: 'block', fontSize: '1.125rem', fontWeight: 800, color: 'white', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.01em' }}>
+        Kapitalya
+      </Box>
+      <Box component="span" sx={{ display: 'block', fontSize: '0.7rem', fontWeight: 600, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.12em', textTransform: 'uppercase', mt: 0.5 }}>
+        Sistema Financiero
+      </Box>
+    </Box>
+
+    {/* Spinner */}
+    <CircularProgress
+      size={24}
+      thickness={3}
+      sx={{ color: 'rgba(37,99,235,0.8)', mt: 1 }}
+    />
+
+    <style>{`
+      @keyframes app-logo-pulse {
+        0%, 100% { transform: scale(1);    box-shadow: 0 8px 32px rgba(37,99,235,0.45); }
+        50%       { transform: scale(1.05); box-shadow: 0 12px 40px rgba(37,99,235,0.6);  }
+      }
+    `}</style>
   </Box>
 );
 
 function App() {
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <Provider store={store}>
         <ThemeProvider theme={theme}>
           <LocalizationProvider dateAdapter={AdapterDateFns} adapterLocale={esLocale}>
             <SnackbarProvider maxSnack={3} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
@@ -115,7 +152,6 @@ function App() {
             </SnackbarProvider>
           </LocalizationProvider>
         </ThemeProvider>
-      </Provider>
     </GoogleOAuthProvider>
   );
 }

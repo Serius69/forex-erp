@@ -6,16 +6,9 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff, CheckCircleOutline, RadioButtonUnchecked } from '@mui/icons-material';
 import { Link as RouterLink } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../../contexts/AuthContext';
 import { TOKENS } from '../../styles/theme';
-
-let _GoogleLogin: React.ComponentType<any> | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  _GoogleLogin = require('@react-oauth/google').GoogleLogin;
-} catch {
-  _GoogleLogin = null;
-}
 
 interface PasswordRule { label: string; test: (p: string) => boolean; }
 const PASSWORD_RULES: PasswordRule[] = [
@@ -48,7 +41,7 @@ const Signup: React.FC = () => {
   const [error,       setError]       = useState('');
 
   const strength = passwordStrength(form.password);
-  const googleEnabled = Boolean(_GoogleLogin && import.meta.env.VITE_GOOGLE_CLIENT_ID);
+  const googleEnabled = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
 
   const set = (field: keyof typeof form) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -187,10 +180,10 @@ const Signup: React.FC = () => {
           )}
 
           {/* Google sign-up */}
-          {googleEnabled && _GoogleLogin && (
+          {googleEnabled && (
             <>
               <Box sx={{ mb: 2 }}>
-                <_GoogleLogin
+                <GoogleLogin
                   onSuccess={handleGoogleSuccess}
                   onError={handleGoogleError}
                   width="100%"

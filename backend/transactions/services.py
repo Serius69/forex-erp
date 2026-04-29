@@ -41,19 +41,6 @@ def _q(val) -> Decimal:
     return Decimal(str(val or 0)).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
 
 
-def _composicion_snapshot(comp) -> dict:
-    """Serializa CapitalComposicion a dict para historial."""
-    return {
-        'fuertes':              str(comp.fuertes),
-        'caja_chica':           str(comp.caja_chica),
-        'monedas':              str(comp.monedas),
-        'rotos':                str(comp.rotos),
-        'sueltos':              str(comp.sueltos),
-        'qr_transferencias':    str(comp.qr_transferencias),
-        'tarjetas_telefonicas': str(comp.tarjetas_telefonicas),
-        'pasivos':              str(comp.pasivos),
-    }
-
 
 def _broadcast_capital_updated(branch_id) -> None:
     """
@@ -161,7 +148,7 @@ def apply_transaction_effects(transaction) -> None:
         )
 
         prev_val  = _q(getattr(comp, campo))
-        prev_snap = _composicion_snapshot(comp)
+        prev_snap = comp.to_snapshot_dict()
         nuevo_val = prev_val + delta
 
         # Validación: no permitir saldo negativo (configurable)
@@ -179,7 +166,7 @@ def apply_transaction_effects(transaction) -> None:
         CapitalComposicionHistory.objects.create(
             composicion    = comp,
             snapshot_prev  = prev_snap,
-            snapshot_new   = _composicion_snapshot(comp),
+            snapshot_new   = comp.to_snapshot_dict(),
             motivo         = f"TX {transaction.transaction_number}: {concepto}",
             modificado_por = transaction.cashier,
         )
@@ -286,7 +273,7 @@ def reverse_transaction_effects(transaction) -> None:
             return
 
         prev_val  = _q(getattr(comp, campo))
-        prev_snap = _composicion_snapshot(comp)
+        prev_snap = comp.to_snapshot_dict()
         nuevo_val = prev_val + delta
 
         setattr(comp, campo, nuevo_val)
@@ -295,7 +282,7 @@ def reverse_transaction_effects(transaction) -> None:
         CapitalComposicionHistory.objects.create(
             composicion    = comp,
             snapshot_prev  = prev_snap,
-            snapshot_new   = _composicion_snapshot(comp),
+            snapshot_new   = comp.to_snapshot_dict(),
             motivo         = concepto,
             modificado_por = transaction.cashier,
         )

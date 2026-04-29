@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from datetime import date, timedelta
 
+from core.utils import parse_date_range
 from .services import (
     ProfitEngine, PnLService, ExposureService, SpreadService, DecisionEngine,
 )
@@ -31,14 +32,6 @@ def _branch(request):
             return user.branch
     return None
 
-
-def _parse_dates(request, default_days: int = 30):
-    """Parsea date_from / date_to de query params."""
-    date_to   = parse_date(request.query_params.get('date_to', '')) or date.today()
-    date_from = parse_date(request.query_params.get('date_from', '')) or (
-        date_to - timedelta(days=default_days)
-    )
-    return date_from, date_to
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -65,7 +58,7 @@ def analytics_pnl(request):
       }
     """
     branch      = _branch(request)
-    date_from, date_to = _parse_dates(request)
+    date_from, date_to = parse_date_range(request)
     currency    = request.query_params.get('currency')
 
     resumen = PnLService.resumen_periodo(branch, date_from, date_to) if branch else {}
@@ -197,7 +190,7 @@ def analytics_history(request):
       page, page_size
     """
     branch      = _branch(request)
-    date_from, date_to = _parse_dates(request, default_days=7)
+    date_from, date_to = parse_date_range(request, default_days=7)
     currency    = request.query_params.get('currency')
     tx_type     = request.query_params.get('transaction_type')
     page        = int(request.query_params.get('page', 1))
@@ -886,7 +879,7 @@ def analytics_trends(request):
     from transactions.models import Transaction
 
     branch    = _branch(request)
-    date_from, date_to = _parse_dates(request, default_days=30)
+    date_from, date_to = parse_date_range(request, default_days=30)
     granularity = request.query_params.get('granularity', 'daily')
     metrics_param = request.query_params.get('metrics', 'pnl,volume,spread,transactions')
     requested_metrics = {m.strip() for m in metrics_param.split(',')}

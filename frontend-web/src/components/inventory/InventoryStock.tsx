@@ -100,17 +100,46 @@ const InventoryStock: React.FC = () => {
 
       {/* KPIs */}
       <Grid container spacing={2} mb={3}>
-        {[
-          ['Total Divisas',  inventory.length,                                    'primary'],
-          ['Stock Bajo',     inventory.filter(i => i.needs_replenishment).length, 'error'],
-          ['Sobrestock',     inventory.filter(i => i.is_overstocked).length,      'warning'],
-          ['Alertas Activas',alerts.length,                                        'warning'],
-        ].map(([label, value, color]) => (
-          <Grid item xs={12} sm={6} md={3} key={label as string}>
-            <Card sx={{ borderLeft: 4, borderColor: `${color}.main` }}>
-              <CardContent sx={{ py: 1.5 }}>
-                <Typography variant="body2" color="text.secondary">{label as string}</Typography>
-                <Typography variant="h4" color={`${color}.main`}>{value as number}</Typography>
+        {([
+          {
+            label: 'Total Divisas',
+            value: inventory.length,
+            color: '#2563EB',
+            bg:    'rgba(37,99,235,0.06)',
+            border:'rgba(37,99,235,0.18)',
+          },
+          {
+            label: 'Stock Bajo',
+            value: inventory.filter(i => i.needs_replenishment).length,
+            color: '#EF4444',
+            bg:    'rgba(239,68,68,0.06)',
+            border:'rgba(239,68,68,0.18)',
+          },
+          {
+            label: 'Sobrestock',
+            value: inventory.filter(i => i.is_overstocked).length,
+            color: '#F59E0B',
+            bg:    'rgba(245,158,11,0.06)',
+            border:'rgba(245,158,11,0.18)',
+          },
+          {
+            label: 'Alertas Activas',
+            value: alerts.length,
+            color: alerts.length > 0 ? '#EF4444' : '#10B981',
+            bg:    alerts.length > 0 ? 'rgba(239,68,68,0.06)' : 'rgba(16,185,129,0.06)',
+            border:alerts.length > 0 ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)',
+          },
+        ] as const).map(item => (
+          <Grid item xs={12} sm={6} md={3} key={item.label}>
+            <Card sx={{ bgcolor: item.bg, borderColor: item.border, position: 'relative', overflow: 'hidden' }}>
+              <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, bgcolor: item.color, borderRadius: '14px 14px 0 0' }} />
+              <CardContent sx={{ py: 2 }}>
+                <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
+                  {item.label}
+                </Typography>
+                <Typography variant="h3" fontWeight={800} sx={{ color: item.color, lineHeight: 1.1, mt: 0.5, fontVariantNumeric: 'tabular-nums' }}>
+                  {item.value}
+                </Typography>
               </CardContent>
             </Card>
           </Grid>

@@ -285,6 +285,20 @@ class CapitalComposicion(models.Model):
         """Capital neto SIN divisas extranjeras."""
         return self.total_activos - self.pasivos
 
+    def to_snapshot_dict(self) -> dict:
+        """Serializes this composicion to a JSON-safe dict for history snapshots."""
+        return {
+            'fuertes':              str(self.fuertes),
+            'caja_chica':           str(self.caja_chica),
+            'monedas':              str(self.monedas),
+            'rotos':                str(self.rotos),
+            'sueltos':              str(self.sueltos),
+            'qr_transferencias':    str(self.qr_transferencias),
+            'tarjetas_telefonicas': str(self.tarjetas_telefonicas),
+            'pasivos':              str(self.pasivos),
+            'notas':                self.notas,
+        }
+
 
 class CapitalComposicionHistory(models.Model):
     """Historial inmutable de cambios en CapitalComposicion — append-only."""

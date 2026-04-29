@@ -22,6 +22,12 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1', '0.
 # Dejar vacíos para deshabilitar notificaciones Telegram en dev/CI.
 TELEGRAM_BOT_TOKEN = env('TELEGRAM_BOT_TOKEN', default='')
 TELEGRAM_CHAT_ID   = env('TELEGRAM_CHAT_ID',   default='')
+
+# ── FX Engine — External API Keys ────────────────────────────────────
+# Eldorado.io: Bearer token for GET https://api.eldorado.io/api/v1/rates
+ELDORADO_API_TOKEN = env('ELDORADO_API_TOKEN', default='')
+# Wallbit: API key for GET https://api.wallbit.io/v1/rates
+WALLBIT_API_KEY    = env('WALLBIT_API_KEY',    default='')
 # Umbral para considerar una transacción de "alto monto" (en BOB)
 LARGE_TX_THRESHOLD_BOB = env.int('LARGE_TX_THRESHOLD_BOB', default=100_000)
 
@@ -187,11 +193,30 @@ CORS_ALLOW_HEADERS = [
     'idempotency-key',
 ]
 
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+# ── Django Channels — WebSocket layer ────────────────────────────────────────
+# Redis-backed channel layer para soporte multi-proceso (Celery → WebSocket).
+# Fallback a InMemoryChannelLayer si CHANNEL_REDIS_URL no está configurado.
+_CHANNEL_REDIS_URL = env('CHANNEL_REDIS_URL', default='')
+
+if _CHANNEL_REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [_CHANNEL_REDIS_URL],
+                'capacity':      1000,
+                'expiry':        60,
+                'group_expiry':  86400,
+            },
+        }
     }
-}
+else:
+    # Desarrollo local o CI sin Redis: InMemoryChannelLayer (no multi-proceso)
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        }
+    }
 
 CELERY_BROKER_URL                    = env('CELERY_BROKER_URL',     default='redis://localhost:6379/0')
 CELERY_RESULT_BACKEND                = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/1')
@@ -259,6 +284,12 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 5 * 60,
         'options':  {'queue': 'high'},
     },
+    # DolarBlueBolivia: cada 15 minutos (referencia del mercado paralelo boliviano)
+    'rates-dolar-blue-bolivia': {
+        'task':     'rates.fetch_dolar_blue_bolivia',
+        'schedule': 15 * 60,
+        'options':  {'queue': 'high'},
+    },
     # AI Pricing Engine: cada 15 minutos (después de Binance)
     'rates-ai-pricing': {
         'task':     'rates.update_ai_pricing',
@@ -312,6 +343,31 @@ CELERY_BEAT_SCHEDULE = {
         'task':     'predictions.generate_daily_forecast',
         'schedule': crontab(hour=1, minute=0),
         'options':  {'queue': 'low'},
+    },
+    # ── Auto Profit Mode — optimizador de tasas ──────────────────────────────
+    # Ejecutar cada 10 minutos para detectar oportunidades de margen
+    'rates-profit-optimizer': {
+        'task':     'rates.run_profit_optimizer',
+        'schedule': 10 * 60,
+        'options':  {'queue': 'high'},
+    },
+    # ── Variantes de efectivo — recalcular después de cada update principal ──
+    'rates-cash-variants': {
+        'task':     'rates.update_cash_variants',
+        'schedule': 10 * 60,
+        'options':  {'queue': 'high'},
+    },
+    # ── Snapshot diario — cierre de operaciones 18:00 hora Bolivia ───────────
+    'rates-daily-snapshot': {
+        'task':     'rates.create_daily_snapshot',
+        'schedule': crontab(hour=18, minute=0),
+        'options':  {'queue': 'default'},
+    },
+    # ── Snapshot nocturno adicional — medianoche para archivado ──────────────
+    'rates-midnight-snapshot': {
+        'task':     'rates.create_daily_snapshot',
+        'schedule': crontab(hour=0, minute=0),
+        'options':  {'queue': 'default'},
     },
 }
 

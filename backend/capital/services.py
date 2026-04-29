@@ -37,19 +37,6 @@ def _q(val, quantum=MONEY_Q) -> Decimal:
     return Decimal(str(val or 0)).quantize(quantum, rounding=ROUND_HALF_UP)
 
 
-def _snapshot_composicion(comp) -> dict:
-    """Convierte CapitalComposicion a dict serializable."""
-    return {
-        'fuertes':             str(comp.fuertes),
-        'caja_chica':          str(comp.caja_chica),
-        'monedas':             str(comp.monedas),
-        'rotos':               str(comp.rotos),
-        'sueltos':             str(comp.sueltos),
-        'qr_transferencias':   str(comp.qr_transferencias),
-        'tarjetas_telefonicas':str(comp.tarjetas_telefonicas),
-        'pasivos':             str(comp.pasivos),
-        'notas':               comp.notas,
-    }
 
 
 class CapitalService:
@@ -365,7 +352,7 @@ class CapitalService:
             )
 
             if not created:
-                prev_snap = _snapshot_composicion(comp)
+                prev_snap = comp.to_snapshot_dict()
                 for campo in CAMPOS:
                     if campo in data:
                         setattr(comp, campo, data[campo])
@@ -374,7 +361,7 @@ class CapitalService:
                 CapitalComposicionHistory.objects.create(
                     composicion    = comp,
                     snapshot_prev  = prev_snap,
-                    snapshot_new   = _snapshot_composicion(comp),
+                    snapshot_new   = comp.to_snapshot_dict(),
                     motivo         = motivo or 'Actualización manual',
                     modificado_por = user,
                 )

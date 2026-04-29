@@ -258,6 +258,67 @@ class ExchangeRateViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=False, methods=['GET'], permission_classes=[AllowAny], url_path='live')
+    def live(self, request):
+        """
+        GET /api/rates/exchange-rates/live/
+
+        Obtiene la mejor tasa real disponible usando el RateEngine.
+        Prioridad: Binance P2P → DolarBlueBolivia → DB cache → BCB ref
+
+        ?currency=USD     — divisa específica (default: USD)
+        ?all=true         — todas las divisas activas
+        ?refresh=true     — ignorar caché
+
+        Respuesta:
+          {
+            pair: "USD/BOB",
+            buy: X, sell: Y, spread: Z, spread_pct: W,
+            source: "binance",  (binance | dolarblue | db_cache | bcb_ref)
+            source_url: "...",
+            confidence: 0.95,
+            timestamp: "...",
+            is_live: true,
+            anomalies: []
+          }
+        """
+        from .engine import RateEngine
+
+        fetch_all     = request.query_params.get('all', '').lower() == 'true'
+        force_refresh = request.query_params.get('refresh', '').lower() == 'true'
+        currency      = request.query_params.get('currency', 'USD').upper()
+
+        engine = RateEngine()
+
+        if fetch_all:
+            cache_key = 'engine_live_all'
+            if not force_refresh:
+                cached = cache.get(cache_key)
+                if cached:
+                    return Response(cached)
+            rates   = engine.get_all_rates()
+            payload = {code: r.to_dict() for code, r in rates.items()}
+            cache.set(cache_key, payload, 60)
+            return Response(payload)
+
+        cache_key = f'engine_live_{currency}'
+        if not force_refresh:
+            cached = cache.get(cache_key)
+            if cached:
+                return Response(cached)
+
+        rate = engine.get_best_rate(currency)
+        if not rate:
+            return Response(
+                {'error': f'No hay tasa disponible para {currency}/BOB'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        payload = rate.to_dict()
+        cache.set(cache_key, payload, 60)  # Cache 1 minuto
+        return Response(payload)
+
+
 class LiveRatesView(viewsets.ViewSet):
     """
     GET /api/rates/live/
@@ -911,3 +972,327 @@ class EngineView(viewsets.ViewSet):
             'message': 'Actualización de todas las fuentes encolada. Las tasas se actualizarán en ~30 segundos.',
             'tasks':   ['update_all_rates', 'fetch_binance_p2p', 'mark_primary_rates'],
         })
+
+
+# ── Auto Profit Mode ──────────────────────────────────────────────────────────
+
+class ProfitOptimizerView(APIView):
+    """
+    GET  /api/rates/profit-optimizer/?currency=USD&variant=USD_CASH_LOOSE
+         Calcula tasas óptimas para la divisa indicada usando el mercado actual.
+
+    POST /api/rates/profit-optimizer/
+         Body: { currency, variant?, max_buy_discount_pct?, max_sell_premium_pct?,
+                 min_spread_bob?, max_spread_pct? }
+         Calcula con parámetros customizados.
+
+    GET  /api/rates/profit-optimizer/all/
+         Calcula tasas óptimas para TODAS las divisas activas + variantes físicas.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        currency = request.query_params.get('currency', 'USD').upper()
+        variant  = request.query_params.get('variant') or None
+        all_mode = request.query_params.get('all', '').lower() == 'true'
+
+        try:
+            from .profit_optimizer import ProfitOptimizer
+            optimizer = ProfitOptimizer()
+
+            if all_mode:
+                results = optimizer.optimize_all(include_variants=True)
+                return Response({
+                    'optimized_rates': {
+                        (r.variant or r.currency_code): r.to_dict()
+                        for r in results.values()
+                    },
+                    'currency_count': len(results),
+                    'calculated_at':  timezone.now().isoformat(),
+                })
+
+            result = optimizer.optimize(currency, variant=variant)
+            return Response(result.to_dict())
+
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'error': f'Error del optimizador: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def post(self, request):
+        data = request.data
+
+        currency     = data.get('currency', 'USD').upper()
+        variant      = data.get('variant') or None
+        market_buy   = data.get('market_buy')
+        market_sell  = data.get('market_sell')
+
+        from decimal import Decimal as _D, InvalidOperation
+        try:
+            params = {}
+            for key in ('max_buy_discount_pct', 'max_sell_premium_pct', 'min_spread_bob', 'max_spread_pct'):
+                if key in data:
+                    params[key] = _D(str(data[key]))
+
+            market_buy_d  = _D(str(market_buy))  if market_buy  else None
+            market_sell_d = _D(str(market_sell)) if market_sell else None
+
+            from .profit_optimizer import ProfitOptimizer
+            optimizer = ProfitOptimizer(**params)
+            result    = optimizer.optimize(
+                currency,
+                variant      = variant,
+                market_buy   = market_buy_d,
+                market_sell  = market_sell_d,
+            )
+            return Response(result.to_dict())
+
+        except (ValueError, InvalidOperation) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'error': f'Error del optimizador: {exc}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+# ── Cash Variants ─────────────────────────────────────────────────────────────
+
+class CashVariantsView(APIView):
+    """
+    GET  /api/rates/cash-variants/
+         Lista todas las variantes de efectivo con sus tasas calculadas.
+
+    POST /api/rates/cash-variants/refresh/
+         Recalcula y persiste tasas de variantes (requiere ADMIN o MANAGER).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        refresh = request.query_params.get('refresh', 'false').lower() == 'true'
+
+        cache_key = 'cash_variants_all'
+        if not refresh:
+            cached = cache.get(cache_key)
+            if cached:
+                return Response({**cached, 'from_cache': True})
+
+        try:
+            from .cash_variants import CashVariantService, VARIANT_CONFIG
+            service = CashVariantService()
+            rates   = service.calculate_all()
+
+            payload = {
+                'variants':        {code: r.to_dict() for code, r in rates.items()},
+                'variant_count':   len(rates),
+                'variant_config':  {
+                    code: {
+                        'name_es':          cfg['name_es'],
+                        'description':      cfg['description'],
+                        'icon':             cfg['icon'],
+                        'base_currency':    cfg['base_currency'],
+                        'buy_discount_pct': float(cfg['buy_discount_pct']),
+                    }
+                    for code, cfg in VARIANT_CONFIG.items()
+                },
+                'calculated_at':   timezone.now().isoformat(),
+                'from_cache':      False,
+            }
+            cache.set(cache_key, payload, 300)  # 5 min cache
+            return Response(payload)
+
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def post(self, request):
+        if not request.user.is_authenticated or getattr(request.user, 'role', '') not in ('ADMIN', 'MANAGER'):
+            return Response({'error': 'Requiere rol ADMIN o MANAGER'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            from .tasks import update_cash_variants_task
+            update_cash_variants_task.delay()
+            cache.delete('cash_variants_all')
+            return Response({
+                'queued':  True,
+                'message': 'Recálculo de variantes de efectivo encolado.',
+            })
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+# ── Rate Snapshots ────────────────────────────────────────────────────────────
+
+class RateSnapshotView(APIView):
+    """
+    GET /api/rates/snapshots/?days=30        → lista de snapshots
+    GET /api/rates/snapshots/?date=2026-04-28 → snapshot específico
+    POST /api/rates/snapshots/create/         → forzar creación del snapshot de hoy
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import ExchangeRateSnapshot
+
+        date_str = request.query_params.get('date')
+        days     = int(request.query_params.get('days', 30))
+
+        if date_str:
+            try:
+                from datetime import date
+                snap = ExchangeRateSnapshot.objects.get(date=date_str)
+                return Response(self._serialize_snapshot(snap))
+            except ExchangeRateSnapshot.DoesNotExist:
+                return Response({'error': f'Sin snapshot para {date_str}'}, status=status.HTTP_404_NOT_FOUND)
+            except Exception as exc:
+                return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        cutoff = timezone.now().date() - timedelta(days=days)
+        snaps  = (ExchangeRateSnapshot.objects
+                  .filter(date__gte=cutoff)
+                  .order_by('-date')[:days])
+
+        return Response({
+            'snapshots':    [self._serialize_snapshot(s) for s in snaps],
+            'count':        len(snaps),
+            'days_requested': days,
+        })
+
+    def post(self, request):
+        if not request.user.is_authenticated or getattr(request.user, 'role', '') not in ('ADMIN', 'MANAGER'):
+            return Response({'error': 'Requiere rol ADMIN o MANAGER'}, status=status.HTTP_403_FORBIDDEN)
+
+        from .tasks import create_daily_snapshot_task
+        create_daily_snapshot_task.delay()
+        return Response({'queued': True, 'message': 'Snapshot diario encolado.'})
+
+    @staticmethod
+    def _serialize_snapshot(snap) -> dict:
+        return {
+            'id':            snap.pk,
+            'date':          str(snap.date),
+            'status':        snap.status,
+            'best_source':   snap.best_source,
+            'avg_usd_buy':   float(snap.avg_usd_buy)  if snap.avg_usd_buy  else None,
+            'avg_usd_sell':  float(snap.avg_usd_sell) if snap.avg_usd_sell else None,
+            'max_spread_pct': float(snap.max_spread_pct) if snap.max_spread_pct else None,
+            'source_count':  snap.source_count,
+            'anomaly_count': snap.anomaly_count,
+            'close_usd_buy':  float(snap.close_usd_buy)  if snap.close_usd_buy  else None,
+            'close_usd_sell': float(snap.close_usd_sell) if snap.close_usd_sell else None,
+            'aggregated_data': snap.aggregated_data,
+            'notes':         snap.notes,
+            'created_at':    snap.created_at.isoformat(),
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Reference Rate Panel — BCB / BCP display only
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ReferenceRateView(APIView):
+    """
+    GET  /api/rates/reference/         — all latest reference rates
+    GET  /api/rates/reference/?currency=USD&source=BCB
+    POST /api/rates/reference/refresh/ — trigger fetch (ADMIN only)
+
+    ⚠️  Valor referencial solamente — no usado para operaciones.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from .models import ReferenceRate
+        from .serializers import ReferenceRateSerializer
+        from .fetchers.reference_fetcher import get_latest_reference
+
+        currency = request.query_params.get('currency', 'USD').upper()
+        source   = request.query_params.get('source')
+
+        # Return latest record per source
+        qs = ReferenceRate.objects.filter(currency=currency)
+        if source:
+            qs = qs.filter(source=source.upper())
+
+        # One record per source (most recent)
+        seen_sources: set[str] = set()
+        records = []
+        for obj in qs.order_by('source', '-timestamp'):
+            if obj.source not in seen_sources:
+                seen_sources.add(obj.source)
+                records.append(obj)
+
+        serializer = ReferenceRateSerializer(records, many=True)
+
+        return Response({
+            'currency':   currency,
+            'note':       'Valor referencial del dólar estadounidense — solo referencia, no usado para operaciones',
+            'label':      'Solo referencia - no usado para operaciones',
+            'references': serializer.data,
+        })
+
+
+class ReferenceRateRefreshView(APIView):
+    """POST /api/rates/reference/refresh/ — triggers BCB/BCP fetch."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if getattr(request.user, 'role', '') not in ('ADMIN', 'MANAGER'):
+            return Response(
+                {'error': 'Requiere rol ADMIN o MANAGER'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        from .tasks import fetch_reference_rates_task
+        fetch_reference_rates_task.delay()
+        return Response({'queued': True, 'message': 'Actualización de tasas de referencia encolada.'})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  FX Engine View — production parallel market rates
+# ─────────────────────────────────────────────────────────────────────────────
+
+class FXEngineView(APIView):
+    """
+    GET  /api/rates/fx-engine/         — latest 2-decimal rates from parallel market
+    GET  /api/rates/fx-engine/?refresh=true — force engine run (ADMIN only)
+    POST /api/rates/fx-engine/run/     — trigger full engine run (ADMIN only)
+
+    Returns rates based ONLY on parallel market P2P data.
+    All values are rounded to 2 decimal places.
+    Cash variants (USD_LOOSE, USD_SMALL, PEN_COINS) included.
+    """
+    permission_classes = [AllowAny]
+    CACHE_KEY = 'fx_engine_latest'
+    CACHE_TTL = 120   # 2 minutes
+
+    def get(self, request):
+        from .fx_engine import get_live_rates, run_engine, CASH_VARIANT_ADJUSTMENTS
+        from .fetchers.reference_fetcher import get_latest_reference
+
+        force_refresh = request.query_params.get('refresh', '').lower() == 'true'
+
+        if force_refresh and request.user.is_authenticated:
+            result = run_engine(save=True, emit=True)
+            rates  = {code: r.to_dict() for code, r in result.all_rates().items()}
+        else:
+            rates = cache.get(self.CACHE_KEY)
+            if not rates:
+                rates = get_live_rates()
+                if rates:
+                    cache.set(self.CACHE_KEY, rates, self.CACHE_TTL)
+
+        # Attach reference rates (display panel)
+        reference = get_latest_reference('USD')
+
+        return Response({
+            'rates':     rates,
+            'variants':  {k: v for k, v in rates.items() if k in CASH_VARIANT_ADJUSTMENTS},
+            'reference': reference,
+            'precision': 2,
+            'note':      'Tasas basadas exclusivamente en mercado paralelo (P2P)',
+        })
+
+    def post(self, request):
+        if not request.user.is_authenticated or getattr(request.user, 'role', '') not in ('ADMIN', 'MANAGER'):
+            return Response(
+                {'error': 'Requiere rol ADMIN o MANAGER'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        from .tasks import run_fx_engine_task
+        run_fx_engine_task.delay()
+        return Response({'queued': True, 'message': 'FX Engine encolado para ejecución.'})

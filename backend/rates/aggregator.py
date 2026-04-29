@@ -115,9 +115,17 @@ class RateAggregator:
             OpenExchangeRatesFetcher, ExchangeRateAPIFetcher,
             FixerIOFetcher, BCBJsonAPIFetcher,
         )
-        from .fetchers.bcp_fetcher      import BCPBoliviaFetcher, BCPJsonAPIFetcher
+        from .fetchers.bcp_fetcher        import BCPBoliviaFetcher, BCPJsonAPIFetcher
+        from .fetchers.dolar_blue_bolivia import DolarBlueBoliviaFetcher
+        # ── New parallel market fetchers ──────────────────────────────────────
+        from .fetchers.p2p_exchanges  import BinanceP2PFetcher, BitgetP2PFetcher, BybitP2PFetcher
+        from .fetchers.eldorado_fetcher import EldoradoFetcher
+        from .fetchers.wallbit_fetcher  import WallbitFetcher
+        from .fetchers.saldoar_fetcher  import SaldoARFetcher
+        from .fetchers.airtm_v2_fetcher import AirtmQuoteFetcher
 
         fetchers = [
+            # Reference / official (low confidence for parallel market)
             BCBOfficialFetcher(),
             BCBReferenceFetcher(),
             BCBJsonAPIFetcher(),
@@ -126,9 +134,19 @@ class RateAggregator:
             OpenExchangeRatesFetcher(),
             ExchangeRateAPIFetcher(),
             FixerIOFetcher(),
+            # Digital / legacy
             TakenosFetcher(),
             AirtmFetcher(),
+            DolarBlueBoliviaFetcher(),
             ParallelMarketFetcher(),
+            # ── Real parallel market P2P sources ─────────────────────────────
+            BinanceP2PFetcher(),
+            BitgetP2PFetcher(),
+            BybitP2PFetcher(),
+            AirtmQuoteFetcher(),
+            EldoradoFetcher(),
+            WallbitFetcher(),
+            SaldoARFetcher(),
         ]
 
         all_results: list[FetchResult] = []
@@ -157,14 +175,23 @@ class RateAggregator:
         from .fetchers.dolarapi_fetcher import (
             OpenExchangeRatesFetcher, ExchangeRateAPIFetcher, BCBJsonAPIFetcher,
         )
-        from .fetchers.bcp_fetcher      import BCPBoliviaFetcher, BCPJsonAPIFetcher
+        from .fetchers.bcp_fetcher        import BCPBoliviaFetcher, BCPJsonAPIFetcher
+        from .fetchers.p2p_exchanges      import BinanceP2PFetcher, BitgetP2PFetcher, BybitP2PFetcher
+        from .fetchers.eldorado_fetcher   import EldoradoFetcher
+        from .fetchers.wallbit_fetcher    import WallbitFetcher
+        from .fetchers.saldoar_fetcher    import SaldoARFetcher
+        from .fetchers.airtm_v2_fetcher   import AirtmQuoteFetcher
 
         fetcher_map = {
             'official': [BCBOfficialFetcher, BCBJsonAPIFetcher],
             'bcb':      [BCBReferenceFetcher, BCPBoliviaFetcher, BCPJsonAPIFetcher,
                          OpenExchangeRatesFetcher, ExchangeRateAPIFetcher],
-            'digital':  [TakenosFetcher, AirtmFetcher],
-            'parallel': [ParallelMarketFetcher],
+            'digital':  [TakenosFetcher, AirtmFetcher, AirtmQuoteFetcher],
+            'parallel': [
+                ParallelMarketFetcher, BinanceP2PFetcher,
+                BitgetP2PFetcher, BybitP2PFetcher,
+                EldoradoFetcher, WallbitFetcher, SaldoARFetcher,
+            ],
         }
 
         classes = fetcher_map.get(market_type, [])

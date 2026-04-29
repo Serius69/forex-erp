@@ -160,6 +160,86 @@ def update_all_rates(self):
 
 
 # ------------------------------------------------------------------ #
+#  FX Engine — motor paralelo real (principal en producción)           #
+# ------------------------------------------------------------------ #
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=3,
+    name='rates.run_fx_engine',
+)
+def run_fx_engine_task(self):
+    """
+    Ejecuta el FX Engine de producción:
+      1. Fetch paralelo de Binance P2P, Bitget, Bybit, Airtm, Eldorado, Wallbit, SaldoAR
+      2. Limpieza IQR + cálculo de mercado
+      3. Aplicación de márgenes de negocio + auto-profit
+      4. Variantes de efectivo (USD_LOOSE, USD_SMALL, PEN_COINS)
+      5. Guardado en DB + emisión WebSocket
+
+    Programar cada 5 minutos en Celery Beat.
+    """
+    from .fx_engine import run_engine
+
+    log.info('TASK_START rates.run_fx_engine')
+    try:
+        result = run_engine(save=True, emit=True)
+        currencies = list(result.rates.keys())
+        variants   = list(result.variants.keys())
+
+        _run_alert_generator_for_branches(currencies)
+
+        log.info(
+            'TASK_DONE rates.run_fx_engine currencies=%d variants=%d',
+            len(currencies), len(variants),
+        )
+        return {
+            'success':    True,
+            'currencies': currencies,
+            'variants':   variants,
+            'rates': {
+                code: r.to_dict() for code, r in result.rates.items()
+            },
+        }
+
+    except Exception as exc:
+        delay = _RETRY_BACKOFF[min(self.request.retries, 2)]
+        log.error('TASK_ERROR rates.run_fx_engine error=%s retry_in=%ds', exc, delay)
+        raise self.retry(exc=exc, countdown=delay)
+
+
+# ------------------------------------------------------------------ #
+#  Tasas de referencia BCB/BCP (solo display — NO para operaciones)    #
+# ------------------------------------------------------------------ #
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=3,
+    name='rates.fetch_reference_rates',
+)
+def fetch_reference_rates_task(self):
+    """
+    Obtiene y guarda las tasas de referencia del BCB (cucu.bo) y BCP.
+    SOLO para display en el panel de referencia — NUNCA para trading.
+    Programar cada 30 minutos.
+    """
+    from .fetchers.reference_fetcher import fetch_and_save_reference_rates
+
+    log.info('TASK_START rates.fetch_reference_rates')
+    try:
+        saved = fetch_and_save_reference_rates()
+        log.info('TASK_DONE rates.fetch_reference_rates saved=%d', len(saved))
+        return {'success': True, 'saved': len(saved), 'records': saved}
+
+    except Exception as exc:
+        delay = _RETRY_BACKOFF[min(self.request.retries, 2)]
+        log.error('TASK_ERROR rates.fetch_reference_rates error=%s retry_in=%ds', exc, delay)
+        raise self.retry(exc=exc, countdown=delay)
+
+
+# ------------------------------------------------------------------ #
 #  Backward-compatible wrapper (legado — mantener hasta refactor)      #
 # ------------------------------------------------------------------ #
 
@@ -371,6 +451,38 @@ def fetch_binance_p2p_task(self):
         raise self.retry(exc=exc, countdown=delay)
 
 
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=3,
+    name='rates.fetch_dolar_blue_bolivia',
+)
+def fetch_dolar_blue_bolivia_task(self):
+    """
+    Scraping de DolarBlueBolivia — referencia del mercado paralelo boliviano.
+    URL: https://www.dolarbluebolivia.click/
+    Programar cada 15 minutos en Celery Beat.
+    """
+    log.info('TASK_START rates.fetch_dolar_blue_bolivia')
+    try:
+        from .fetchers.dolar_blue_bolivia import DolarBlueBoliviaFetcher
+        results = DolarBlueBoliviaFetcher().fetch()
+
+        if results:
+            _run_alert_generator_for_branches(['USD'])
+            log.info('TASK_DONE rates.fetch_dolar_blue_bolivia buy=%s sell=%s',
+                     results[0].buy_rate, results[0].sell_rate)
+            return {'success': True, 'buy': str(results[0].buy_rate), 'sell': str(results[0].sell_rate)}
+        else:
+            log.warning('TASK_DONE rates.fetch_dolar_blue_bolivia — no rates fetched (site may be down)')
+            return {'success': False, 'reason': 'no_rates_from_site'}
+
+    except Exception as exc:
+        delay = _RETRY_BACKOFF[min(self.request.retries, 2)]
+        log.error('TASK_ERROR rates.fetch_dolar_blue_bolivia error=%s retry_in=%ds', exc, delay)
+        raise self.retry(exc=exc, countdown=delay)
+
+
 # ------------------------------------------------------------------ #
 #  Helpers internos                                                    #
 # ------------------------------------------------------------------ #
@@ -532,6 +644,222 @@ def _send_rate_change_alert(alerts: list[dict]) -> None:
             )
     except Exception as exc:
         log.debug("RATE_ALERT_TELEGRAM_FAILED error=%s", exc)
+
+
+# ------------------------------------------------------------------ #
+#  Snapshot diario de tasas                                           #
+# ------------------------------------------------------------------ #
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=2,
+    name='rates.create_daily_snapshot',
+)
+def create_daily_snapshot_task(self):
+    """
+    Captura el estado actual del mercado de divisas y lo guarda como
+    ExchangeRateSnapshot. Programar al cierre de operaciones (~18:00 BOT).
+    """
+    from django.utils import timezone as tz
+    from .models import Currency, ExchangeRate, ExchangeRateSnapshot
+    from decimal import Decimal as _D
+
+    log.info('TASK_START rates.create_daily_snapshot')
+    try:
+        today = tz.now().date()
+        bob   = Currency.objects.get(code='BOB')
+        currencies = Currency.objects.filter(is_active=True, use_exchange_rate=True).exclude(code='BOB')
+
+        aggregated_data: dict = {}
+        source_count    = 0
+        anomaly_count   = 0
+        max_spread_pct  = _D('0')
+        best_source     = 'unknown'
+        best_confidence = _D('0')
+
+        for cur in currencies:
+            rate = (ExchangeRate.objects
+                    .filter(
+                        currency_from=cur,
+                        currency_to=bob,
+                        valid_until__isnull=True,
+                    )
+                    .order_by('-confidence', '-valid_from')
+                    .first())
+            if not rate:
+                continue
+
+            spread_pct = _D('0')
+            if rate.buy_rate > 0:
+                spread_pct = ((rate.sell_rate - rate.buy_rate) / rate.buy_rate * 100)
+
+            aggregated_data[cur.code] = {
+                'buy':          float(rate.buy_rate),
+                'sell':         float(rate.sell_rate),
+                'avg':          float(rate.avg_rate or (rate.buy_rate + rate.sell_rate) / 2),
+                'spread_pct':   float(spread_pct),
+                'confidence':   float(rate.confidence),
+                'source':       rate.source or '',
+                'market_type':  rate.market_type,
+                'source_method': rate.source_method,
+                'source_url':   rate.source_url or '',
+                'updated_at':   rate.valid_from.isoformat() if rate.valid_from else '',
+            }
+            source_count += 1
+
+            if spread_pct > max_spread_pct:
+                max_spread_pct = spread_pct
+            if rate.confidence > best_confidence:
+                best_confidence = rate.confidence
+                best_source     = rate.source or rate.source_method
+
+            # Conteo de anomalías (spread > 5% o confianza < 0.7)
+            if spread_pct > _D('5') or rate.confidence < _D('0.70'):
+                anomaly_count += 1
+
+        usd_data = aggregated_data.get('USD', {})
+        eur_data = aggregated_data.get('EUR', {})
+
+        status = (
+            'complete' if source_count >= len(list(currencies))
+            else 'degraded' if source_count == 0
+            else 'partial'
+        )
+
+        snapshot, created = ExchangeRateSnapshot.objects.update_or_create(
+            date=today,
+            defaults={
+                'status':          status,
+                'aggregated_data': aggregated_data,
+                'best_source':     best_source,
+                'avg_usd_buy':     _D(str(usd_data['buy']))  if usd_data else None,
+                'avg_usd_sell':    _D(str(usd_data['sell'])) if usd_data else None,
+                'max_spread_pct':  max_spread_pct.quantize(_D('0.001')),
+                'source_count':    source_count,
+                'anomaly_count':   anomaly_count,
+                'close_usd_buy':   _D(str(usd_data['buy']))  if usd_data else None,
+                'close_usd_sell':  _D(str(usd_data['sell'])) if usd_data else None,
+                'close_eur_buy':   _D(str(eur_data['buy']))  if eur_data else None,
+                'close_eur_sell':  _D(str(eur_data['sell'])) if eur_data else None,
+            },
+        )
+
+        action = 'CREATED' if created else 'UPDATED'
+        log.info(
+            'TASK_DONE rates.create_daily_snapshot %s date=%s currencies=%d anomalies=%d',
+            action, today, source_count, anomaly_count,
+        )
+        return {
+            'success':      True,
+            'action':       action,
+            'date':         str(today),
+            'currencies':   source_count,
+            'anomalies':    anomaly_count,
+            'status':       status,
+        }
+
+    except Exception as exc:
+        delay = _RETRY_BACKOFF[min(self.request.retries, 1)]
+        log.error('TASK_ERROR rates.create_daily_snapshot error=%s', exc)
+        raise self.retry(exc=exc, countdown=delay)
+
+
+# ------------------------------------------------------------------ #
+#  Auto Profit Mode — optimización de tasas                           #
+# ------------------------------------------------------------------ #
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=2,
+    name='rates.run_profit_optimizer',
+)
+def run_profit_optimizer_task(self):
+    """
+    Ejecuta el optimizador de profit para todas las divisas activas y
+    emite las tasas óptimas vía WebSocket para que los operadores las
+    apliquen o las descarten.
+
+    NO aplica las tasas automáticamente — solo sugiere y notifica.
+    """
+    from .profit_optimizer import ProfitOptimizer
+
+    log.info('TASK_START rates.run_profit_optimizer')
+    try:
+        optimizer = ProfitOptimizer()
+        results   = optimizer.optimize_all(include_variants=True)
+
+        payload = {r.currency_code if r.variant is None else r.variant: r.to_dict()
+                   for r in results.values()}
+
+        # Notificar via WebSocket
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            layer = get_channel_layer()
+            if layer:
+                async_to_sync(layer.group_send)('rates_updates', {
+                    'type':          'profit_optimizer_update',
+                    'optimized_rates': payload,
+                    'currency_count': len(payload),
+                })
+        except Exception as ws_exc:
+            log.debug('PROFIT_OPTIMIZER_WS_SKIP %s', ws_exc)
+
+        log.info('TASK_DONE rates.run_profit_optimizer currencies=%d', len(payload))
+        return {'success': True, 'optimized': len(payload), 'results': payload}
+
+    except Exception as exc:
+        delay = _RETRY_BACKOFF[min(self.request.retries, 1)]
+        log.error('TASK_ERROR rates.run_profit_optimizer error=%s', exc)
+        raise self.retry(exc=exc, countdown=delay)
+
+
+# ------------------------------------------------------------------ #
+#  Variantes de efectivo                                               #
+# ------------------------------------------------------------------ #
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=2,
+    name='rates.update_cash_variants',
+)
+def update_cash_variants_task(self):
+    """
+    Recalcula y persiste tasas para USD_CASH_LOOSE, USD_SMALL_BILLS y PEN_COINS.
+    Programar después de la actualización principal de tasas.
+    """
+    from .cash_variants import CashVariantService
+
+    log.info('TASK_START rates.update_cash_variants')
+    try:
+        service = CashVariantService()
+        rates   = service.calculate_all()
+        saved   = service.save_to_db(rates)
+
+        # Notificar variantes via WebSocket
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            layer = get_channel_layer()
+            if layer:
+                async_to_sync(layer.group_send)('rates_updates', {
+                    'type':          'cash_variants_update',
+                    'variants':      {code: r.to_dict() for code, r in rates.items()},
+                    'variant_count': saved,
+                })
+        except Exception as ws_exc:
+            log.debug('CASH_VARIANTS_WS_SKIP %s', ws_exc)
+
+        log.info('TASK_DONE rates.update_cash_variants saved=%d', saved)
+        return {'success': True, 'saved': saved, 'variants': list(rates.keys())}
+
+    except Exception as exc:
+        delay = _RETRY_BACKOFF[min(self.request.retries, 1)]
+        log.error('TASK_ERROR rates.update_cash_variants error=%s', exc)
+        raise self.retry(exc=exc, countdown=delay)
 
 
 # ------------------------------------------------------------------ #

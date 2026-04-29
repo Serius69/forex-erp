@@ -40,6 +40,10 @@ const SOURCE_LABEL: Record<AlertSource, string> = {
   SYSTEM:      'Sistema',
   INVENTORY:   'Inventario',
   RATES:       'Tasas',
+  PRECIO:      'Precio',
+  RIESGO:      'Riesgo',
+  OPERATIVO:   'Operativo',
+  OPORTUNIDAD: 'Oportunidad',
 };
 
 // ── Sub-components ────────────────────────────────────────────────────────────

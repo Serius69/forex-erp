@@ -7,7 +7,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate, update_session_auth_hash
-from django.db.models import Sum
+from django.db.models import Sum, Count
+from django.db.models.functions import TruncHour
 from django.utils import timezone
 from datetime import timedelta
 from .models import User, UserActivity, Branch
@@ -459,8 +460,10 @@ def dashboard_stats(request):
     except Currency.DoesNotExist:
         pass
 
-    # Pending transactions
+    # Pending transactions — tenant + branch isolation
     pending_qs = Transaction.objects.filter(status='PENDING')
+    if getattr(request.user, 'company_id', None):
+        pending_qs = pending_qs.filter(branch__company_id=request.user.company_id)
     if request.user.role != 'ADMIN':
         pending_qs = pending_qs.filter(branch=request.user.branch)
     pending_transactions = pending_qs.count()
@@ -486,8 +489,19 @@ def dashboard_stats(request):
     except Exception:
         pass
 
+    hour_map = {
+        r['h']: r['count']
+        for r in today_txs
+            .filter(created_at__hour__gte=9, created_at__hour__lt=19)
+            .annotate(h=TruncHour('created_at'))
+            .values('h')
+            .annotate(count=Count('id'))
+        if r['h'] is not None
+    }
+    # hour_map keys are aware datetime objects — extract .hour for lookup
+    hour_count = {k.hour: v for k, v in hour_map.items()}
     by_hour = [
-        {'hour': f'{h:02d}:00', 'count': today_txs.filter(created_at__hour=h).count()}
+        {'hour': f'{h:02d}:00', 'count': hour_count.get(h, 0)}
         for h in range(9, 19)
     ]
 
@@ -513,7 +527,7 @@ def dashboard_stats(request):
         'recent_transactions': [{
             'id':                 t.id,
             'transaction_number': t.transaction_number,
-            'customer':           t.customer.full_name,
+            'customer':           t.customer.full_name if t.customer else '—',
             'type':               t.transaction_type,
             'currency_from':      {'code': t.currency_from.code},
             'transaction_type':   t.transaction_type,

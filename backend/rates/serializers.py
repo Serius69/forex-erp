@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import Currency, ExchangeRate, ExchangeRateSource, RateConfiguration
+from .models import (
+    Currency, ExchangeRate, ExchangeRateSource,
+    RateConfiguration, ExchangeRateSnapshot, ReferenceRate,
+)
 
 
 class ExchangeRateSourceSerializer(serializers.ModelSerializer):
@@ -114,3 +117,67 @@ class RateConfigurationSerializer(serializers.ModelSerializer):
     def get_current_margins(self, obj):
         buy, sell = obj.get_current_margins()
         return {'buy': buy, 'sell': sell}
+
+
+class ExchangeRateSnapshotSerializer(serializers.ModelSerializer):
+    """Serializa un snapshot diario del estado del mercado."""
+    usd_spread_pct = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = ExchangeRateSnapshot
+        fields = [
+            'id', 'date', 'status',
+            'avg_usd_buy', 'avg_usd_sell', 'usd_spread_pct',
+            'max_spread_pct', 'source_count', 'anomaly_count',
+            'close_usd_buy', 'close_usd_sell',
+            'close_eur_buy', 'close_eur_sell',
+            'best_source', 'aggregated_data', 'notes',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_usd_spread_pct(self, obj) -> float | None:
+        if obj.avg_usd_buy and obj.avg_usd_sell and obj.avg_usd_buy > 0:
+            return float((obj.avg_usd_sell - obj.avg_usd_buy) / obj.avg_usd_buy * 100)
+        return None
+
+
+class ReferenceRateSerializer(serializers.ModelSerializer):
+    """
+    Tasa de referencia BCB / BCP — SOLO para display.
+    ⚠️  No usar para operaciones de cambio.
+    """
+    display_label = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = ReferenceRate
+        fields = [
+            'id', 'currency', 'source',
+            'reference_buy', 'reference_sell',
+            'display_label', 'timestamp',
+        ]
+        read_only_fields = fields
+
+    def get_display_label(self, obj) -> str:
+        return 'Solo referencia - no usado para operaciones'
+
+
+class LiveEngineRateSerializer(serializers.Serializer):
+    """
+    Serializer for FXEngine output rates (2-decimal precision).
+    Used by /api/rates/fx-engine/ endpoint.
+    """
+    currency     = serializers.CharField()
+    buy_rate     = serializers.DecimalField(max_digits=10, decimal_places=2)
+    sell_rate    = serializers.DecimalField(max_digits=10, decimal_places=2)
+    avg_rate     = serializers.DecimalField(max_digits=10, decimal_places=2)
+    spread       = serializers.DecimalField(max_digits=10, decimal_places=2)
+    spread_pct   = serializers.DecimalField(max_digits=6,  decimal_places=2)
+    market_buy   = serializers.DecimalField(max_digits=10, decimal_places=2)
+    market_sell  = serializers.DecimalField(max_digits=10, decimal_places=2)
+    margin_buy   = serializers.DecimalField(max_digits=10, decimal_places=2)
+    margin_sell  = serializers.DecimalField(max_digits=10, decimal_places=2)
+    sources      = serializers.ListField(child=serializers.CharField())
+    source_count = serializers.IntegerField()
+    confidence   = serializers.DecimalField(max_digits=5, decimal_places=3)
+    scale_factor = serializers.IntegerField()

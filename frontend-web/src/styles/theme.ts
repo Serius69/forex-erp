@@ -1,6 +1,18 @@
 import { createTheme, alpha } from '@mui/material/styles';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
+// Additional semantic tokens for status and premium accents
+export const TOKENS_EXTRA = {
+  // Premium gradients
+  gradBlue:    'linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%)',
+  gradGreen:   'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+  gradAmber:   'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
+  gradRed:     'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)',
+  // Glass surface
+  glass:       'rgba(255,255,255,0.72)',
+  glassBorder: 'rgba(255,255,255,0.5)',
+};
+
 export const TOKENS = {
   // Brand
   navy:    '#0F172A',
@@ -444,6 +456,60 @@ export const theme = createTheme({
       styleOverrides: {
         root: { borderRadius: 10, fontWeight: 600 },
       },
+    },
+
+    // ── CssBaseline: global resets ────────────────────────────────────────────
+    MuiCssBaseline: {
+      styleOverrides: `
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+        *, *::before, *::after {
+          box-sizing: border-box;
+        }
+
+        html {
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+          text-rendering: optimizeLegibility;
+        }
+
+        body {
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          background-color: ${TOKENS.bg};
+        }
+
+        /* Slim scrollbars everywhere */
+        ::-webkit-scrollbar         { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track   { background: transparent; }
+        ::-webkit-scrollbar-thumb   { background: ${TOKENS.border}; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: ${TOKENS.muted}; }
+
+        /* Text selection */
+        ::selection {
+          background: ${alpha(TOKENS.blue, 0.2)};
+          color: ${TOKENS.text};
+        }
+
+        /* Remove number input spinners */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+        input[type=number] { -moz-appearance: textfield; }
+
+        /* Focus ring for accessibility */
+        :focus-visible {
+          outline: 2px solid ${TOKENS.blue};
+          outline-offset: 2px;
+        }
+
+        /* Smooth transitions for theme-sensitive elements */
+        .MuiCard-root,
+        .MuiPaper-root,
+        .MuiAppBar-root {
+          transition-property: background-color, border-color, box-shadow;
+          transition-duration: 0.2s;
+          transition-timing-function: ease;
+        }
+      `,
     },
   },
 });

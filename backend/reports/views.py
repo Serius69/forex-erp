@@ -1,5 +1,6 @@
 from datetime import date as dt
 from django.http import FileResponse, Http404, HttpResponse
+from core.utils import parse_date_range
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -162,14 +163,9 @@ class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
 class ManagementReportViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminOrSupervisor]
 
-    def _parse_dates(self, request):
-        df = request.query_params.get('date_from', str(dt.today()))
-        dt_ = request.query_params.get('date_to', str(dt.today()))
-        return dt.fromisoformat(df), dt.fromisoformat(dt_)
-
     @action(detail=False, methods=['get'], url_path='pnl')
     def pnl(self, request):
-        date_from, date_to = self._parse_dates(request)
+        date_from, date_to = parse_date_range(request, default_days=0)
         period = request.query_params.get('period', 'daily')
         fmt    = request.query_params.get('format', 'json')
         from .services.management_service import ManagementReportService
@@ -187,7 +183,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='profitability')
     def profitability(self, request):
-        date_from, date_to = self._parse_dates(request)
+        date_from, date_to = parse_date_range(request, default_days=0)
         fmt = request.query_params.get('format', 'json')
         from .services.management_service import ManagementReportService
         result = ManagementReportService.generate_profitability(
@@ -204,7 +200,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='client-ranking')
     def client_ranking(self, request):
-        date_from, date_to = self._parse_dates(request)
+        date_from, date_to = parse_date_range(request, default_days=0)
         top_n = int(request.query_params.get('top_n', 20))
         fmt   = request.query_params.get('format', 'json')
         from .services.management_service import ManagementReportService
@@ -222,7 +218,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='comparative')
     def comparative(self, request):
-        date_from, date_to = self._parse_dates(request)
+        date_from, date_to = parse_date_range(request, default_days=0)
         fmt = request.query_params.get('format', 'json')
         from .services.management_service import ManagementReportService
         result = ManagementReportService.generate_comparative(

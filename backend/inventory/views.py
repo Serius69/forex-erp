@@ -221,7 +221,10 @@ class InventoryTransferViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        
+        user = self.request.user
+        if getattr(user, 'company_id', None):
+            queryset = queryset.filter(source_branch__company_id=user.company_id)
+
         # Filtros
         transfer_status = self.request.query_params.get('status')
         branch_id = self.request.query_params.get('branch_id')
@@ -315,7 +318,12 @@ class InventoryAlertViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        
+        user = self.request.user
+        if getattr(user, 'company_id', None):
+            queryset = queryset.filter(inventory__branch__company_id=user.company_id)
+        if user.role != 'ADMIN':
+            queryset = queryset.filter(inventory__branch=user.branch)
+
         # Filtros
         is_resolved = self.request.query_params.get('is_resolved')
         severity = self.request.query_params.get('severity')
@@ -396,9 +404,11 @@ class InventoryMovementViewSet(viewsets.ReadOnlyModelViewSet):
         qs = InventoryMovement.objects.select_related(
             'inventory__currency', 'inventory__branch', 'user'
         ).order_by('-created_at')
-
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(inventory__branch=self.request.user.branch)
+        user = self.request.user
+        if getattr(user, 'company_id', None):
+            qs = qs.filter(inventory__branch__company_id=user.company_id)
+        if user.role != 'ADMIN':
+            qs = qs.filter(inventory__branch=user.branch)
 
         currency     = self.request.query_params.get('currency')
         mov_type     = self.request.query_params.get('type')

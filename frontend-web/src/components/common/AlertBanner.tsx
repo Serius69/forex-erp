@@ -9,7 +9,7 @@ export interface AlertItem {
   id: string;
   message: string;
   severity: 'critical' | 'warning' | 'info';
-  category?: 'low_inventory' | 'volatile_rate' | 'anomaly' | 'general';
+  category?: string;
   time?: string;
 }
 

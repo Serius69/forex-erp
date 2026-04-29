@@ -382,6 +382,107 @@ class RateConfiguration(models.Model):
             return self.buy_margin_evening, self.sell_margin_evening
 
 
+class ExchangeRateSnapshot(models.Model):
+    """
+    Snapshot diario del estado del mercado de divisas.
+    Captura el estado agregado de todas las fuentes al final de cada día
+    para análisis histórico, auditoría y backtesting del motor de precios.
+    """
+    SNAPSHOT_STATUS = [
+        ('partial',  'Parcial — algunas fuentes no disponibles'),
+        ('complete', 'Completo — todas las fuentes respondieron'),
+        ('degraded', 'Degradado — solo fuentes secundarias'),
+    ]
+
+    date             = models.DateField(unique=True, db_index=True)
+    status           = models.CharField(max_length=10, choices=SNAPSHOT_STATUS, default='partial')
+    aggregated_data  = models.JSONField(
+        default=dict,
+        help_text=(
+            'Mapa {currency_code: {buy, sell, avg, spread_pct, confidence, '
+            'sources[], market_type, source_method}} para cada divisa activa.'
+        ),
+    )
+    best_source      = models.CharField(
+        max_length=50, blank=True,
+        help_text='Fuente más confiable del día (binance/dolarblue/bcb/manual).',
+    )
+    avg_usd_buy      = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        help_text='Promedio de compra USD/BOB del día.',
+    )
+    avg_usd_sell     = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        help_text='Promedio de venta USD/BOB del día.',
+    )
+    max_spread_pct   = models.DecimalField(
+        max_digits=6, decimal_places=3, null=True, blank=True,
+        help_text='Spread máximo registrado durante el día (%).',
+    )
+    source_count     = models.IntegerField(
+        default=0,
+        help_text='Número de fuentes activas que reportaron en este snapshot.',
+    )
+    anomaly_count    = models.IntegerField(
+        default=0,
+        help_text='Número de anomalías de precio detectadas durante el día.',
+    )
+    # Tasas de cierre de cada par clave (denormalizadas para consulta rápida)
+    close_usd_buy    = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    close_usd_sell   = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    close_eur_buy    = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    close_eur_sell   = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    notes            = models.TextField(blank=True)
+    created_at       = models.DateTimeField(auto_now_add=True)
+    updated_at       = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = 'Snapshot de Tasas'
+        verbose_name_plural = 'Snapshots de Tasas'
+        ordering            = ['-date']
+        indexes             = [
+            models.Index(fields=['-date']),
+            models.Index(fields=['status', '-date']),
+        ]
+
+    def __str__(self):
+        return f"RateSnapshot {self.date} USD={self.avg_usd_buy}/{self.avg_usd_sell}"
+
+
+class ReferenceRate(models.Model):
+    """
+    Tasas de referencia BCB / BCP.
+    SOLO para display y analytics — NUNCA para operaciones de trading.
+    """
+    SOURCE_CHOICES = [('BCB', 'Banco Central de Bolivia'), ('BCP', 'BCP Bolivia')]
+
+    currency        = models.CharField(max_length=10, db_index=True)
+    reference_buy   = models.DecimalField(max_digits=10, decimal_places=4)
+    reference_sell  = models.DecimalField(max_digits=10, decimal_places=4)
+    source          = models.CharField(max_length=5, choices=SOURCE_CHOICES, db_index=True)
+    raw_response    = models.JSONField(default=dict, blank=True)
+    timestamp       = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name        = 'Tasa de Referencia'
+        verbose_name_plural = 'Tasas de Referencia'
+        ordering            = ['-timestamp']
+        indexes = [
+            models.Index(fields=['currency', 'source', '-timestamp']),
+        ]
+
+    def __str__(self):
+        return f"[{self.source}] {self.currency} buy={self.reference_buy} sell={self.reference_sell}"
+
+    @classmethod
+    def get_latest(cls, currency: str = 'USD', source: str | None = None):
+        """Retorna la referencia más reciente para una divisa."""
+        qs = cls.objects.filter(currency=currency.upper())
+        if source:
+            qs = qs.filter(source=source)
+        return qs.first()
+
+
 class ExchangeRateDecisionLog(models.Model):
     """
     Auditoría de cada decisión del motor de precios AI.

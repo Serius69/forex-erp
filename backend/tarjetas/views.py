@@ -172,8 +172,11 @@ class VentaTarjetaViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(branch=self.request.user.branch)
+        user = self.request.user
+        if getattr(user, 'company_id', None):
+            qs = qs.filter(branch__company_id=user.company_id)
+        if user.role != 'ADMIN':
+            qs = qs.filter(branch=user.branch)
 
         tipo_id   = self.request.query_params.get('tipo_tarjeta')
         date_from = self.request.query_params.get('date_from')
@@ -437,8 +440,11 @@ class MovimientoTarjetaViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.request.user.role != 'ADMIN':
-            qs = qs.filter(branch=self.request.user.branch)
+        user = self.request.user
+        if getattr(user, 'company_id', None):
+            qs = qs.filter(branch__company_id=user.company_id)
+        if user.role != 'ADMIN':
+            qs = qs.filter(branch=user.branch)
 
         tipo_mov  = self.request.query_params.get('tipo_movimiento')
         tipo_id   = self.request.query_params.get('tipo_tarjeta')
