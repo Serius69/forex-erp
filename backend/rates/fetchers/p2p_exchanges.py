@@ -23,7 +23,6 @@ _Q2 = Decimal('0.01')
 BITGET_BASE_URL = 'https://api.bitget.com'
 BYBIT_BASE_URL  = 'https://api.bybit.com'
 
-BCB_USD_REF = Decimal('6.96')
 
 TOP_N = 10  # use top N ads per side
 
@@ -53,7 +52,7 @@ class BitgetP2PFetcher(BaseFetcher):
         sell_prices = self._fetch_side(session, 'SELL')
 
         if not buy_prices and not sell_prices:
-            log.warning('BITGET_P2P_NO_PRICES')
+            log.debug('BITGET_P2P_NO_PRICES — all endpoints failed or unsupported')
             return []
 
         buy_prices  = sorted(buy_prices)[:TOP_N]
@@ -78,7 +77,7 @@ class BitgetP2PFetcher(BaseFetcher):
             currency_code = 'USD',
             market_type   = self.market_type,
             source_name   = self.source_name,
-            official_rate = BCB_USD_REF,
+            official_rate = (buy_price + sell_price) / Decimal('2'),
             buy_rate      = buy_price,
             sell_rate     = sell_price,
             scale_factor  = 1,
@@ -90,39 +89,55 @@ class BitgetP2PFetcher(BaseFetcher):
         return [result] if result.is_valid() else []
 
     def _fetch_side(self, session, side: str) -> list[float]:
-        """Returns list of float prices for the given side."""
-        try:
-            url = f'{BITGET_BASE_URL}/api/v2/p2p/merchant-ad-list'
-            params = {
-                'fiat':     'BOB',
-                'side':     side,
-                'currency': 'USDT',
-                'page':     '1',
-                'pageSize': str(TOP_N),
-            }
-            resp = session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
-            resp.raise_for_status()
-            data = resp.json()
+        """Returns list of float prices for the given side (BUY/SELL)."""
+        # Bitget P2P endpoint variants — try each until one returns prices
+        candidates = [
+            ('GET',  f'{BITGET_BASE_URL}/api/v2/p2p/advList', {
+                'fiatCurrency': 'BOB', 'coinCode': 'USDT',
+                'tradeType': side, 'pageNo': '1', 'pageSize': str(TOP_N),
+            }),
+            ('POST', f'{BITGET_BASE_URL}/api/v2/p2p/adv/list', {
+                'fiatCurrency': 'BOB', 'coinCode': 'USDT',
+                'tradeType': side, 'pageNo': 1, 'pageSize': TOP_N,
+            }),
+            ('GET',  f'{BITGET_BASE_URL}/api/v2/p2p/merchant-ad-list', {
+                'fiat': 'BOB', 'side': side, 'currency': 'USDT',
+                'page': '1', 'pageSize': str(TOP_N),
+            }),
+        ]
+        for method, url, params_or_body in candidates:
+            try:
+                if method == 'POST':
+                    resp = session.post(url, json=params_or_body, timeout=DEFAULT_TIMEOUT)
+                else:
+                    resp = session.get(url, params=params_or_body, timeout=DEFAULT_TIMEOUT)
 
-            prices = []
-            ads = (data.get('data', {}).get('adList', [])
-                   or data.get('data', [])
-                   or data.get('items', []))
-            for ad in ads:
-                try:
-                    price = float(
-                        ad.get('price') or ad.get('adPrice') or
-                        ad.get('unitPrice') or 0
-                    )
-                    if price > 0:
-                        prices.append(price)
-                except (TypeError, ValueError):
+                if resp.status_code in (404, 403, 400):
                     continue
-            return prices
 
-        except Exception as exc:
-            log.debug('BITGET_P2P_SIDE_ERROR side=%s error=%s', side, exc)
-            return []
+                data = resp.json()
+                ads = (
+                    data.get('data', {}).get('adList', [])
+                    or data.get('data', {}).get('list', [])
+                    or data.get('data', [])
+                    or data.get('items', [])
+                )
+                prices = []
+                for ad in ads:
+                    try:
+                        price = float(
+                            ad.get('price') or ad.get('adPrice') or
+                            ad.get('unitPrice') or 0
+                        )
+                        if price > 0:
+                            prices.append(price)
+                    except (TypeError, ValueError):
+                        continue
+                if prices:
+                    return prices
+            except Exception as exc:
+                log.debug('BITGET_P2P_SIDE_ERROR side=%s url=%s error=%s', side, url, exc)
+        return []
 
 
 class BybitP2PFetcher(BaseFetcher):
@@ -148,7 +163,7 @@ class BybitP2PFetcher(BaseFetcher):
         buy_prices  = self._fetch_side(session, 'SELL')
 
         if not buy_prices and not sell_prices:
-            log.warning('BYBIT_P2P_NO_PRICES')
+            log.debug('BYBIT_P2P_NO_PRICES — all endpoints failed or unsupported')
             return []
 
         buy_prices  = sorted(buy_prices)[:TOP_N]
@@ -172,7 +187,7 @@ class BybitP2PFetcher(BaseFetcher):
             currency_code = 'USD',
             market_type   = self.market_type,
             source_name   = self.source_name,
-            official_rate = BCB_USD_REF,
+            official_rate = (buy_price + sell_price) / Decimal('2'),
             buy_rate      = buy_price,
             sell_rate     = sell_price,
             scale_factor  = 1,
@@ -184,38 +199,57 @@ class BybitP2PFetcher(BaseFetcher):
         return [result] if result.is_valid() else []
 
     def _fetch_side(self, session, direction: str) -> list[float]:
-        try:
-            url = f'{BYBIT_BASE_URL}/v5/p2p/item/online'
-            params = {
-                'fiatCurrency': 'BOB',
-                'direction':    direction,
-                'tokenId':      'USDT',
-                'page':         '1',
-                'size':         str(TOP_N),
-            }
-            resp = session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
-            resp.raise_for_status()
-            data = resp.json()
+        """
+        direction='BUY'  → user buys USDT (merchant sells) → sell prices
+        direction='SELL' → user sells USDT (merchant buys) → buy prices
+        """
+        # Bybit P2P moved from GET /v5/ to POST api2.bybit.com
+        # side: '1'=BUY(user buys USDT), '0'=SELL(user sells USDT)
+        bybit_side = '1' if direction == 'BUY' else '0'
+        candidates = [
+            ('POST', 'https://api2.bybit.com/fiat/otc/item/online', {
+                'tokenId': 'USDT', 'currencyId': 'BOB',
+                'payment': '0', 'side': bybit_side,
+                'size': str(TOP_N), 'page': '1', 'amount': '',
+            }),
+            ('GET', f'{BYBIT_BASE_URL}/v5/p2p/item/online', {
+                'fiatCurrency': 'BOB', 'tokenId': 'USDT',
+                'side': bybit_side, 'page': '1', 'size': str(TOP_N),
+            }),
+        ]
+        for method, url, params_or_body in candidates:
+            try:
+                if method == 'POST':
+                    resp = session.post(url, json=params_or_body, timeout=DEFAULT_TIMEOUT)
+                else:
+                    resp = session.get(url, params=params_or_body, timeout=DEFAULT_TIMEOUT)
 
-            prices = []
-            items = (data.get('result', {}).get('items', [])
-                     or data.get('data', {}).get('list', [])
-                     or data.get('items', []))
-            for item in items:
-                try:
-                    price = float(
-                        item.get('price') or item.get('unitPrice') or
-                        item.get('priceFloat') or 0
-                    )
-                    if price > 0:
-                        prices.append(price)
-                except (TypeError, ValueError):
+                if resp.status_code in (404, 403, 400):
                     continue
-            return prices
 
-        except Exception as exc:
-            log.debug('BYBIT_P2P_SIDE_ERROR direction=%s error=%s', direction, exc)
-            return []
+                data = resp.json()
+                items = (
+                    data.get('result', {}).get('items', [])
+                    or data.get('data', {}).get('list', [])
+                    or data.get('data', [])
+                    or data.get('items', [])
+                )
+                prices = []
+                for item in items:
+                    try:
+                        price = float(
+                            item.get('price') or item.get('unitPrice') or
+                            item.get('priceFloat') or 0
+                        )
+                        if price > 0:
+                            prices.append(price)
+                    except (TypeError, ValueError):
+                        continue
+                if prices:
+                    return prices
+            except Exception as exc:
+                log.debug('BYBIT_P2P_SIDE_ERROR direction=%s url=%s error=%s', direction, url, exc)
+        return []
 
 
 class BinanceP2PFetcher(BaseFetcher):
@@ -260,7 +294,7 @@ class BinanceP2PFetcher(BaseFetcher):
             currency_code = 'USD',
             market_type   = self.market_type,
             source_name   = self.source_name,
-            official_rate = BCB_USD_REF,
+            official_rate = (buy_price + sell_price) / Decimal('2'),
             buy_rate      = buy_price,
             sell_rate     = sell_price,
             scale_factor  = 1,

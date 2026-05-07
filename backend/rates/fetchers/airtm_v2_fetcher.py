@@ -14,10 +14,19 @@ from .base import BaseFetcher, FetchResult, DEFAULT_TIMEOUT
 
 log = logging.getLogger('kapitalya.rates.fetcher.airtm_v2')
 
-# Base URL — Airtm may change their internal API; update as needed
+# Airtm endpoint candidates — tried in order
+_AIRTM_ENDPOINTS = [
+    # Public GET endpoints
+    ('GET',  'https://airtm.com/api/v1/exchange-rates'),
+    ('GET',  'https://app.airtm.com/api/v1/rates'),
+    ('GET',  'https://app.airtm.com/api/rates'),
+    ('GET',  'https://airtm.com/api/exchange-rates'),
+    # Quote POST endpoint
+    ('POST', 'https://app.airtm.com/v2/payments'),
+]
+
 AIRTM_QUOTE_URL  = 'https://app.airtm.com/v2/payments'
 AIRTM_RATE_URL   = 'https://app.airtm.com/api/rates'
-BCB_USD_REF      = Decimal('6.96')
 
 _Q4 = Decimal('0.0001')
 
@@ -44,18 +53,46 @@ class AirtmQuoteFetcher(BaseFetcher):
         from django.utils import timezone
 
         fetched_at = timezone.now()
+        session = self._get_session()
+        session.headers.update({
+            'Accept':     'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0',
+        })
 
-        # Try the quote endpoint (POST)
-        result = self._fetch_quote(fetched_at)
-        if result:
-            return result
+        for method, url in _AIRTM_ENDPOINTS:
+            try:
+                if method == 'POST':
+                    resp = session.post(
+                        url,
+                        json={'amount': self.QUOTE_AMOUNT_BOB, 'from': 'BOB', 'to': 'USD'},
+                        timeout=DEFAULT_TIMEOUT,
+                    )
+                else:
+                    resp = session.get(url, timeout=DEFAULT_TIMEOUT)
 
-        # Fallback: GET rates endpoint
-        result = self._fetch_rates_get(fetched_at)
-        if result:
-            return result
+                if resp.status_code in (403, 404, 401):
+                    log.debug('AIRTM_SKIP status=%s url=%s', resp.status_code, url)
+                    continue
 
-        log.warning('AIRTM_V2_ALL_ENDPOINTS_FAILED')
+                raw = resp.text.strip()
+                if not raw or raw in ('{}', '[]', 'null'):
+                    log.debug('AIRTM_EMPTY_BODY url=%s', url)
+                    continue
+
+                data = resp.json()
+                if method == 'POST':
+                    result = self._extract_from_quote(data, fetched_at, url)
+                else:
+                    result = self._extract_from_rates(data, fetched_at, url)
+
+                if result:
+                    log.info('AIRTM_OK url=%s results=%d', url, len(result))
+                    return result
+
+            except Exception as exc:
+                log.debug('AIRTM_ENDPOINT_ERROR method=%s url=%s error=%s', method, url, exc)
+
+        log.debug('AIRTM_ALL_ENDPOINTS_FAILED — no live data available')
         return []
 
     def _fetch_quote(self, fetched_at) -> list[FetchResult]:
@@ -127,7 +164,7 @@ class AirtmQuoteFetcher(BaseFetcher):
                 currency_code = 'USD',
                 market_type   = self.market_type,
                 source_name   = self.source_name,
-                official_rate = BCB_USD_REF,
+                official_rate = (buy_rate + sell_rate) / Decimal('2'),
                 buy_rate      = buy_rate,
                 sell_rate     = sell_rate,
                 scale_factor  = 1,
@@ -173,7 +210,7 @@ class AirtmQuoteFetcher(BaseFetcher):
                     currency_code = code,
                     market_type   = self.market_type,
                     source_name   = self.source_name,
-                    official_rate = BCB_USD_REF,
+                    official_rate = (buy + sell) / Decimal('2'),
                     buy_rate      = buy,
                     sell_rate     = sell,
                     scale_factor  = 1,

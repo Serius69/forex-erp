@@ -166,6 +166,14 @@ class FXEngine:
         log.info('FX_ENGINE_START auto_profit=%s', self.auto_profit)
 
         raw = self._fetch_all_parallel()
+
+        # Persist raw results to ExchangeRateRaw (ML archive)
+        try:
+            from rates.aggregator import RateAggregator
+            RateAggregator().save_raw_to_db(raw)
+        except Exception as _raw_exc:
+            log.warning('FX_ENGINE_RAW_SAVE_ERROR %s', _raw_exc)
+
         market = self._compute_market_data(raw)
         rates = self._compute_rates(market)
         variants = self._compute_variants(rates)

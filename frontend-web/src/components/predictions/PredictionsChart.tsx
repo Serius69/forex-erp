@@ -77,7 +77,7 @@ const PredictionsChart: React.FC = () => {
   const loadPredictions = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/predictions/current/', {
+      const response = await api.get('/predictions/predictions/current/', {
         params: {
           currency_pair: `${selectedCurrency}/BOB`,
         },

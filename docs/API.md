@@ -1,6 +1,6 @@
 # Kapitalya ERP — API Reference
 
-Base URL: `http://localhost:8000/api`
+Base URL: `http://localhost:8007/api`
 
 Todos los endpoints (excepto auth) requieren header:
 ```
@@ -70,7 +70,7 @@ Lista paginada. Filtros disponibles:
 ```json
 {
   "count": 150,
-  "next": "http://localhost:8000/api/transactions/?page=2",
+  "next": "http://localhost:8007/api/transactions/?page=2",
   "previous": null,
   "results": [
     {
@@ -383,7 +383,7 @@ Ganancia por divisa en un período.
     "ops_compra": 45,
     "ops_venta": 32,
     "unidades_compradas": "25000.00",
-    "unidades_vendidas": "18000.00",
+    "unidades_vendidas": "18007.00",
     "costo_bob": "172500.00",
     "ingreso_bob": "126720.00",
     "ganancia_bob": "1620.00",
@@ -548,7 +548,7 @@ KPIs generales del sistema.
 
 ## WebSocket
 
-### `ws://localhost:8000/ws/rates/`
+### `ws://localhost:8007/ws/rates/`
 Stream de tasas en tiempo real.
 
 **Mensaje recibido:**

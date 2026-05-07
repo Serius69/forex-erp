@@ -22,10 +22,9 @@ const CURRENCIES = ['USD', 'EUR', 'CLP', 'PEN', 'BRL', 'ARS', 'GBP'];
 const DAYS_OPTIONS = [7, 14, 30, 60, 90, 180, 365];
 const MARKET_OPTIONS = [
   { value: '', label: 'Todos los mercados' },
-  { value: 'parallel', label: 'Paralelo' },
-  { value: 'bcb', label: 'BCB Referencial' },
+  { value: 'paralelo_digital', label: 'Mercado paralelo' },
+  { value: 'parallel', label: 'Paralelo (legacy)' },
   { value: 'digital', label: 'Digital' },
-  { value: 'official', label: 'Oficial' },
 ];
 
 interface HistoryPoint {
@@ -33,7 +32,6 @@ interface HistoryPoint {
   market_type: string;
   avg_buy: number;
   avg_sell: number;
-  avg_official: number;
   min_buy: number;
   max_sell: number;
 }
@@ -106,9 +104,8 @@ const RateHistoryChart: React.FC = () => {
       }
       const entry = map.get(key)!;
       const prefix = p.market_type;
-      entry[`${prefix}_buy`]      = p.avg_buy;
-      entry[`${prefix}_sell`]     = p.avg_sell;
-      entry[`${prefix}_official`] = p.avg_official;
+      entry[`${prefix}_buy`]  = p.avg_buy;
+      entry[`${prefix}_sell`] = p.avg_sell;
     }
 
     return Array.from(map.values())
@@ -300,19 +297,6 @@ const RateHistoryChart: React.FC = () => {
                 dot={false}
                 connectNulls
               />
-              {chartData.some(d => d[`${marketKey}_official`] > 0) && (
-                <DataComponent
-                  type="monotone"
-                  dataKey={`${marketKey}_official`}
-                  name="Oficial BCB"
-                  stroke="#ed6c02"
-                  strokeWidth={1.5}
-                  strokeDasharray="5 5"
-                  fill="none"
-                  dot={false}
-                  connectNulls
-                />
-              )}
             </ChartComponent>
           </ResponsiveContainer>
         )}

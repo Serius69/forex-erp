@@ -18,7 +18,7 @@ from decimal import Decimal
 
 from django.conf import settings
 
-from .base import BaseFetcher, FetchResult, DEFAULT_TIMEOUT
+from .base import BaseFetcher, FetchResult, DEFAULT_TIMEOUT, apply_min_spread
 
 log = logging.getLogger('kapitalya.rates.fetcher.external_api')
 
@@ -32,29 +32,25 @@ def _make_fetch_result(
     mid_rate_per_unit: Decimal,
     source_name: str,
     source_url: str,
-    market_type: str = 'bcb',
+    market_type: str = 'paralelo_digital',
     confidence: float = 0.88,
 ) -> FetchResult:
     """
     Builds a FetchResult from a mid-market per-unit rate.
-    buy/sell are set symmetrically with a minimal 0.1% spread
-    (actual spreads are applied by RateConfiguration margins).
-    official_rate is always per-unit (BCB standard).
+    Applies a 0.20% spread (±0.10%) since the API only provides mid-market.
     buy_rate/sell_rate are per scale_factor units.
     """
     from django.utils import timezone
 
-    scale = _SCALE.get(code, 1)
-    scaled = mid_rate_per_unit * Decimal(str(scale))
-    spread = scaled * Decimal('0.001')
-    buy    = (scaled - spread).quantize(Decimal('0.0001'))
-    sell   = (scaled + spread).quantize(Decimal('0.0001'))
+    scale  = _SCALE.get(code, 1)
+    mid    = (mid_rate_per_unit * Decimal(str(scale))).quantize(Decimal('0.0001'))
+    buy, sell = apply_min_spread(mid)
 
     return FetchResult(
         currency_code  = code,
         market_type    = market_type,
         source_name    = source_name,
-        official_rate  = mid_rate_per_unit.quantize(Decimal('0.0001')),
+        official_rate  = mid,
         buy_rate       = buy,
         sell_rate      = sell,
         scale_factor   = scale,
@@ -73,11 +69,17 @@ class OpenExchangeRatesFetcher(BaseFetcher):
     Returns rates relative to BOB (inverted to get X/BOB).
     """
     source_name = 'OPEN_ER_API'
-    market_type = 'bcb'
+    market_type = 'paralelo_digital'
 
     _URL = 'https://open.er-api.com/v6/latest/BOB'
 
     def _fetch(self) -> list[FetchResult]:
+        from django.core.cache import cache
+        cached = cache.get('open_er_api_results')
+        if cached is not None:
+            log.debug('OPEN_ER_API cache hit — %d results', len(cached))
+            return cached
+
         session = self._get_session()
         resp    = session.get(self._URL, timeout=DEFAULT_TIMEOUT)
         resp.raise_for_status()
@@ -107,6 +109,7 @@ class OpenExchangeRatesFetcher(BaseFetcher):
             except Exception as exc:
                 log.debug('OPEN_ER_API parse error %s: %s', code, exc)
 
+        cache.set('open_er_api_results', results, 300)
         return results
 
 
@@ -116,7 +119,7 @@ class ExchangeRateAPIFetcher(BaseFetcher):
     Endpoint: https://api.exchangerate-api.com/v4/latest/USD
     """
     source_name = 'EXCHANGERATE_API'
-    market_type = 'bcb'
+    market_type = 'paralelo_digital'
 
     _URL = 'https://api.exchangerate-api.com/v4/latest/USD'
 
@@ -168,7 +171,7 @@ class FixerIOFetcher(BaseFetcher):
     Disabled automatically if no key is configured.
     """
     source_name = 'FIXER_IO'
-    market_type = 'bcb'
+    market_type = 'paralelo_digital'
 
     def _fetch(self) -> list[FetchResult]:
         api_key = getattr(settings, 'FIXER_API_KEY', '') or ''
@@ -207,13 +210,15 @@ class FixerIOFetcher(BaseFetcher):
                 scale = _SCALE.get(code, 1)
                 scaled = bob_per_unit * Decimal(str(scale))
                 spread = scaled * Decimal('0.001')
+                buy_f  = (scaled - spread).quantize(Decimal('0.0001'))
+                sell_f = (scaled + spread).quantize(Decimal('0.0001'))
                 results.append(FetchResult(
                     currency_code  = code,
-                    market_type    = 'bcb',
+                    market_type    = self.market_type,
                     source_name    = self.source_name,
-                    official_rate  = bob_per_unit.quantize(Decimal('0.0001')),
-                    buy_rate       = (scaled - spread).quantize(Decimal('0.0001')),
-                    sell_rate      = (scaled + spread).quantize(Decimal('0.0001')),
+                    official_rate  = (buy_f + sell_f) / Decimal('2'),
+                    buy_rate       = buy_f,
+                    sell_rate      = sell_f,
                     scale_factor   = scale,
                     confidence     = 0.90,
                     source_method  = 'API',
@@ -228,11 +233,10 @@ class FixerIOFetcher(BaseFetcher):
 
 class BCBJsonAPIFetcher(BaseFetcher):
     """
-    BCB internal JSON API — more stable than HTML scraping.
-    Endpoint varies; tries known candidates.
+    BCB internal JSON API — dormant, kept for reference only. Not invoked by aggregator.
     """
     source_name = 'BCB_JSON_API'
-    market_type = 'official'
+    market_type = 'paralelo_digital'
 
     _CANDIDATES = [
         'https://www.bcb.gob.bo/librerias/indicadores/tipoCambio.json',
@@ -295,13 +299,15 @@ class BCBJsonAPIFetcher(BaseFetcher):
                 scale = _SCALE.get(code, 1)
                 scaled = rate * Decimal(str(scale))
                 spread = scaled * Decimal('0.001')
+                buy_s  = (scaled - spread).quantize(Decimal('0.0001'))
+                sell_s = (scaled + spread).quantize(Decimal('0.0001'))
                 results.append(FetchResult(
                     currency_code  = code,
-                    market_type    = 'official',
+                    market_type    = self.market_type,
                     source_name    = self.source_name,
-                    official_rate  = rate.quantize(Decimal('0.0001')),
-                    buy_rate       = (scaled - spread).quantize(Decimal('0.0001')),
-                    sell_rate      = (scaled + spread).quantize(Decimal('0.0001')),
+                    official_rate  = (buy_s + sell_s) / Decimal('2'),
+                    buy_rate       = buy_s,
+                    sell_rate      = sell_s,
                     scale_factor   = scale,
                     confidence     = 0.92,
                     source_method  = 'API',

@@ -154,9 +154,14 @@ class VentaTarjeta(models.Model):
         ('QR',       'QR'),
         ('TRANSFER', 'Transferencia'),
     ]
+    ESTADOS = [
+        ('COMPLETADA', 'Completada'),
+        ('ANULADA',    'Anulada'),
+    ]
 
     # Número único de venta
     numero_venta    = models.CharField(max_length=20, unique=True, editable=False)
+    estado          = models.CharField(max_length=10, choices=ESTADOS, default='COMPLETADA', db_index=True)
     tipo_tarjeta    = models.ForeignKey(
         TipoTarjeta, on_delete=models.PROTECT, related_name='ventas'
     )
@@ -213,6 +218,14 @@ class VentaTarjeta(models.Model):
             models.Index(fields=['tipo_tarjeta', '-created_at']),
             models.Index(fields=['cajero', '-created_at']),
         ]
+
+    # Auditoría de anulación
+    motivo_anulacion = models.TextField(blank=True)
+    anulado_por     = models.ForeignKey(
+        User, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='ventas_anuladas',
+    )
+    anulado_at      = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"Venta {self.numero_venta} — {self.tipo_tarjeta} × {self.cantidad}"
@@ -335,3 +348,48 @@ class MovimientoTarjeta(models.Model):
         if self.tipo_movimiento == 'COMPRA':
             return -self.total_bob
         return self.total_bob
+
+
+class AlertaInventarioTarjeta(models.Model):
+    """
+    Umbrales de stock mínimo por tipo de tarjeta (opcionalmente por sucursal).
+
+    stock_minimo  → warning (stock bajo)
+    stock_critico → alerta roja
+    """
+    tipo_tarjeta    = models.ForeignKey(
+        TipoTarjeta, on_delete=models.CASCADE, related_name='alertas_inventario',
+    )
+    branch          = models.ForeignKey(
+        'users.Branch', on_delete=models.CASCADE,
+        null=True, blank=True, related_name='alertas_tarjetas',
+        help_text="Dejar vacío para aplicar globalmente a todas las sucursales",
+    )
+    stock_minimo    = models.PositiveIntegerField(
+        default=20, help_text="Stock mínimo antes de warning (amarillo)",
+    )
+    stock_critico   = models.PositiveIntegerField(
+        default=5, help_text="Stock crítico — alerta roja",
+    )
+    is_active       = models.BooleanField(default=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table            = 'tarjetas_alerta_inventario'
+        unique_together     = ['tipo_tarjeta', 'branch']
+        verbose_name        = 'Alerta de Inventario'
+        verbose_name_plural = 'Alertas de Inventario'
+        indexes             = [
+            models.Index(fields=['tipo_tarjeta', 'is_active']),
+        ]
+
+    def __str__(self):
+        sufijo = f" — {self.branch}" if self.branch else " (global)"
+        return f"Alerta {self.tipo_tarjeta}{sufijo}: min={self.stock_minimo} crit={self.stock_critico}"
+
+    def clean(self):
+        if self.stock_critico >= self.stock_minimo:
+            raise ValidationError(
+                "stock_critico debe ser menor que stock_minimo."
+            )

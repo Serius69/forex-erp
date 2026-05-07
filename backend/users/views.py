@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from django.contrib.auth import authenticate, update_session_auth_hash
+from django.contrib.auth import update_session_auth_hash
 from django.db.models import Sum, Count
 from django.db.models.functions import TruncHour
 from django.utils import timezone
@@ -177,8 +177,10 @@ class ForexTokenView(TokenObtainPairView):
         response = super().post(request, *args, **kwargs)
 
         if response.status_code == 200:
-            password = request.data.get('password', '')
-            user     = authenticate(request, username=username, password=password)
+            # Reutilizar candidate (ya resuelto arriba) para evitar un segundo
+            # hash PBKDF2. super().post() ya autenticó al usuario — si retornó
+            # 200, candidate ES el usuario válido.
+            user = candidate
             if user:
                 user.reset_login_attempts()
                 _log_activity(user, 'LOGIN', request, {'method': 'jwt'})

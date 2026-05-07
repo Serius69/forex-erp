@@ -45,6 +45,8 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import NotificationPanel from './NotificationPanel';
+import { SystemStatusBar } from './SystemStatusBar';
+import { OfflineBanner } from '../troubleshooting/OfflineBanner';
 import { TOKENS } from '../../styles/theme';
 import { alpha } from '@mui/material/styles';
 
@@ -543,20 +545,10 @@ export default function MainLayout() {
             Nueva
           </Button>
 
-          {/* Connection indicator */}
-          <Tooltip title={connected ? 'Tiempo real activo' : 'Sin conexión al servidor'} arrow>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, cursor: 'default' }}>
-              <Box sx={{
-                width: 8, height: 8, borderRadius: '50%',
-                bgcolor: connected ? TOKENS.green : TOKENS.red,
-                boxShadow: connected ? `0 0 6px ${alpha(TOKENS.green, 0.7)}` : 'none',
-                animation: connected ? 'pulse-dot 2.5s ease-in-out infinite' : 'none',
-              }} />
-              <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' }, fontWeight: 500 }}>
-                {connected ? 'En línea' : 'Sin conexión'}
-              </Typography>
-            </Box>
-          </Tooltip>
+          {/* System status (WS + stale indicator) */}
+          <Box sx={{ display: { xs: 'none', sm: 'flex' } }}>
+            <SystemStatusBar />
+          </Box>
 
           {/* Language toggle */}
           <Tooltip title={i18n.language === 'es' ? 'Switch to English' : 'Cambiar a Español'} arrow>
@@ -626,6 +618,9 @@ export default function MainLayout() {
         flexGrow: 1, mt: '56px', minHeight: 'calc(100vh - 56px)',
         bgcolor: TOKENS.bg, transition: 'margin-left 0.2s ease', overflow: 'auto',
       }}>
+        {/* Offline / reconnected banner */}
+        <OfflineBanner />
+
         {/* Breadcrumbs strip */}
         {breadcrumbs.length > 0 && (
           <Box sx={{

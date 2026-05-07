@@ -1,5 +1,7 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { PageErrorBoundary } from './components/error-boundaries/PageErrorBoundary';
+import { PageErrorPage } from './components/troubleshooting/PageErrorPage';
 import { ThemeProvider } from '@mui/material/styles';
 import { CssBaseline, CircularProgress, Box } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -144,7 +146,13 @@ function App() {
                         <Route path="admin/company"     element={<RoleRoute roles={['ADMIN']}><CompanyManagement /></RoleRoute>} />
                         <Route path="admin/audit"       element={<RoleRoute roles={['ADMIN']}><AuditLog /></RoleRoute>} />
                         <Route path="admin/maintenance" element={<RoleRoute roles={['ADMIN']}><MaintenancePanel /></RoleRoute>} />
+
+                        {/* Catch-all within protected shell → 404 */}
+                        <Route path="*" element={<PageErrorPage type="not_found" />} />
                       </Route>
+
+                      {/* Global 404 for unknown public routes */}
+                      <Route path="*" element={<PageErrorPage type="not_found" />} />
                     </Routes>
                   </Suspense>
                 </AuthProvider>

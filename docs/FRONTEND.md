@@ -127,7 +127,7 @@ const { user, login, logout, isAuthenticated } = useAuth();
 
 ```typescript
 // contexts/WebSocketContext.tsx
-const ws = new WebSocket('ws://localhost:8000/ws/rates/');
+const ws = new WebSocket('ws://localhost:8007/ws/rates/');
 ws.onmessage = (event) => {
   const rates = JSON.parse(event.data);
   dispatch(updateRates(rates)); // Redux store
@@ -197,6 +197,6 @@ calcAmountTo(amount, rate, type) // BUY: amount * rate, SELL: amount / rate
 
 ```bash
 # frontend-web/.env.local
-REACT_APP_API_URL=http://localhost:8000/api
-REACT_APP_WS_URL=ws://localhost:8000
+REACT_APP_API_URL=http://localhost:8007/api
+REACT_APP_WS_URL=ws://localhost:8007
 ```

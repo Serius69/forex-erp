@@ -15,7 +15,7 @@ python manage.py collectstatic --noinput
 :: Arrancar uvicorn con workers
 uvicorn core.asgi:application ^
   --host 0.0.0.0 ^
-  --port 8000 ^
+  --port 8007^
   --workers 2 ^
   --loop uvloop ^
   --log-level warning ^

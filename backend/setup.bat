@@ -35,7 +35,7 @@ echo ============================================
 echo  Setup completo!
 echo.
 echo  Para iniciar el servidor:
-echo    python manage.py runserver 0.0.0.0:8000
+echo    python manage.py runserver 0.0.0.0:8007
 echo.
 echo  Credenciales por defecto:
 echo    Admin:  admin / admin1234

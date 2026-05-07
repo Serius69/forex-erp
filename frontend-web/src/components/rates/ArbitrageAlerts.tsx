@@ -4,7 +4,6 @@
  * Detecta y muestra:
  *   - cross_source   → comprar en fuente A más barato que vender en B
  *   - spread_margin  → divisas con margen compra/venta excepcional
- *   - bcb_premium    → cuánto cotiza el mercado sobre la tasa BCB oficial
  *   - triangular     → rutas indirectas A→C→BOB más rentables que A→BOB
  */
 import React, { useState, useEffect, useCallback } from 'react';
@@ -15,7 +14,7 @@ import {
   IconButton, Collapse,
 } from '@mui/material';
 import {
-  Refresh, TrendingUp, SwapHoriz, AccountBalance, Timeline,
+  Refresh, TrendingUp, SwapHoriz, Timeline,
   ExpandMore, ExpandLess, InfoOutlined, Warning, CheckCircle,
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
@@ -25,7 +24,7 @@ import { formatRate, isScaled, formatScale } from '../../utils/finance';
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 interface Opportunity {
-  type:            'cross_source' | 'spread_margin' | 'bcb_premium' | 'triangular';
+  type:            'cross_source' | 'spread_margin' | 'triangular';
   currency:        string;
   currency_via:    string;
   buy_at:          number;
@@ -73,10 +72,9 @@ interface ArbitrageData {
 // ─── Colores y etiquetas por tipo ─────────────────────────────────────────────
 
 const OPP_META: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  cross_source:  { label: 'Multi-fuente',  color: '#1976d2', icon: <SwapHoriz fontSize="small" /> },
-  spread_margin: { label: 'Spread alto',   color: '#2e7d32', icon: <TrendingUp fontSize="small" /> },
-  bcb_premium:   { label: 'Prima BCB',     color: '#e65100', icon: <AccountBalance fontSize="small" /> },
-  triangular:    { label: 'Triangular',    color: '#6a1b9a', icon: <Timeline fontSize="small" /> },
+  cross_source:  { label: 'Multi-fuente', color: '#1976d2', icon: <SwapHoriz fontSize="small" /> },
+  spread_margin: { label: 'Spread alto',  color: '#2e7d32', icon: <TrendingUp fontSize="small" /> },
+  triangular:    { label: 'Triangular',   color: '#6a1b9a', icon: <Timeline fontSize="small" /> },
 };
 
 const RISK_COLOR: Record<string, 'success' | 'warning' | 'error'> = {
@@ -84,7 +82,11 @@ const RISK_COLOR: Record<string, 'success' | 'warning' | 'error'> = {
 };
 
 const MARKET_LABEL: Record<string, string> = {
-  official: 'BCB Oficial', bcb: 'BCB Ref.', digital: 'Digital', parallel: 'Paralelo',
+  digital:                     'Digital',
+  parallel:                    'Paralelo',
+  paralelo_digital:            'Paralelo digital',
+  paralelo_fisico_empresa:     'Paralelo físico',
+  paralelo_fisico_competencia: 'Competencia',
 };
 
 // ─── Subcomponentes ───────────────────────────────────────────────────────────
@@ -252,7 +254,7 @@ const ArbitrageAlerts: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  const OPP_TYPES = ['all', 'cross_source', 'spread_margin', 'bcb_premium', 'triangular'];
+  const OPP_TYPES = ['all', 'cross_source', 'spread_margin', 'triangular'];
 
   const filtered = data
     ? activeTab === 'all'

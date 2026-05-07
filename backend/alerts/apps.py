@@ -6,3 +6,6 @@ class AlertsConfig(AppConfig):
     name  = 'alerts'
     label = 'alerts'
     verbose_name = 'Sistema de Alertas'
+
+    def ready(self):
+        import alerts.signals  # noqa — registers post_save WebSocket broadcast

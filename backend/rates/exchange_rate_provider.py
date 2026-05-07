@@ -29,7 +29,7 @@ Usage:
     rate = provider.get_rate_from_api('USD')
 
     # Force a live fetch via scraping
-    rate = provider.get_rate_from_scraping('USD', market_type='official')
+    rate = provider.get_rate_from_scraping('USD', market_type='paralelo_digital')
 
     # Calculate exchange with source verification
     result = provider.calculate_exchange(Decimal('100'), 'USD', 'BOB', 'BUY')
@@ -228,24 +228,19 @@ class ExchangeRateProvider:
         self,
         currency_code: str,
         currency_to: str = 'BOB',
-        market_type: str = 'official',
+        market_type: str = 'paralelo_digital',
     ) -> RateResult | None:
         """
-        Fetches a rate via web scraping (BCB, parallel market).
+        Fetches a rate via web scraping (parallel market).
         source_method will be 'SCRAP' (or 'INFERENCE' if scraping fails).
         """
         log.info("PROVIDER get_rate_from_scraping currency=%s market=%s", currency_code, market_type)
 
         try:
-            from .fetchers.bcb_fetcher import BCBOfficialFetcher, BCBReferenceFetcher
             from .fetchers.parallel_scraper import ParallelMarketFetcher
             from .aggregator import RateAggregator
 
-            if market_type in ('official', 'bcb'):
-                cls     = BCBOfficialFetcher if market_type == 'official' else BCBReferenceFetcher
-                results = cls().fetch()
-            else:
-                results = ParallelMarketFetcher().fetch()
+            results = ParallelMarketFetcher().fetch()
 
             # Filter to the requested currency
             results = [r for r in results if r.currency_code == currency_code.upper()]

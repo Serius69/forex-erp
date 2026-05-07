@@ -7,7 +7,8 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView, TokenBlacklistView
 from users.views import ForexTokenView, SignupView, GoogleAuthView, dashboard_stats
 from transactions.views import TransactionViewSet, CustomerViewSet
-from core.health import health_check, readiness_check, metrics_view
+from core.health import health_check, readiness_check, metrics_view, api_health, api_health_detailed
+from core.frontend_error_log import receive_frontend_error
 from core.exceptions import handler_404, handler_500
 from core.maintenance_views import (
     maintenance_status, maintenance_toggle,
@@ -29,9 +30,14 @@ urlpatterns = [
     path('admin/', admin.site.urls),
 
     # ── Health & monitoring ──────────────────────────────────────────────────
-    path('health/',          health_check,    name='health'),
-    path('health/ready/',    readiness_check, name='readiness'),
-    path('health/metrics/',  metrics_view,    name='metrics'),
+    path('health/',                  health_check,        name='health'),
+    path('health/ready/',            readiness_check,     name='readiness'),
+    path('health/metrics/',          metrics_view,        name='metrics'),
+    path('api/health/',              api_health,          name='api-health'),
+    path('api/health/detailed/',     api_health_detailed, name='api-health-detailed'),
+
+    # Frontend error logging
+    path('api/logs/frontend-error/', receive_frontend_error, name='frontend-error-log'),
 
     # Auth
     path('api/auth/signup/',  SignupView.as_view(),       name='auth_signup'),

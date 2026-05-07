@@ -16,9 +16,18 @@ from .views import (
     ProfitOptimizerView,
     CashVariantsView,
     RateSnapshotView,
-    ReferenceRateView,
-    ReferenceRateRefreshView,
     FXEngineView,
+    # B3/B4 — nuevos
+    ProfitabilityAnalysisView,
+    DynamicSpreadView,
+    ParallelRateView,
+    # Integration layer
+    ConsensusView,
+    RawHistoryView,
+    IntegrationSourcesView,
+    LatestRawView,
+    # Continuous extraction
+    ExtractionStatusView,
 )
 
 router = DefaultRouter()
@@ -45,7 +54,17 @@ urlpatterns = [
     # ── Production FX Engine (parallel market only, 2-decimal) ───────────────
     path('fx-engine/',        FXEngineView.as_view(),         name='fx-engine'),
     path('fx-engine/run/',    FXEngineView.as_view(),         name='fx-engine-run'),
-    # ── Reference rates (BCB/BCP display only — NOT for trading) ─────────────
-    path('reference/',        ReferenceRateView.as_view(),    name='reference-rates'),
-    path('reference/refresh/',ReferenceRateRefreshView.as_view(), name='reference-rates-refresh'),
+    # ── B3: Análisis de rentabilidad ──────────────────────────────────────────
+    path('profitability-analysis/', ProfitabilityAnalysisView.as_view(), name='profitability-analysis'),
+    # ── B2: Spread dinámico ───────────────────────────────────────────────────
+    path('dynamic-spread/',         DynamicSpreadView.as_view(),         name='dynamic-spread'),
+    # ── B1: Tasa paralela consolidada ─────────────────────────────────────────
+    path('parallel-rate/',          ParallelRateView.as_view(),          name='parallel-rate'),
+    # ── Integration layer ─────────────────────────────────────────────────────
+    path('consensus/',              ConsensusView.as_view(),             name='integration-consensus'),
+    path('raw-history/',            RawHistoryView.as_view(),            name='integration-raw-history'),
+    path('integration-sources/',    IntegrationSourcesView.as_view(),    name='integration-sources'),
+    path('latest-raw/',             LatestRawView.as_view(),             name='integration-latest-raw'),
+    # ── Continuous extraction status ──────────────────────────────────────────
+    path('extraction-status/',      ExtractionStatusView.as_view(),      name='extraction-status'),
 ]

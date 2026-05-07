@@ -17,12 +17,14 @@ from django.db import transaction as db_transaction
 from .services import TransactionService
 from .permissions import CanReverseTransaction
 from core.ratelimit import rate_limit
+from core.pagination import TransactionCursorPagination
 from tenants.permissions import IsCompanyMember
 
 class TransactionViewSet(viewsets.ModelViewSet):
     queryset = Transaction.objects.all()
     serializer_class = TransactionSerializer
     permission_classes = [IsAuthenticated, IsCompanyMember]
+    pagination_class = TransactionCursorPagination
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -624,6 +626,85 @@ class TransactionViewSet(viewsets.ModelViewSet):
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
+
+    @action(detail=True, methods=['GET'], url_path='audit-trail')
+    def audit_trail(self, request, pk=None):
+        """
+        GET /api/transactions/{id}/audit-trail/
+        Historial de auditoría inmutable de la transacción.
+        Solo ADMIN, SUPERVISOR o usuarios con can_view_audit_trail.
+        """
+        from .permissions import CanViewAuditTrail
+        perm = CanViewAuditTrail()
+        if not perm.has_permission(request, self):
+            return Response({'error': perm.message}, status=status.HTTP_403_FORBIDDEN)
+
+        tx = self.get_object()
+        from .audit import TransactionAuditLog
+        logs = (
+            TransactionAuditLog.objects
+            .filter(transaction=tx)
+            .select_related('user')
+            .order_by('-timestamp_utc')
+        )
+        data = [
+            {
+                'id':               entry.id,
+                'action':           entry.action,
+                'action_display':   entry.get_action_display(),
+                'user':             entry.user_display or 'sistema',
+                'ip_address':       entry.ip_address,
+                'timestamp_utc':    entry.timestamp_utc.isoformat(),
+                'previous_state':   entry.previous_state,
+                'new_state':        entry.new_state,
+                'checksum_ok':      entry.verify_integrity(),
+            }
+            for entry in logs
+        ]
+        return Response({
+            'transaction_number': tx.transaction_number,
+            'entry_count':        len(data),
+            'entries':            data,
+        })
+
+    @action(detail=True, methods=['POST'], url_path='approve')
+    def approve(self, request, pk=None):
+        """
+        POST /api/transactions/{id}/approve/
+        Aprueba una transacción que requiere revisión antifraude.
+        Solo ADMIN o SUPERVISOR con permiso can_approve_high_value.
+        """
+        from .permissions import CanApproveHighValue
+        perm = CanApproveHighValue()
+        if not perm.has_permission(request, self):
+            return Response({'error': perm.message}, status=status.HTTP_403_FORBIDDEN)
+
+        tx = self.get_object()
+        if not tx.approval_required:
+            return Response({'error': 'Esta transacción no requiere aprobación.'}, status=status.HTTP_400_BAD_REQUEST)
+        if tx.status in ('COMPLETED', 'CANCELLED', 'REVERSED'):
+            return Response({'error': f'No se puede aprobar una transacción en estado {tx.status}.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.utils import timezone as tz
+        from .audit import create_audit_log, snapshot_transaction
+
+        prev = snapshot_transaction(tx)
+        tx.approval_required = False
+        tx.approved_by = request.user
+        tx.approved_at = tz.now()
+        tx.status = 'APPROVED'
+        tx.save(update_fields=['approval_required', 'approved_by', 'approved_at', 'status', 'updated_at'])
+
+        create_audit_log(
+            transaction=tx,
+            action='APPROVED',
+            previous_state=prev,
+            new_state=snapshot_transaction(tx),
+            user=request.user,
+            request=request,
+        )
+        from .serializers import TransactionSerializer
+        return Response(TransactionSerializer(tx, context={'request': request}).data)
 
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()

@@ -57,24 +57,21 @@ BRANCHES = [
 
 # ExchangeRateSources
 RATE_SOURCES = [
-    {'name': 'BCB Oficial',       'source_type': 'bcb_official',  'priority': 10, 'weight': '1.00', 'fetch_interval_min': 60},
-    {'name': 'BCB Referencial',   'source_type': 'bcb_reference', 'priority': 9,  'weight': '0.90', 'fetch_interval_min': 60},
     {'name': 'Binance P2P',       'source_type': 'digital',       'priority': 8,  'weight': '1.20', 'fetch_interval_min': 15},
     {'name': 'Airtm Digital',     'source_type': 'digital',       'priority': 7,  'weight': '1.10', 'fetch_interval_min': 30},
     {'name': 'Mercado Paralelo',  'source_type': 'parallel',      'priority': 6,  'weight': '1.30', 'fetch_interval_min': 30},
 ]
 
-# Tasas vigentes por divisa:  (official_bcb, buy_parallel, sell_parallel)
-# official_bcb = tasa BCB referencial por unidad (o por 1000 para ARS/CLP)
-# buy/sell son tasas del mercado paralelo físico Bolivia 2026
+# Tasas vigentes por divisa: mercado paralelo Bolivia 2026
+# buy/sell son tasas del mercado paralelo físico
 CURRENT_RATES = {
-    'USD': {'official': '6.9600', 'buy': '9.3000', 'sell': '9.5000'},
-    'EUR': {'official': '7.5000', 'buy': '10.0500', 'sell': '10.3000'},
-    'CLP': {'official': '7.5000', 'buy': '7.2000',  'sell': '7.8000'},   # por 1000 CLP
-    'PEN': {'official': '2.6000', 'buy': '2.5500',  'sell': '2.6500'},
-    'BRL': {'official': '1.8000', 'buy': '1.7500',  'sell': '1.8500'},
-    'ARS': {'official': '0.0110', 'buy': '0.0095',  'sell': '0.0105'},   # por 1000 ARS
-    'GBP': {'official': '8.8000', 'buy': '11.5000', 'sell': '11.9000'},
+    'USD': {'buy': '9.3000', 'sell': '9.5000'},
+    'EUR': {'buy': '10.0500', 'sell': '10.3000'},
+    'CLP': {'buy': '7.2000',  'sell': '7.8007'},   # por 1000 CLP
+    'PEN': {'buy': '2.5500',  'sell': '2.6500'},
+    'BRL': {'buy': '1.7500',  'sell': '1.8500'},
+    'ARS': {'buy': '0.0095',  'sell': '0.0105'},   # por 1000 ARS
+    'GBP': {'buy': '11.5000', 'sell': '11.9000'},
 }
 
 # Usuarios del sistema por rol y sucursal
@@ -400,8 +397,7 @@ class Command(BaseCommand):
     def _seed_exchange_rates(self):
         """
         Crea tasas históricas (últimos N días) y la tasa vigente.
-        Usa market_type='paralelo_fisico_empresa' para evitar restricciones BCB.
-        También crea una tasa 'bcb' para USD/BOB dentro de los límites ASFI.
+        Fuente única: mercado paralelo boliviano.
         """
         from rates.models import ExchangeRate, Currency
         self.stdout.write(f'\n? Tasas de cambio ({self.days} d?as de historia)...')
@@ -409,7 +405,6 @@ class Command(BaseCommand):
         bob = self._currencies['BOB']
         dates = _dates_range(self.days)
         source_paralelo = self._sources.get('Mercado Paralelo')
-        source_bcb      = self._sources.get('BCB Referencial')
         created_count   = 0
 
         for code, base_rates in CURRENT_RATES.items():
@@ -419,7 +414,6 @@ class Command(BaseCommand):
 
             buy_base  = Decimal(base_rates['buy'])
             sell_base = Decimal(base_rates['sell'])
-            off_base  = Decimal(base_rates['official'])
 
             today = timezone.localdate()
             for d in dates:
@@ -454,45 +448,16 @@ class Command(BaseCommand):
                     ExchangeRate.objects.create(
                         currency_from=currency,
                         currency_to=bob,
-                        official_rate=off_base,
+                        official_rate=avg_var,
                         buy_rate=buy_var,
                         sell_rate=sell_var,
-                        avg_rate=avg_var,          # pre-quantized → bypasses save() auto-compute
+                        avg_rate=avg_var,
                         source_method='MANUAL',
                         market_type='paralelo_fisico_empresa',
                         rate_source=source_paralelo,
                         source='Paralelo Fisico',
                         valid_from=dt,
                         valid_until=valid_until_val,
-                    )
-                    created_count += 1
-
-            # Tasa BCB referencial (solo USD, dentro de +/-15% del oficial)
-            if code == 'USD':
-                dt_now = timezone.now()
-                bcb_buy  = _q(off_base * Decimal('0.994'), 4)   # -0.6%
-                bcb_sell = _q(off_base * Decimal('1.006'), 4)   # +0.6%
-                exists_bcb = ExchangeRate.objects.filter(
-                    currency_from=currency,
-                    currency_to=bob,
-                    market_type='bcb',
-                    rate_source=source_bcb,
-                    valid_until__isnull=True,
-                ).exists()
-                if not exists_bcb:
-                    bcb_avg = _q((bcb_buy + bcb_sell) / Decimal('2'), 4)
-                    ExchangeRate.objects.create(
-                        currency_from=currency,
-                        currency_to=bob,
-                        official_rate=off_base,
-                        buy_rate=bcb_buy,
-                        sell_rate=bcb_sell,
-                        avg_rate=bcb_avg,
-                        source_method='MANUAL',
-                        market_type='bcb',
-                        rate_source=source_bcb,
-                        source='BCB',
-                        valid_from=dt_now,
                     )
                     created_count += 1
 
@@ -504,7 +469,7 @@ class Command(BaseCommand):
         bob = self._currencies['BOB']
         configs = [
             ('USD', '0.30', '0.50', '0.25', '0.45', '0.20', '0.40', 100,  10000),
-            ('EUR', '0.35', '0.55', '0.30', '0.50', '0.25', '0.45', 50,   8000),
+            ('EUR', '0.35', '0.55', '0.30', '0.50', '0.25', '0.45', 50,   8007),
             ('CLP', '0.40', '0.60', '0.35', '0.55', '0.30', '0.50', 100,  5000),
             ('PEN', '0.30', '0.50', '0.25', '0.45', '0.20', '0.40', 100,  5000),
             ('BRL', '0.35', '0.55', '0.30', '0.50', '0.25', '0.45', 50,   3000),
@@ -647,7 +612,7 @@ class Command(BaseCommand):
             'EUR': (2000, 10.05,  500, 15000, 1000),
             'CLP': (1500,  7.50,  200, 10000,  500),
             'PEN': (3000,  2.55,  500, 20000, 1000),
-            'BRL': (1000,  1.75,  300,  8000,  600),
+            'BRL': (1000,  1.75,  300,  8007,  600),
             'ARS': ( 200,  0.010,  50,  2000,  100),
             'GBP': ( 500, 11.50,  100,  5000,  200),
         }
@@ -656,7 +621,7 @@ class Command(BaseCommand):
         if self.scenario == 'crisis':
             stock_config['USD'] = (500, 9.30, 1000, 30000, 2000)   # bajo mínimo
             stock_config['EUR'] = (200, 10.05, 500, 15000, 1000)   # bajo mínimo
-            stock_config['BRL'] = (8500, 1.75, 300, 8000, 600)     # sobre máximo
+            stock_config['BRL'] = (8500, 1.75, 300, 8007, 600)     # sobre máximo
 
         self._inventories = {}
         created_count = 0
@@ -1103,10 +1068,10 @@ class Command(BaseCommand):
                     sell_r = _random_rate_variation(Decimal(rates_data.get('sell', '6.10')), 0.01)
                     if buy_r >= sell_r:
                         sell_r = _q(buy_r * Decimal('1.02'), 4)
-                    off_r  = Decimal(rates_data.get('official', '6.96'))
+                    off_r  = _q((buy_r + sell_r) / Decimal('2'), 4)
                     spread = _q(sell_r - buy_r, 4)
                     spread_pct = _q(spread / buy_r * 100, 4) if buy_r else Decimal('0')
-                    prima      = _q((sell_r / off_r - 1) * 100, 4) if off_r else Decimal('0')
+                    prima      = Decimal('0')
                     spread_batch.append(SpreadSnapshot(
                         timestamp=timezone.make_aware(
                             timezone.datetime.combine(d, timezone.datetime.min.time().replace(hour=12))
@@ -1126,7 +1091,7 @@ class Command(BaseCommand):
         # -- CapitalAnomalyLog ---------------------------------------------
         if not CapitalAnomalyLog.objects.exists():
             anomaly_data = [
-                ('RATE_BCB_DEVIATION', 'WARNING',  branches[0], 'USD', 'Desviación 16.5% sobre BCB', 16.5, 15.0),
+                ('RATE_SPREAD_HIGH',   'WARNING',  branches[0], 'USD', 'Spread USD 16.5% sobre mid paralelo', 16.5, 15.0),
                 ('SPREAD_BELOW_MIN',   'WARNING',  branches[0], 'EUR', 'Spread 0.22% bajo el mínimo', 0.22, 0.30),
                 ('EXPOSURE_HIGH',      'CRITICAL', branches[1], 'USD', 'Exposición USD 62% del capital', 62, 60),
                 ('RATE_STALE',         'WARNING',  branches[2], 'BRL', 'Tasa BRL sin actualizar 3h', 3, 2),
@@ -1234,7 +1199,7 @@ class Command(BaseCommand):
                         branch=branch,
                         fecha=d,
                         efectivo_bob=_q(Decimal(str(random.uniform(5000, 20000))), 2),
-                        qr_bob=_q(Decimal(str(random.uniform(1000, 8000))), 2),
+                        qr_bob=_q(Decimal(str(random.uniform(1000, 8007))), 2),
                         pasivos_bob=_q(Decimal(str(random.uniform(0, 3000))), 2),
                         notas='Ingreso manual seed',
                         registrado_por=admin,
@@ -1247,7 +1212,7 @@ class Command(BaseCommand):
             snaps = []
             for branch in branches:
                 for d in dates:
-                    efectivo = _q(Decimal(str(random.uniform(8000, 25000))), 2)
+                    efectivo = _q(Decimal(str(random.uniform(8007, 25000))), 2)
                     qr       = _q(Decimal(str(random.uniform(2000, 10000))), 2)
                     divisas  = _q(Decimal(str(random.uniform(40000, 120000))), 2)
                     tarjetas = _q(Decimal(str(random.uniform(500, 3000))), 2)
@@ -1284,7 +1249,7 @@ class Command(BaseCommand):
                         'monedas':          _q(Decimal(str(random.uniform(50, 300))), 2),
                         'rotos':            _q(Decimal(str(random.uniform(0, 200))), 2),
                         'sueltos':          _q(Decimal(str(random.uniform(200, 1000))), 2),
-                        'qr_transferencias':_q(Decimal(str(random.uniform(2000, 8000))), 2),
+                        'qr_transferencias':_q(Decimal(str(random.uniform(2000, 8007))), 2),
                         'tarjetas_telefonicas': _q(Decimal(str(random.uniform(100, 500))), 2),
                         'pasivos':          _q(Decimal(str(random.uniform(0, 2000))), 2),
                         'registrado_por':   admin,
@@ -1478,7 +1443,7 @@ class Command(BaseCommand):
                         total_sell_bob=sell_bob,
                         total_profit_bob=profit,
                         rte_count=random.randint(0, 5),
-                        opening_balance_bob=_q(Decimal(str(random.uniform(30000, 80000))), 2),
+                        opening_balance_bob=_q(Decimal(str(random.uniform(30000, 80070))), 2),
                         closing_balance_bob=_q(Decimal(str(random.uniform(30000, 85000))), 2),
                         closed_by=admin if status == 'LOCKED' else None,
                         closed_at=timezone.now() - timedelta(days=(timezone.localdate() - d).days)

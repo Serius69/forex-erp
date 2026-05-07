@@ -6,9 +6,11 @@ import json
 
 class PredictionModel(models.Model):
     MODEL_TYPES = [
-        ('PROPHET', 'Prophet'),
-        ('LSTM', 'LSTM'),
-        ('ARIMA', 'ARIMA'),
+        ('PROPHET',  'Prophet'),
+        ('LSTM',     'LSTM (legacy)'),
+        ('BILSTM',   'BiLSTM + Attention'),
+        ('XGBOOST',  'XGBoost'),
+        ('ARIMA',    'Auto-ARIMA'),
         ('ENSEMBLE', 'Ensemble'),
     ]
     
@@ -99,3 +101,17 @@ class TrainingData(models.Model):
         indexes = [
             models.Index(fields=['currency_pair', '-date']),
         ]
+
+
+class EnsembleWeightHistory(models.Model):
+    """Historial de pesos dinámicos del ensemble — permite auditar cómo evolucionaron."""
+    currency_pair = models.CharField(max_length=10, db_index=True)
+    weights       = models.JSONField()        # {'PROPHET': 0.35, 'BILSTM': 0.30, ...}
+    recorded_at   = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-recorded_at']
+        indexes  = [models.Index(fields=['currency_pair', '-recorded_at'])]
+
+    def __str__(self):
+        return f"Weights {self.currency_pair} @ {self.recorded_at:%Y-%m-%d %H:%M}"

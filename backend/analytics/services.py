@@ -888,19 +888,34 @@ class DecisionEngine:
                     age_h = (timezone.now() - tasa.updated_at).total_seconds() / 3600
                     data['datos_frescos'] = age_h < STALE_RATE_HOURS
 
-                if 'digital' in tasas:
-                    data['tasa_digital'] = _q(tasas['digital'].sell_rate / scale, RATE_Q)
+                # tasa_digital: preferir tasa del mercado digital/cripto paralelo
+                digital_rate = (
+                    tasas.get('digital')
+                    or tasas.get('paralelo_digital')
+                )
+                if digital_rate:
+                    data['tasa_digital'] = _q(digital_rate.sell_rate / scale, RATE_Q)
+
                 if 'bcb' in tasas:
                     data['tasa_bcb'] = _q(tasas['bcb'].sell_rate / scale, RATE_Q)
-                if 'parallel' in tasas:
-                    data['tasa_parallel'] = _q(tasas['parallel'].sell_rate / scale, RATE_Q)
 
-                comp = (
-                    tasas.get('parallel')
-                    if tasa.market_type != 'parallel'
-                    else tasas.get('paralelo_fisico_empresa')
-                )
-                if comp:
+                parallel_rate = tasas.get('parallel') or tasas.get('paralelo_digital')
+                if parallel_rate:
+                    data['tasa_parallel'] = _q(parallel_rate.sell_rate / scale, RATE_Q)
+
+                # tasa_competencia: mercado paralelo alternativo al tipo activo
+                if tasa.market_type in ('parallel', 'paralelo_digital'):
+                    comp = (
+                        tasas.get('paralelo_fisico_empresa')
+                        or tasas.get('paralelo_fisico_competencia')
+                    )
+                else:
+                    comp = (
+                        tasas.get('parallel')
+                        or tasas.get('paralelo_digital')
+                        or tasas.get('paralelo_fisico_competencia')
+                    )
+                if comp and comp != tasa:
                     data['tasa_competencia'] = _q(comp.sell_rate / scale, RATE_Q)
 
         except Exception as exc:

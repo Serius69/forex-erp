@@ -126,3 +126,33 @@ class AlertLog(models.Model):
         self.acknowledged_by = user
         self.acknowledged_at = timezone.now()
         self.save(update_fields=['is_acknowledged', 'acknowledged_by', 'acknowledged_at'])
+
+
+class FrontendErrorLog(models.Model):
+    """Errores del frontend capturados por Error Boundaries y apiClient."""
+
+    id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    error_id        = models.CharField(max_length=64, db_index=True)
+    error_type      = models.CharField(max_length=64, default='UnknownError', db_index=True)
+    message         = models.TextField()
+    stack           = models.TextField(blank=True)
+    component_stack = models.TextField(blank=True)
+    url             = models.CharField(max_length=500, blank=True)
+    user_agent      = models.CharField(max_length=300, blank=True)
+    user_id         = models.IntegerField(null=True, blank=True, db_index=True)
+    company_id      = models.IntegerField(null=True, blank=True)
+    extra           = models.JSONField(default=dict, blank=True)
+    ip_address      = models.GenericIPAddressField(null=True, blank=True)
+    created_at      = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table            = 'alerts_frontend_error_log'
+        ordering            = ['-created_at']
+        verbose_name        = 'Error Frontend'
+        verbose_name_plural = 'Errores Frontend'
+        indexes = [
+            models.Index(fields=['error_type', '-created_at'], name='fe_err_type_recent_idx'),
+        ]
+
+    def __str__(self) -> str:
+        return f"[{self.error_type}] {self.message[:80]} ({self.error_id})"

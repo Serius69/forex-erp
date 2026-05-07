@@ -21,23 +21,26 @@ from .base import BaseFetcher, FetchResult, DEFAULT_TIMEOUT
 
 log = logging.getLogger('kapitalya.rates.fetcher.digital')
 
-# Spread promedio observado en plataformas digitales bolivianas (% sobre BCB)
-# Basado en observación del mercado — actualizar cuando cambie la tendencia
-DIGITAL_SPREAD_ESTIMATE = {
-    'USD': {'buy_premium': Decimal('0.28'),  'sell_premium': Decimal('0.35')},  # ~28-35% sobre 6.96
-    'EUR': {'buy_premium': Decimal('0.25'),  'sell_premium': Decimal('0.30')},
-    'BRL': {'buy_premium': Decimal('0.15'),  'sell_premium': Decimal('0.20')},
-    'ARS': {'buy_premium': Decimal('0.10'),  'sell_premium': Decimal('0.15')},
-    'CLP': {'buy_premium': Decimal('0.20'),  'sell_premium': Decimal('0.25')},
-    'PEN': {'buy_premium': Decimal('0.15'),  'sell_premium': Decimal('0.20')},
+# Tasas base del mercado paralelo boliviano para estimaciones de fallback
+_PARALLEL_REFERENCE = {
+    'USD': Decimal('9.60'),
+    'EUR': Decimal('10.40'),
+    'BRL': Decimal('1.65'),
+    'ARS': Decimal('8.00'),   # por 1000 ARS
+    'CLP': Decimal('10.00'),  # por 1000 CLP
+    'PEN': Decimal('2.55'),
 }
 
-# Tasas BCB de referencia para calcular estimaciones
-BCB_REFERENCE = {
-    'USD': Decimal('6.96'), 'EUR': Decimal('7.52'),
-    'BRL': Decimal('1.22'), 'ARS': Decimal('0.007'),
-    'CLP': Decimal('0.0076'), 'PEN': Decimal('1.85'),
+# Spread ±% aplicado sobre la tasa base para estimar buy/sell
+DIGITAL_SPREAD_ESTIMATE = {
+    'USD': {'buy_premium': Decimal('0.015'), 'sell_premium': Decimal('0.020')},
+    'EUR': {'buy_premium': Decimal('0.015'), 'sell_premium': Decimal('0.020')},
+    'BRL': {'buy_premium': Decimal('0.020'), 'sell_premium': Decimal('0.025')},
+    'ARS': {'buy_premium': Decimal('0.025'), 'sell_premium': Decimal('0.030')},
+    'CLP': {'buy_premium': Decimal('0.020'), 'sell_premium': Decimal('0.025')},
+    'PEN': {'buy_premium': Decimal('0.020'), 'sell_premium': Decimal('0.025')},
 }
+
 
 SCALE_FACTORS = {'USD': 1, 'EUR': 1, 'BRL': 1, 'PEN': 1, 'ARS': 1000, 'CLP': 1000}
 
@@ -121,16 +124,17 @@ class TakenosFetcher(BaseFetcher):
             try:
                 buy   = self._to_decimal(item.get('buy',  item.get('compra')))
                 sell  = self._to_decimal(item.get('sell', item.get('venta')))
-                scale = SCALE_FACTORS.get(code, 1)
-                ref   = BCB_REFERENCE.get(code, Decimal('1'))
+                scale    = SCALE_FACTORS.get(code, 1)
+                buy_sc   = buy  * Decimal(str(scale)) if scale > 1 else buy
+                sell_sc  = sell * Decimal(str(scale)) if scale > 1 else sell
 
                 result = FetchResult(
                     currency_code = code,
                     market_type   = self.market_type,
                     source_name   = self.source_name,
-                    official_rate = ref,
-                    buy_rate      = buy  * Decimal(str(scale)) if scale > 1 else buy,
-                    sell_rate     = sell * Decimal(str(scale)) if scale > 1 else sell,
+                    official_rate = (buy_sc + sell_sc) / Decimal('2'),
+                    buy_rate      = buy_sc,
+                    sell_rate     = sell_sc,
                     scale_factor  = scale,
                     confidence    = 0.80,
                     raw_data      = item,
@@ -176,22 +180,24 @@ class TakenosFetcher(BaseFetcher):
         results    = []
         fetched_at = tz.now()
 
-        for code, ref in BCB_REFERENCE.items():
+        for code, ref in _PARALLEL_REFERENCE.items():
             spread = DIGITAL_SPREAD_ESTIMATE.get(code, {
-                'buy_premium': Decimal('0.20'),
-                'sell_premium': Decimal('0.25'),
+                'buy_premium': Decimal('0.015'),
+                'sell_premium': Decimal('0.020'),
             })
             scale     = SCALE_FACTORS.get(code, 1)
-            buy_unit  = ref * (1 + spread['buy_premium'])
+            buy_unit  = ref * (1 - spread['buy_premium'])
             sell_unit = ref * (1 + spread['sell_premium'])
+            buy_sc    = buy_unit  * Decimal(str(scale))
+            sell_sc   = sell_unit * Decimal(str(scale))
 
             result = FetchResult(
                 currency_code = code,
                 market_type   = self.market_type,
                 source_name   = f'DIGITAL_EST_{source_suffix}' if source_suffix else 'DIGITAL_EST',
-                official_rate = ref,
-                buy_rate      = buy_unit  * Decimal(str(scale)),
-                sell_rate     = sell_unit * Decimal(str(scale)),
+                official_rate = (buy_sc + sell_sc) / Decimal('2'),
+                buy_rate      = buy_sc,
+                sell_rate     = sell_sc,
                 scale_factor  = scale,
                 confidence    = 0.55,
                 raw_data      = {
@@ -253,21 +259,23 @@ class AirtmFetcher(BaseFetcher):
         results    = []
         fetched_at = tz.now()
 
-        for code, ref in BCB_REFERENCE.items():
+        for code, ref in _PARALLEL_REFERENCE.items():
             scale     = SCALE_FACTORS.get(code, 1)
             spread    = DIGITAL_SPREAD_ESTIMATE.get(code, {
-                'buy_premium': Decimal('0.22'), 'sell_premium': Decimal('0.27'),
+                'buy_premium': Decimal('0.015'), 'sell_premium': Decimal('0.020'),
             })
-            buy_unit  = ref * (1 + spread['buy_premium']  + Decimal('0.02'))
-            sell_unit = ref * (1 + spread['sell_premium'] + Decimal('0.02'))
+            buy_unit  = ref * (1 - spread['buy_premium']  - Decimal('0.005'))
+            sell_unit = ref * (1 + spread['sell_premium'] + Decimal('0.005'))
+            buy_sc    = buy_unit  * Decimal(str(scale))
+            sell_sc   = sell_unit * Decimal(str(scale))
 
             result = FetchResult(
                 currency_code = code,
                 market_type   = self.market_type,
                 source_name   = 'AIRTM_EST',
-                official_rate = ref,
-                buy_rate      = buy_unit  * Decimal(str(scale)),
-                sell_rate     = sell_unit * Decimal(str(scale)),
+                official_rate = (buy_sc + sell_sc) / Decimal('2'),
+                buy_rate      = buy_sc,
+                sell_rate     = sell_sc,
                 scale_factor  = scale,
                 confidence    = 0.50,
                 raw_data      = {'method': 'estimated', 'warning': 'NOT_REAL_TIME'},

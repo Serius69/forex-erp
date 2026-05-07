@@ -13,10 +13,15 @@ from .base import BaseFetcher, FetchResult, DEFAULT_TIMEOUT
 
 log = logging.getLogger('kapitalya.rates.fetcher.saldoar')
 
-SALDOAR_URL  = 'https://api.saldo.com.ar/json/rates/banco/banco_ar_usd'
+SALDOAR_URL       = 'https://api.saldo.com.ar/json/rates/banco/banco_ar_usd'
+_SALDOAR_FALLBACK_URLS = [
+    'https://api.saldo.com.ar/json/rates',
+    'https://api.saldo.com.ar/json/rates/banco/usd',
+    'https://saldo.com.ar/api/rates',
+]
 ARS_SCALE    = 1000       # ARS is quoted per 1000 units
-BCB_USD_REF  = Decimal('6.96')
-BCB_ARS_REF  = Decimal('0.007')   # per 1 ARS ≈ 0.007 BOB
+_PARALLEL_USD_FALLBACK = Decimal('9.80')  # fallback conservador si DB está vacío
+_ARS_PARALLEL_REF = Decimal('8.00')  # per 1000 ARS, mercado paralelo boliviano
 
 _Q4 = Decimal('0.0001')
 
@@ -46,7 +51,7 @@ def _get_usd_bob_parallel() -> Decimal:
             return _q((rate.buy_rate + rate.sell_rate) / 2)
     except Exception as exc:
         log.debug('SALDOAR_USD_BOB_FAIL %s', exc)
-    return BCB_USD_REF
+    return _PARALLEL_USD_FALLBACK
 
 
 class SaldoARFetcher(BaseFetcher):
@@ -66,28 +71,50 @@ class SaldoARFetcher(BaseFetcher):
         session    = self._get_session()
         fetched_at = timezone.now()
 
-        try:
-            resp = session.get(SALDOAR_URL, timeout=DEFAULT_TIMEOUT)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as exc:
-            log.error('SALDOAR_FETCH_ERROR %s', exc)
-            return []
+        # Try primary URL then fallbacks
+        all_urls = [SALDOAR_URL] + _SALDOAR_FALLBACK_URLS
+        for url in all_urls:
+            try:
+                resp = session.get(url, timeout=DEFAULT_TIMEOUT)
+                if resp.status_code in (404, 403):
+                    continue
+                resp.raise_for_status()
+                raw = resp.text.strip()
+                if not raw:
+                    log.debug('SALDOAR_EMPTY_BODY url=%s', url)
+                    continue
+                data = resp.json()
+                results = self._parse(data, fetched_at)
+                if results:
+                    return results
+            except Exception as exc:
+                log.debug('SALDOAR_FETCH_ERROR url=%s error=%s', url, exc)
 
-        return self._parse(data, fetched_at)
+        log.warning('SALDOAR_ALL_URLS_FAILED — no data from any endpoint')
+        return []
 
     def _parse(self, data: dict | list, fetched_at) -> list[FetchResult]:
         """
         SaldoAR returns ARS per USD (how many ARS buy 1 USD).
         We need ARS/BOB (how many BOB for 1000 ARS).
         """
-        # Try to extract buy/sell ARS per USD
+        # Try to extract buy/sell ARS per USD — handle nested structures
         if isinstance(data, list) and data:
             item = data[0]
         elif isinstance(data, dict):
-            item = data
+            # Unwrap common nested keys
+            for key in ('data', 'rates', 'result', 'banco', 'oficial'):
+                if key in data and isinstance(data[key], (dict, list)):
+                    inner = data[key]
+                    if isinstance(inner, list) and inner:
+                        item = inner[0]
+                    else:
+                        item = inner
+                    break
+            else:
+                item = data
         else:
-            log.warning('SALDOAR_UNEXPECTED_FORMAT data=%s', type(data))
+            log.debug('SALDOAR_UNEXPECTED_FORMAT data=%s', type(data))
             return []
 
         try:
@@ -138,7 +165,7 @@ class SaldoARFetcher(BaseFetcher):
             currency_code = 'ARS',
             market_type   = self.market_type,
             source_name   = self.source_name,
-            official_rate = BCB_ARS_REF,
+            official_rate = (buy_scaled + sell_scaled) / Decimal('2'),
             buy_rate      = buy_scaled,
             sell_rate     = sell_scaled,
             scale_factor  = ARS_SCALE,

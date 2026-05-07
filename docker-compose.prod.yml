@@ -62,19 +62,19 @@ services:
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
-             daphne -b 0.0.0.0 -p 8000 core.asgi:application"
+             daphne -b 0.0.0.0 -p 8007core.asgi:application"
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media
       - ./backend/logs:/app/logs
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health/ || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8007/health/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
     expose:
-      - "8000"
+      - "8007"
 
   # ── Celery Worker ─────────────────────────────────────────────────────────
   celery:

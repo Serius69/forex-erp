@@ -30,7 +30,7 @@ from typing import Literal
 log = logging.getLogger('kapitalya.rates.arbitrage')
 
 RiskLevel = Literal['LOW', 'MEDIUM', 'HIGH']
-OpType    = Literal['cross_source', 'spread_margin', 'bcb_premium', 'triangular']
+OpType    = Literal['cross_source', 'spread_margin', 'triangular']
 
 
 # Umbral mínimo de ganancia para reportar (% sobre el costo)
@@ -98,7 +98,6 @@ class ArbitrageDetector:
 
         opportunities.extend(self._detect_cross_source(rates_by_currency))
         opportunities.extend(self._detect_spread_margin(rates_by_currency))
-        opportunities.extend(self._detect_bcb_premium(rates_by_currency))
         opportunities.extend(self._detect_triangular(rates_by_currency))
 
         # Filtrar por umbral mínimo y ordenar
@@ -299,72 +298,7 @@ class ArbitrageDetector:
         return opps
 
     # ------------------------------------------------------------------ #
-    #  3. BCB premium: brecha sobre la tasa oficial                       #
-    # ------------------------------------------------------------------ #
-
-    def _detect_bcb_premium(
-        self, rates: dict[str, list[dict]]
-    ) -> list[ArbitrageOpportunity]:
-        """
-        Compara tasas de mercado libre vs tasa oficial BCB.
-        Una prima muy alta indica demanda de divisas y puede ser explotada
-        comprando a clientes que no conocen el spread del mercado.
-        """
-        ALERT_PREMIUM_PCT = 20.0   # >20% sobre BCB → señal significativa
-        opps = []
-
-        for code, sources in rates.items():
-            official_source = next(
-                (s for s in sources if s['market_type'] in ('official', 'bcb')), None
-            )
-            parallel_source = next(
-                (s for s in sources if s['market_type'] == 'parallel'), None
-            )
-
-            if not official_source or not parallel_source:
-                continue
-
-            off_rate  = official_source['official']   # por unidad
-            par_sell  = parallel_source['sell']        # por scale unidades
-            scale     = parallel_source['scale']
-
-            off_scaled = off_rate * Decimal(str(scale))
-
-            if off_scaled <= 0:
-                continue
-
-            premium_pct = float((par_sell - off_scaled) / off_scaled * 100)
-
-            if premium_pct < ALERT_PREMIUM_PCT:
-                continue
-
-            opps.append(ArbitrageOpportunity(
-                opp_type        = 'bcb_premium',
-                currency        = code,
-                currency_via    = '',
-                buy_at          = off_scaled,
-                sell_at         = par_sell,
-                profit_per_unit = par_sell - off_scaled,
-                profit_pct      = premium_pct,
-                scale_factor    = scale,
-                buy_source      = official_source['source'],
-                sell_source     = parallel_source['source'],
-                market_buy      = official_source['market_type'],
-                market_sell     = parallel_source['market_type'],
-                risk            = 'MEDIUM',
-                confidence      = min(official_source['confidence'], parallel_source['confidence']),
-                description     = (
-                    f"{code} cotiza {premium_pct:.1f}% sobre la tasa BCB oficial. "
-                    f"BCB: {float(off_scaled):.4f} BOB | "
-                    f"Paralelo venta: {float(par_sell):.4f} BOB. "
-                    f"Alta demanda de divisas — potencial de capturar clientes informados."
-                ),
-            ))
-
-        return opps
-
-    # ------------------------------------------------------------------ #
-    #  4. Triangular: ruta indirecta A→C→B vs A→B directo                #
+    #  3. Triangular: ruta indirecta A→C→B vs A→B directo                #
     # ------------------------------------------------------------------ #
 
     def _detect_triangular(
@@ -520,15 +454,6 @@ class ArbitrageDetector:
                 'count':   len(high_profit),
             })
 
-        bcb_premiums = [o for o in opps if o.opp_type == 'bcb_premium']
-        if bcb_premiums:
-            top = max(bcb_premiums, key=lambda o: o.profit_pct)
-            alerts.append({
-                'level':   'MEDIUM',
-                'message': f"Prima sobre BCB: {top.currency} cotiza {top.profit_pct:.1f}% sobre oficial.",
-                'count':   len(bcb_premiums),
-            })
-
         triangulars = [o for o in opps if o.opp_type == 'triangular']
         if triangulars:
             alerts.append({
@@ -545,16 +470,14 @@ class ArbitrageDetector:
 
     @staticmethod
     def _best_source(sources: list[dict]) -> dict:
-        """Selecciona la fuente con mayor confidence (preferir parallel > digital > official)."""
-        priority = {'parallel': 4, 'digital': 3, 'bcb': 2, 'official': 1}
+        """Selecciona la fuente con mayor confidence (preferir paralelo_digital > digital)."""
+        priority = {'paralelo_digital': 5, 'paralelo_fisico_empresa': 5, 'parallel': 4, 'digital': 3}
         return max(sources, key=lambda s: (priority.get(s['market_type'], 0), s['confidence']))
 
     @staticmethod
     def _risk_for_markets(market_buy: str, market_sell: str) -> RiskLevel:
         """Estima el nivel de riesgo basado en los tipos de mercado involucrados."""
-        if market_buy == 'official' and market_sell == 'parallel':
-            return 'MEDIUM'   # existe el diferencial pero hay riesgo regulatorio
-        if market_buy == 'digital' and market_sell == 'parallel':
+        if market_buy == 'digital' and 'paralelo' in market_sell:
             return 'MEDIUM'
         if market_buy == market_sell:
             return 'LOW'

@@ -8,6 +8,10 @@ from .views import (
     ComprarTarjetaView,
     VenderTarjetaView,
     InventarioTarjetaView,
+    PosicionInventarioView,
+    AlertasInventarioView,
+    HistorialMovimientosView,
+    KPIsTarjetasView,
 )
 
 router = DefaultRouter()
@@ -17,20 +21,17 @@ router.register(r'ventas',      VentaTarjetaViewSet,     basename='ventas-tarjet
 router.register(r'movimientos', MovimientoTarjetaViewSet, basename='movimientos-tarjeta')
 
 urlpatterns = [
-    # ── Endpoints principales (especificados en el módulo) ────────────────────
-    #   POST /api/tarjetas/comprar/    → registra compra de lote
-    #   POST /api/tarjetas/vender/     → registra venta a cliente (FIFO)
-    #   GET  /api/tarjetas/inventario/ → snapshot de stock + P&L
+    # ── Endpoints principales ─────────────────────────────────────────────────
     path('comprar/',    ComprarTarjetaView.as_view(),   name='tarjetas-comprar'),
     path('vender/',     VenderTarjetaView.as_view(),    name='tarjetas-vender'),
     path('inventario/', InventarioTarjetaView.as_view(), name='tarjetas-inventario'),
 
-    # ── Router ViewSets (CRUD + acciones adicionales) ─────────────────────────
-    #   GET /api/tarjetas/tipos/                    → catálogo de tipos
-    #   GET /api/tarjetas/lotes/                    → historial de lotes
-    #   GET /api/tarjetas/ventas/                   → historial de ventas
-    #   GET /api/tarjetas/ventas/resumen/           → resumen por período
-    #   GET /api/tarjetas/movimientos/              → libro diario unificado
-    #   GET /api/tarjetas/movimientos/profit/       → P&L con margen %
+    # ── Inventario avanzado ───────────────────────────────────────────────────
+    path('inventario/posicion/',             PosicionInventarioView.as_view(),   name='tarjetas-posicion'),
+    path('inventario/alertas/',              AlertasInventarioView.as_view(),    name='tarjetas-alertas'),
+    path('inventario/historial_movimientos/', HistorialMovimientosView.as_view(), name='tarjetas-historial'),
+    path('inventario/kpis/',                 KPIsTarjetasView.as_view(),         name='tarjetas-kpis'),
+
+    # ── Router ViewSets (CRUD + acciones) ─────────────────────────────────────
     path('', include(router.urls)),
 ]

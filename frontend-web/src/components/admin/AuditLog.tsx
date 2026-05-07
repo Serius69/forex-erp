@@ -148,7 +148,7 @@ const AuditLog: React.FC = () => {
               <TableRow key={entry.id} hover>
                 <TableCell>
                   <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {format(new Date(entry.created_at), 'dd/MM/yy HH:mm:ss', { locale: es })}
+                    {(() => { const d = new Date(entry.created_at); return isNaN(d.getTime()) ? '—' : format(d, 'dd/MM/yy HH:mm:ss', { locale: es }); })()}
                   </Typography>
                 </TableCell>
                 <TableCell>

@@ -210,19 +210,46 @@ def train_prediction_models(self):
 
 
 def _train_single_pair(pair: str, results: dict):
-    """Entrena un par de divisas individual con logging detallado."""
+    """Entrena todos los modelos para un par de divisas."""
     ml_log = logging.getLogger('predictions')
     ml_log.info("ML_TRAIN_START pair=%s", pair)
 
     from predictions.ml_service import ForexPredictionService
     service = ForexPredictionService()
-    result = service.train_models(pair)
+    pair_results = {}
 
-    ml_log.info(
-        "ML_TRAIN_SUCCESS pair=%s result=%s",
-        pair, {k: v for k, v in (result or {}).items() if k != 'model'},
-    )
-    results[pair] = {'status': 'ok', **(result or {})}
+    for model_fn, label in [
+        (service.train_prophet_model, 'prophet'),
+        (service.train_lstm_model,    'lstm'),
+    ]:
+        try:
+            _, metrics = model_fn(pair)
+            pair_results[label] = metrics
+        except Exception as exc:
+            ml_log.warning("ML_TRAIN_SKIP pair=%s model=%s error=%s", pair, label, exc)
+            pair_results[label] = {'status': 'skipped', 'error': str(exc)}
+
+    # Ensemble depende de Prophet + LSTM
+    try:
+        service.train_ensemble_model(pair)
+        pair_results['ensemble'] = 'ok'
+    except Exception as exc:
+        ml_log.warning("ML_TRAIN_SKIP pair=%s model=ensemble error=%s", pair, exc)
+        pair_results['ensemble'] = {'status': 'skipped', 'error': str(exc)}
+
+    # Nuevos modelos (XGBoost, ARIMA) si están disponibles
+    try:
+        from predictions.ml_engine import ForexMLEngine
+        engine = ForexMLEngine()
+        engine.train_all(pair, include=['xgboost', 'arima', 'bilstm'])
+        pair_results['extended_models'] = 'ok'
+    except ImportError:
+        pass  # ml_engine no disponible todavía
+    except Exception as exc:
+        ml_log.warning("ML_TRAIN_SKIP pair=%s model=extended error=%s", pair, exc)
+
+    ml_log.info("ML_TRAIN_SUCCESS pair=%s results=%s", pair, list(pair_results.keys()))
+    results[pair] = {'status': 'ok', **pair_results}
 
 
 # ── Tarea: Generar predicciones ────────────────────────────────────────────────

@@ -33,8 +33,8 @@ docker compose exec backend python manage.py migrate
 docker compose exec backend python manage.py createsuperuser
 
 # 3. Acceder
-# API:      http://localhost:8000/api
-# Admin:    http://localhost:8000/admin
+# API:      http://localhost:8007/api
+# Admin:    http://localhost:8007/admin
 # Frontend: http://localhost:3000
 ```
 

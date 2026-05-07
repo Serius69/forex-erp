@@ -1,175 +1,232 @@
 // src/contexts/WebSocketContext.tsx
+// WebSocket con exponential backoff, polling fallback y estado stale
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 import { getAccessToken } from '../services/api';
 import { useSnackbar } from 'notistack';
+
+// ── Backoff exponencial ───────────────────────────────────────────────────────
+const WS_MAX_RETRIES      = 5;
+const WS_BASE_DELAY_MS    = 1_000;
+const WS_MAX_DELAY_MS     = 30_000;
+const WS_POLL_INTERVAL_MS = 30_000;  // fallback polling cada 30s cuando WS está caído
+
+function wsBackoffDelay(attempt: number): number {
+  const delay = WS_BASE_DELAY_MS * Math.pow(2, attempt);
+  return Math.min(delay + Math.random() * 500, WS_MAX_DELAY_MS);
+}
+
+// ── Tipos ─────────────────────────────────────────────────────────────────────
+
+type WsStatus = 'connected' | 'reconnecting' | 'disconnected' | 'polling';
 
 interface WebSocketContextType {
   socket:             WebSocket | null;
   rates:              any;
   alerts:             any[];
   connected:          boolean;
+  wsStatus:           WsStatus;
+  isRatesStale:       boolean;
+  ratesAge:           number;         // ms desde la última actualización de tasas
   sendMessage:        (type: string, data?: any) => void;
-  // Incrementa cada vez que el servidor emite 'capital_updated'.
   lastCapitalUpdate:  number;
-  // Incrementa cuando una migración de Google Sheets finaliza con éxito.
   lastSheetsSync:     number;
-  // Última alerta persistida recibida por WebSocket (AlertLog entry).
-  // useAlerts() la consume para insertar la alerta sin re-fetch completo.
   newAlertLog:        any | null;
 }
 
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined);
 
 export const useWebSocket = () => {
-  const context = useContext(WebSocketContext);
-  if (!context) throw new Error('useWebSocket must be used within a WebSocketProvider');
-  return context;
+  const ctx = useContext(WebSocketContext);
+  if (!ctx) throw new Error('useWebSocket must be used within a WebSocketProvider');
+  return ctx;
 };
+
+// ── Provider ──────────────────────────────────────────────────────────────────
 
 export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket,            setSocket]            = useState<WebSocket | null>(null);
   const [rates,             setRates]             = useState({});
   const [alerts,            setAlerts]            = useState<any[]>([]);
-  const [connected,         setConnected]         = useState(false);
+  const [wsStatus,          setWsStatus]          = useState<WsStatus>('disconnected');
+  const [ratesUpdatedAt,    setRatesUpdatedAt]    = useState<number>(0);
   const [lastCapitalUpdate, setLastCapitalUpdate] = useState<number>(0);
   const [lastSheetsSync,    setLastSheetsSync]    = useState<number>(0);
   const [newAlertLog,       setNewAlertLog]       = useState<any | null>(null);
-  const { user }                  = useAuth();
-  const { enqueueSnackbar }       = useSnackbar();
+
+  const { user }            = useAuth();
+  const { enqueueSnackbar } = useSnackbar();
+
   const socketRef    = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef   = useRef(true);
+  const retriesRef   = useRef(0);
 
+  // ── Polling fallback ───────────────────────────────────────────────────────
+  const startPolling = useCallback(() => {
+    if (pollRef.current) return;
+    setWsStatus('polling');
+    pollRef.current = setInterval(async () => {
+      if (!mountedRef.current) return;
+      try {
+        const res = await fetch('/api/rates/live/', { headers: { 'Cache-Control': 'no-cache' } });
+        if (res.ok) {
+          const data = await res.json();
+          if (mountedRef.current) {
+            setRates(data);
+            setRatesUpdatedAt(Date.now());
+          }
+        }
+      } catch { /* offline — ignore */ }
+    }, WS_POLL_INTERVAL_MS);
+  }, []);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  // ── Conexión WebSocket ─────────────────────────────────────────────────────
   const connect = useCallback(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN ||
-        socketRef.current?.readyState === WebSocket.CONNECTING) {
-      return;
-    }
+        socketRef.current?.readyState === WebSocket.CONNECTING) return;
     if (!mountedRef.current || !user) return;
 
-    const token  = getAccessToken();
-    // If token not yet available, retry in 500ms (race between auth init and WS connect)
-    if (!token) {
-      setTimeout(connect, 500);
-      return;
-    }
+    const token = getAccessToken();
+    if (!token) { setTimeout(connect, 500); return; }
+
     const WS_URL = import.meta.env.VITE_WS_BASE_URL || '/ws';
-    // En dev el proxy Vite convierte '/ws' → 'ws://localhost:8000/ws'
-    // Si WS_URL ya es relativo, construir URL absoluta con el host actual
     const wsBase = WS_URL.startsWith('ws')
       ? WS_URL
       : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${WS_URL}`;
-    // Scope WebSocket by company + branch for tenant isolation
+
     const companyId = user?.company_id ?? '';
     const branchId  = user?.branch_id  ?? '';
     const wsUrl     = `${wsBase}/rates/?token=${token}&company=${companyId}&branch=${branchId}`;
-    const ws        = new WebSocket(wsUrl);
+
+    setWsStatus('reconnecting');
+    const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
 
     ws.onopen = () => {
       if (!mountedRef.current) { ws.close(); return; }
-      setConnected(true);
+      retriesRef.current = 0;
+      setWsStatus('connected');
+      stopPolling();
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      setSocket(ws);
     };
 
     ws.onclose = (event) => {
-      setConnected(false);
+      if (!mountedRef.current) return;
       socketRef.current = null;
-      // Solo reconectar si el componente sigue montado y no fue cierre intencional
-      if (mountedRef.current && event.code !== 1000) {
-        reconnectRef.current = setTimeout(connect, 5000);
+      setSocket(null);
+
+      // Cierre intencional (código 1000) → no reconectar
+      if (event.code === 1000) { setWsStatus('disconnected'); return; }
+
+      retriesRef.current += 1;
+
+      if (retriesRef.current > WS_MAX_RETRIES) {
+        // Agotados los reintentos → polling fallback
+        setWsStatus('polling');
+        startPolling();
+        // Mostrar aviso sutil al usuario
+        enqueueSnackbar('Conexión en tiempo real no disponible. Datos en modo manual (30s).', {
+          variant: 'warning', autoHideDuration: 6000,
+        });
+        return;
       }
+
+      const delay = wsBackoffDelay(retriesRef.current - 1);
+      setWsStatus('reconnecting');
+      reconnectRef.current = setTimeout(connect, delay);
     };
 
-    ws.onerror = (error) => {
-      console.warn('WebSocket error:', error);
-      ws.close();
-    };
+    ws.onerror = () => { ws.close(); };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-
-        switch (data.type) {
-          case 'rates_update':
-            setRates(data.rates ?? data.data ?? {});
-            break;
-
-          case 'alert':
-          case 'inventory_alert': {
-            const alert    = data.alert ?? data.data;
-            const severity = alert?.severity === 'CRITICAL' ? 'error'
-                           : alert?.severity === 'HIGH'     ? 'warning'
-                           : 'info';
-            setAlerts((prev) => [alert, ...prev.slice(0, 49)]);
-            enqueueSnackbar(alert?.message || 'Nueva alerta', {
-              variant:          severity,
-              autoHideDuration: 5000,
-            });
-            break;
-          }
-
-          case 'transaction_created':
-            enqueueSnackbar('Nueva transacción registrada', {
-              variant: 'success', autoHideDuration: 3000,
-            });
-            break;
-
-          case 'capital_updated':
-            // Señal que una transacción afectó el capital — componentes suscritos re-fetch
-            setLastCapitalUpdate(Date.now());
-            break;
-
-          case 'sheets_sync_complete':
-            // Migración de Google Sheets completada — refrescar capital, forex, tarjetas
-            setLastSheetsSync(Date.now());
-            enqueueSnackbar(
-              `Sync completado: ${data.success_rows ?? 0} registros importados`,
-              { variant: 'success', autoHideDuration: 5000 },
-            );
-            break;
-
-          case 'alert_log': {
-            // Nueva alerta persistida — notificar UI sin re-fetch completo
-            const al = data.alert;
-            if (!al) break;
-            setNewAlertLog(al);
-            const severity   = al.severity ?? 'LOW';
-            const variant    = severity === 'CRITICAL' || severity === 'HIGH' ? 'error'
-                             : severity === 'MEDIUM' ? 'warning' : 'info';
-            enqueueSnackbar(al.title || al.message || 'Nueva alerta', {
-              variant, autoHideDuration: 6000,
-            });
-            break;
-          }
-
-          default:
-            break;
-        }
-      } catch (e) {
-        console.warn('WebSocket mensaje inválido:', event.data);
-      }
+        handleMessage(data);
+      } catch { /* invalid JSON — ignore */ }
     };
+  }, [user, enqueueSnackbar, startPolling, stopPolling]);
 
-    setSocket(ws);
-    // Note: socketRef.current is already set above — do not reassign here
-  }, [user, enqueueSnackbar]);
+  // ── Manejo de mensajes ─────────────────────────────────────────────────────
+  const handleMessage = useCallback((data: any) => {
+    switch (data.type) {
+      case 'rates_update':
+        setRates(data.rates ?? data.data ?? {});
+        setRatesUpdatedAt(Date.now());
+        break;
+
+      case 'alert':
+      case 'inventory_alert': {
+        const alert    = data.alert ?? data.data;
+        const severity = alert?.severity === 'CRITICAL' ? 'error'
+                       : alert?.severity === 'HIGH'     ? 'warning' : 'info';
+        setAlerts((prev) => [alert, ...prev.slice(0, 49)]);
+        enqueueSnackbar(alert?.message || 'Nueva alerta', { variant: severity, autoHideDuration: 5000 });
+        break;
+      }
+
+      case 'transaction_created':
+        enqueueSnackbar('Nueva transacción registrada', { variant: 'success', autoHideDuration: 3000 });
+        break;
+
+      case 'capital_updated':
+        setLastCapitalUpdate(Date.now());
+        break;
+
+      case 'sheets_sync_complete':
+        setLastSheetsSync(Date.now());
+        enqueueSnackbar(`Sync completado: ${data.success_rows ?? 0} registros importados`, { variant: 'success', autoHideDuration: 5000 });
+        break;
+
+      case 'alert_log': {
+        const al = data.alert;
+        if (!al) break;
+        setNewAlertLog(al);
+        const sev     = al.severity ?? 'LOW';
+        const variant = sev === 'CRITICAL' || sev === 'HIGH' ? 'error' : sev === 'MEDIUM' ? 'warning' : 'info';
+        enqueueSnackbar(al.title || al.message || 'Nueva alerta', { variant, autoHideDuration: 6000 });
+        break;
+      }
+
+      default: break;
+    }
+  }, [enqueueSnackbar]);
 
   useEffect(() => {
     mountedRef.current = true;
     if (user) connect();
-
     return () => {
-      // ── Cleanup total al desmontar ────────────────────────────────────
       mountedRef.current = false;
       if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      stopPolling();
       if (socketRef.current) {
         socketRef.current.close(1000, 'Component unmounted');
         socketRef.current = null;
       }
     };
-  }, [user, connect]);
+  }, [user, connect, stopPolling]);
+
+  // Reconectar cuando el usuario vuelve online
+  useEffect(() => {
+    const handleOnline = () => {
+      if (wsStatus !== 'connected') {
+        retriesRef.current = 0;
+        stopPolling();
+        connect();
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [wsStatus, connect, stopPolling]);
 
   const sendMessage = useCallback((type: string, data?: any) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -177,9 +234,15 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   }, []);
 
+  const connected     = wsStatus === 'connected';
+  const ratesAge      = ratesUpdatedAt ? Date.now() - ratesUpdatedAt : 0;
+  // Stale si los datos tienen más de 2 minutos y WS no está activo
+  const isRatesStale  = !connected && ratesAge > 120_000;
+
   return (
     <WebSocketContext.Provider value={{
-      socket: socketRef.current, connected, alerts, rates, sendMessage,
+      socket: socketRef.current, connected, wsStatus, isRatesStale, ratesAge,
+      alerts, rates, sendMessage,
       lastCapitalUpdate, lastSheetsSync, newAlertLog,
     }}>
       {children}

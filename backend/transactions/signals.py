@@ -219,3 +219,27 @@ def transaction_status_change(sender, instance, created, **kwargs):
     if instance.status not in ('CANCELLED', 'REVERSED'):
         return
     _telegram_failed_tx(instance)
+
+
+@receiver(post_save, sender='transactions.Transaction')
+def broadcast_transaction_event(sender, instance, created, **kwargs):
+    """Emite evento WebSocket al grupo de sucursal cuando se crea o cambia una TX."""
+    try:
+        from alerts.events import (
+            broadcast_event,
+            TRANSACTION_CREATED, TRANSACTION_STATUS_CHANGED,
+        )
+        event_type = TRANSACTION_CREATED if created else TRANSACTION_STATUS_CHANGED
+        branch_id  = getattr(getattr(instance, 'branch', None), 'id', None)
+
+        payload = {
+            'transaction_id':     instance.pk,
+            'transaction_number': str(instance.transaction_number),
+            'transaction_type':   instance.transaction_type,
+            'status':             instance.status,
+            'amount_from':        float(instance.amount_from or 0),
+            'amount_to':          float(instance.amount_to   or 0),
+        }
+        broadcast_event(event_type, payload, branch_id=branch_id)
+    except Exception as exc:
+        log.debug('TX_WS_BROADCAST_SKIP err=%s', exc)

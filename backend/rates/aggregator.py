@@ -6,11 +6,10 @@ Estrategia de combinación:
   2. Normalizar (validar, escalar, deduplicar)
   3. Rechazar outliers con IQR (opcional si hay >= 3 fuentes)
   4. Calcular promedio ponderado por confidence
-  5. Prioridad: parallel > digital > bcb > official
+  5. Prioridad: paralelo_digital > paralelo_fisico > digital
   6. Guardar en DB como ExchangeRate con market_type y rate_source adecuados
 
-El aggregator es stateless: puede llamarse en cualquier momento y produce
-el mejor estimado disponible con los datos actuales.
+Fuente única: mercado paralelo boliviano. Tasas BCB/oficiales eliminadas.
 """
 from __future__ import annotations
 import logging
@@ -24,10 +23,11 @@ log = logging.getLogger('kapitalya.rates.aggregator')
 
 # Prioridad de mercado (mayor número = más confiable para el negocio)
 MARKET_PRIORITY = {
-    'parallel': 4,
-    'digital':  3,
-    'bcb':      2,
-    'official': 1,
+    'paralelo_digital':            5,
+    'paralelo_fisico_empresa':     5,
+    'paralelo_fisico_competencia': 4,
+    'parallel':                    4,
+    'digital':                     3,
 }
 
 
@@ -108,33 +108,28 @@ class RateAggregator:
 
     def collect_all(self) -> list[FetchResult]:
         """Ejecuta todos los fetchers activos y devuelve resultados crudos."""
-        from .fetchers.bcb_fetcher      import BCBOfficialFetcher, BCBReferenceFetcher
         from .fetchers.digital_fetcher  import TakenosFetcher, AirtmFetcher
         from .fetchers.parallel_scraper import ParallelMarketFetcher
         from .fetchers.dolarapi_fetcher import (
-            OpenExchangeRatesFetcher, ExchangeRateAPIFetcher,
-            FixerIOFetcher, BCBJsonAPIFetcher,
+            OpenExchangeRatesFetcher, ExchangeRateAPIFetcher, FixerIOFetcher,
         )
-        from .fetchers.bcp_fetcher        import BCPBoliviaFetcher, BCPJsonAPIFetcher
         from .fetchers.dolar_blue_bolivia import DolarBlueBoliviaFetcher
-        # ── New parallel market fetchers ──────────────────────────────────────
-        from .fetchers.p2p_exchanges  import BinanceP2PFetcher, BitgetP2PFetcher, BybitP2PFetcher
+        # ── Parallel market P2P sources ───────────────────────────────────────
+        from .fetchers.p2p_exchanges    import BinanceP2PFetcher, BitgetP2PFetcher, BybitP2PFetcher
         from .fetchers.eldorado_fetcher import EldoradoFetcher
         from .fetchers.wallbit_fetcher  import WallbitFetcher
         from .fetchers.saldoar_fetcher  import SaldoARFetcher
         from .fetchers.airtm_v2_fetcher import AirtmQuoteFetcher
+        # ── Multi-fiat cross rates & OKX ─────────────────────────────────────
+        from .fetchers.p2p_multi_fiat   import all_binance_cross_fetchers
+        from .fetchers.okx_fetcher      import OKXFetcher
 
         fetchers = [
-            # Reference / official (low confidence for parallel market)
-            BCBOfficialFetcher(),
-            BCBReferenceFetcher(),
-            BCBJsonAPIFetcher(),
-            BCPJsonAPIFetcher(),
-            BCPBoliviaFetcher(),
+            # Cross-rate references (non-BCB)
             OpenExchangeRatesFetcher(),
             ExchangeRateAPIFetcher(),
             FixerIOFetcher(),
-            # Digital / legacy
+            # Digital / parallel market
             TakenosFetcher(),
             AirtmFetcher(),
             DolarBlueBoliviaFetcher(),
@@ -147,6 +142,9 @@ class RateAggregator:
             EldoradoFetcher(),
             WallbitFetcher(),
             SaldoARFetcher(),
+            OKXFetcher(),
+            # ── Binance P2P cross rates: ARS, CLP, PEN, BRL, EUR ─────────────
+            *all_binance_cross_fetchers(),
         ]
 
         all_results: list[FetchResult] = []
@@ -169,13 +167,11 @@ class RateAggregator:
 
     def collect_by_market(self, market_type: str) -> list[FetchResult]:
         """Ejecuta sólo los fetchers de un tipo de mercado específico."""
-        from .fetchers.bcb_fetcher      import BCBOfficialFetcher, BCBReferenceFetcher
         from .fetchers.digital_fetcher  import TakenosFetcher, AirtmFetcher
         from .fetchers.parallel_scraper import ParallelMarketFetcher
         from .fetchers.dolarapi_fetcher import (
-            OpenExchangeRatesFetcher, ExchangeRateAPIFetcher, BCBJsonAPIFetcher,
+            OpenExchangeRatesFetcher, ExchangeRateAPIFetcher,
         )
-        from .fetchers.bcp_fetcher        import BCPBoliviaFetcher, BCPJsonAPIFetcher
         from .fetchers.p2p_exchanges      import BinanceP2PFetcher, BitgetP2PFetcher, BybitP2PFetcher
         from .fetchers.eldorado_fetcher   import EldoradoFetcher
         from .fetchers.wallbit_fetcher    import WallbitFetcher
@@ -183,10 +179,12 @@ class RateAggregator:
         from .fetchers.airtm_v2_fetcher   import AirtmQuoteFetcher
 
         fetcher_map = {
-            'official': [BCBOfficialFetcher, BCBJsonAPIFetcher],
-            'bcb':      [BCBReferenceFetcher, BCPBoliviaFetcher, BCPJsonAPIFetcher,
-                         OpenExchangeRatesFetcher, ExchangeRateAPIFetcher],
-            'digital':  [TakenosFetcher, AirtmFetcher, AirtmQuoteFetcher],
+            'digital':          [TakenosFetcher, AirtmFetcher, AirtmQuoteFetcher],
+            'paralelo_digital': [
+                ParallelMarketFetcher, BinanceP2PFetcher,
+                BitgetP2PFetcher, BybitP2PFetcher,
+                EldoradoFetcher, WallbitFetcher, SaldoARFetcher,
+            ],
             'parallel': [
                 ParallelMarketFetcher, BinanceP2PFetcher,
                 BitgetP2PFetcher, BybitP2PFetcher,
@@ -225,8 +223,9 @@ class RateAggregator:
         return aggregated
 
     def collect_and_aggregate(self) -> dict[str, AggregatedRate]:
-        """Colecta de todas las fuentes y agrega."""
-        raw     = self.collect_all()
+        """Colecta de todas las fuentes, persiste raws y agrega."""
+        raw = self.collect_all()
+        self.save_raw_to_db(raw)
         return self.aggregate(raw)
 
     def _aggregate_currency(
@@ -241,7 +240,7 @@ class RateAggregator:
         for item in items:
             by_market.setdefault(item.market_type, []).append(item)
 
-        # Priorizar: parallel > digital > bcb > official
+        # Priorizar: paralelo_digital > paralelo_fisico > digital
         for market in sorted(MARKET_PRIORITY, key=lambda m: MARKET_PRIORITY[m], reverse=True):
             market_items = by_market.get(market, [])
             if not market_items:
@@ -354,7 +353,72 @@ class RateAggregator:
         )
 
     # ------------------------------------------------------------------ #
-    #  Persistencia en DB                                                  #
+    #  Persistencia cruda en DB (archivo ML)                               #
+    # ------------------------------------------------------------------ #
+
+    def save_raw_to_db(self, raw_results: list[FetchResult]) -> int:
+        """
+        Persiste cada FetchResult en ExchangeRateRaw — tabla inmutable de archivo ML.
+        Un registro por resultado: fuente × divisa × momento de captura.
+        No reemplaza registros anteriores; cada ejecución genera nuevas filas.
+        """
+        from django.utils import timezone
+        from .models import ExchangeRateRaw, ExchangeRateSource
+
+        if not raw_results:
+            return 0
+
+        now = timezone.now()
+
+        # Resolve source FKs in one query to avoid N+1
+        source_names = {r.source_name for r in raw_results}
+        source_map: dict[str, 'ExchangeRateSource'] = {
+            s.id_fuente: s
+            for s in ExchangeRateSource.objects.filter(id_fuente__in=source_names)
+            if s.id_fuente
+        }
+
+        rows = []
+        for r in raw_results:
+            mid = r.official_rate if r.official_rate else (r.buy_rate + r.sell_rate) / Decimal('2')
+            spread_pct = None
+            if r.buy_rate > 0:
+                spread_pct = (
+                    (r.sell_rate - r.buy_rate) / r.buy_rate * 100
+                ).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP)
+            rows.append(ExchangeRateRaw(
+                fuente           = source_map.get(r.source_name),
+                id_fuente_str    = r.source_name,
+                moneda_base      = r.currency_code,
+                moneda_cotizada  = 'BOB',
+                precio_compra    = r.buy_rate,
+                precio_venta     = r.sell_rate,
+                precio_promedio  = mid,
+                spread_pct       = spread_pct,
+                timestamp_fuente = r.fetched_at or now,
+                payload_raw      = r.raw_data or {},
+                es_valido        = True,
+            ))
+
+        try:
+            ExchangeRateRaw.objects.bulk_create(rows, batch_size=200)
+            log.info('RAW_SAVED count=%d', len(rows))
+            return len(rows)
+        except Exception as exc:
+            log.error('RAW_SAVE_ERROR %s', exc, exc_info=True)
+            # Fallback to individual saves
+            saved = 0
+            for row in rows:
+                try:
+                    row.save()
+                    saved += 1
+                except Exception as e:
+                    log.warning('RAW_ROW_ERROR fuente=%s currency=%s error=%s',
+                                row.id_fuente_str, row.moneda_base, e)
+            return saved
+
+    # ------------------------------------------------------------------ #
+    #  Persistencia agregada en DB                                         #
     # ------------------------------------------------------------------ #
 
     def save_to_db(
@@ -454,7 +518,7 @@ class RateAggregator:
         Selection criteria (in order):
           1. NOT INFERENCE source_method
           2. Highest confidence
-          3. Market priority: parallel > digital > bcb > official
+          3. Market priority: paralelo_digital > paralelo_fisico > digital
         """
         from .models import Currency, ExchangeRate as ER
 
@@ -513,7 +577,7 @@ class RateAggregator:
     def get_current_rate(self, currency_code: str) -> AggregatedRate | None:
         """
         Obtiene la mejor tasa disponible para una divisa desde la DB.
-        Prioriza: parallel > digital > bcb > official.
+        Prioriza: paralelo_digital > paralelo_fisico > digital.
         No hace fetch en tiempo real — usa datos ya guardados.
         """
         from django.utils import timezone

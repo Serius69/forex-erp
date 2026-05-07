@@ -275,7 +275,12 @@ class CapitalManualEntryViewSet(viewsets.ModelViewSet):
         """GET /api/capital/caja/hoy/ — entrada vigente de hoy o vacía."""
         branch = request.user.branch
         if not branch:
-            return Response({'error': 'Sin sucursal'}, status=400)
+            log.warning('capital_caja_hoy — usuario sin sucursal: %s', request.user.username)
+            return Response({
+                'id': None, 'fecha': str(timezone.localdate()),
+                'efectivo_bob': '0.00', 'qr_bob': '0.00', 'pasivos_bob': '0.00',
+                'notas': '', 'history': [],
+            })
         try:
             entry = CapitalManualEntry.objects.prefetch_related('history').get(
                 branch=branch, fecha=timezone.localdate()
@@ -358,23 +363,25 @@ class CapitalComposicionViewSet(viewsets.ModelViewSet):
     def hoy(self, request):
         """GET /api/capital/composicion/hoy/ — composición vigente de hoy."""
         branch = request.user.branch
+        _empty = {
+            'id': None, 'fecha': str(timezone.localdate()),
+            'fuertes': '0.00', 'caja_chica': '0.00', 'monedas': '0.00',
+            'rotos': '0.00', 'sueltos': '0.00',
+            'qr_transferencias': '0.00', 'tarjetas_telefonicas': '0.00',
+            'pasivos': '0.00', 'notas': '', 'history': [],
+            'total_efectivo': '0.00', 'total_digital': '0.00',
+            'total_activos': '0.00', 'capital_neto_local': '0.00',
+        }
         if not branch:
-            return Response({'error': 'Sin sucursal'}, status=400)
+            log.warning('composicion_hoy — usuario sin sucursal: %s', request.user.username)
+            return Response(_empty)
         try:
             comp = (CapitalComposicion.objects
                     .prefetch_related('history')
                     .get(branch=branch, fecha=timezone.localdate()))
             return Response(CapitalComposicionSerializer(comp).data)
         except CapitalComposicion.DoesNotExist:
-            return Response({
-                'id': None, 'fecha': str(timezone.localdate()),
-                'fuertes': '0.00', 'caja_chica': '0.00', 'monedas': '0.00',
-                'rotos': '0.00', 'sueltos': '0.00',
-                'qr_transferencias': '0.00', 'tarjetas_telefonicas': '0.00',
-                'pasivos': '0.00', 'notas': '', 'history': [],
-                'total_efectivo': '0.00', 'total_digital': '0.00',
-                'total_activos': '0.00', 'capital_neto_local': '0.00',
-            })
+            return Response(_empty)
 
 
 # ── CashBOB ViewSet ───────────────────────────────────────────────────────────
@@ -793,3 +800,232 @@ def capital_at_date(request):
         'divisas':  data.get('divisas'),
         'tarjetas': data.get('tarjetas'),
     })
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# C3 / C4 / C6 — Posición de capital, P&L, historial, alertas y KPIs
+# ════════════════════════════════════════════════════════════════════════════
+
+def _resolve_branch_id(request):
+    """Extrae branch_id del query param o del usuario autenticado."""
+    bid = request.query_params.get('branch_id')
+    if bid:
+        try:
+            return int(bid)
+        except ValueError:
+            return None
+    return getattr(request.user, 'branch_id', None)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def capital_position_view(request):
+    """
+    GET /api/capital/position/
+    Posición en tiempo real (cache 30 s).
+    """
+    branch_id = _resolve_branch_id(request)
+    if not branch_id:
+        return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    force = request.query_params.get('refresh', '').lower() in ('1', 'true')
+    try:
+        from capital.position_service import CapitalPositionService
+        svc  = CapitalPositionService()
+        snap = svc.get_real_time_position(branch_id, force=force)
+        return Response(svc._serialize_snapshot(snap))
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as exc:
+        log.error('CAPITAL_POSITION_ERR branch=%s err=%s', branch_id, exc, exc_info=True)
+        return Response({'error': 'Error calculando posición'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def capital_pnl_view(request):
+    """
+    GET /api/capital/pnl/?start=YYYY-MM-DD&end=YYYY-MM-DD
+    P&L del período desaglosado.
+    """
+    branch_id = _resolve_branch_id(request)
+    if not branch_id:
+        return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    start_str = request.query_params.get('start')
+    end_str   = request.query_params.get('end')
+    if not start_str or not end_str:
+        return Response({'error': 'start y end requeridos (YYYY-MM-DD)'}, status=status.HTTP_400_BAD_REQUEST)
+
+    start = parse_date(start_str)
+    end   = parse_date(end_str)
+    if not start or not end or start > end:
+        return Response({'error': 'Fechas inválidas'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        from capital.position_service import CapitalPositionService
+        svc = CapitalPositionService()
+        pnl = svc.get_pnl_period(branch_id, start, end)
+        return Response({
+            'period_start':   pnl.period_start,
+            'period_end':     pnl.period_end,
+            'branch_id':      pnl.branch_id,
+            'total_margin':   str(pnl.total_margin),
+            'total_volume':   str(pnl.total_volume),
+            'avg_margin_pct': str(pnl.avg_margin_pct),
+            'by_currency':    pnl.by_currency,
+            'by_cashier':     pnl.by_cashier,
+        })
+    except ValueError as e:
+        return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as exc:
+        log.error('CAPITAL_PNL_ERR err=%s', exc, exc_info=True)
+        return Response({'error': 'Error calculando P&L'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def capital_history_view(request):
+    """
+    GET /api/capital/history/?days=30&currency=USD
+    Serie temporal de snapshots de posición diarios.
+    """
+    branch_id = _resolve_branch_id(request)
+    if not branch_id:
+        return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    days = int(request.query_params.get('days', 30))
+    currency_code = request.query_params.get('currency')
+    since = timezone.localdate() - timezone.timedelta(days=days)
+
+    try:
+        from capital.models import CurrencyPositionHistory
+        qs = CurrencyPositionHistory.objects.filter(
+            position__branch_id=branch_id,
+            fecha__gte=since,
+        ).select_related('position__currency').order_by('fecha')
+
+        if currency_code:
+            qs = qs.filter(position__currency__code=currency_code)
+
+        data = [
+            {
+                'fecha':                   str(h.fecha),
+                'currency':                h.position.currency.code,
+                'net_position':            str(h.net_position),
+                'avg_acquisition_cost':    str(h.avg_acquisition_cost),
+                'unrealized_pnl_parallel': str(h.unrealized_pnl_parallel),
+                'unrealized_pnl_official': str(h.unrealized_pnl_official),
+                'parallel_rate':           str(h.parallel_rate) if h.parallel_rate else None,
+                'official_rate':           str(h.official_rate) if h.official_rate else None,
+                'snapshot_type':           h.snapshot_type,
+            }
+            for h in qs
+        ]
+        return Response({'branch_id': branch_id, 'days': days, 'data': data})
+    except Exception as exc:
+        log.error('CAPITAL_HISTORY_ERR err=%s', exc, exc_info=True)
+        return Response({'error': 'Error recuperando historial'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def capital_alerts_view(request):
+    """
+    GET /api/capital/alerts/
+    Alertas de capital activas: posición negativa, concentración, P&L negativo.
+    Umbrales configurables desde settings.py:
+      CAPITAL_MIN_BOB, CAPITAL_MAX_CONCENTRATION, CAPITAL_MIN_PNL_DAILY
+    """
+    branch_id = _resolve_branch_id(request)
+    if not branch_id:
+        return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    from django.conf import settings as dj_settings
+    alerts = []
+    min_capital   = getattr(dj_settings, 'CAPITAL_MIN_BOB',           50_000)
+    max_conc      = getattr(dj_settings, 'CAPITAL_MAX_CONCENTRATION',  0.60)
+    min_pnl_daily = getattr(dj_settings, 'CAPITAL_MIN_PNL_DAILY',    -5_000)
+
+    try:
+        from capital.position_service import CapitalPositionService
+        svc  = CapitalPositionService()
+        snap = svc.get_real_time_position(branch_id)
+        snap_dict = svc._serialize_snapshot(snap)
+
+        net_par = float(snap_dict.get('net_capital_par', 0))
+        if net_par < min_capital:
+            alerts.append({
+                'type': 'CAPITAL_MINIMO', 'severity': 'HIGH',
+                'message': f'Capital neto Bs {net_par:,.2f} < mínimo Bs {min_capital:,.2f}',
+            })
+
+        total_foreign = float(snap_dict.get('total_foreign_par', 0))
+        for cur in snap_dict.get('currencies', []):
+            units = float(cur.get('net_units', 0))
+            code  = cur.get('currency_code', '?')
+            if units < 0:
+                alerts.append({
+                    'type': 'POSICION_NEGATIVA', 'severity': 'CRITICAL',
+                    'message': f'Posición negativa en {code}: {units:,.4f}',
+                    'currency': code,
+                })
+            if total_foreign > 0:
+                val  = float(cur.get('value_parallel_bob', 0))
+                conc = val / total_foreign
+                if conc > max_conc:
+                    alerts.append({
+                        'type': 'CONCENTRACION_ALTA', 'severity': 'MEDIUM',
+                        'message': f'Concentración {code}: {conc*100:.1f}% > {max_conc*100:.0f}%',
+                        'currency': code, 'concentration_pct': round(conc * 100, 2),
+                    })
+    except Exception as exc:
+        log.warning('CAPITAL_ALERTS_POSITION_ERR err=%s', exc)
+
+    try:
+        from rates.profitability import ProfitabilityAnalyzer
+        from users.models import Branch
+        branch = Branch.objects.get(pk=branch_id)
+        today  = timezone.localdate()
+        rpt    = ProfitabilityAnalyzer().analyze(
+            company_id=branch.company_id,
+            date_from=today,
+            date_to=today,
+            branch_id=branch_id,
+        )
+        margin = float(str(rpt.total_margin_bob))
+        if margin < min_pnl_daily:
+            alerts.append({
+                'type': 'PNL_DIARIO_NEGATIVO', 'severity': 'HIGH',
+                'message': f'P&L del día: Bs {margin:,.2f} < umbral Bs {min_pnl_daily:,.2f}',
+            })
+    except Exception as exc:
+        log.warning('CAPITAL_ALERTS_PNL_ERR err=%s', exc)
+
+    return Response({
+        'branch_id': branch_id, 'alert_count': len(alerts),
+        'alerts': alerts, 'checked_at': timezone.now().isoformat(),
+    })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def capital_kpis_view(request):
+    """
+    GET /api/capital/metrics/kpis/
+    KPIs de negocio: ROE, rotación, WACC, break-even spread, etc.
+    """
+    branch_id = _resolve_branch_id(request)
+    if not branch_id:
+        return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    force = request.query_params.get('refresh', '').lower() in ('1', 'true')
+    try:
+        from capital.metrics import CapitalKPIService
+        kpis = CapitalKPIService().get_kpis(branch_id, force=force)
+        return Response(kpis)
+    except Exception as exc:
+        log.error('CAPITAL_KPIS_ERR err=%s', exc, exc_info=True)
+        return Response({'error': 'Error calculando KPIs'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+

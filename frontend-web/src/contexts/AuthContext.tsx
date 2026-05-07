@@ -8,6 +8,7 @@ import {
   setRefreshToken, getRefreshToken, clearRefreshToken,
   clearAllTokens,
 } from '../services/api';
+import { setErrorLoggerContext } from '../services/errorLogger';
 import { User } from '../types';
 
 // Role → default landing page after login
@@ -92,6 +93,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRefreshToken(refresh);
     api.defaults.headers.common.Authorization = `Bearer ${access}`;
     setUser(userData);
+    setErrorLoggerContext(userData.id ?? null, userData.company_id ?? null);
   }, []);
 
   const _redirectForRole = useCallback((role: string) => {

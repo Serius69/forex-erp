@@ -2,15 +2,18 @@
 Tareas Celery para actualización automática de tasas de cambio.
 
 Estructura:
-  - update_bcb_rates        → cada 30 min — fuentes BCB oficial + referencial
+  - fetch_dolar_blue_bolivia → cada 15 min — dolarbluebolivia.click (fuente única)
   - update_digital_rates    → cada 60 min — Takenos, Airtm y similares
-  - update_parallel_rates   → cada 20 min — mercado paralelo (dato más volátil)
-  - update_all_rates        → orquesta los tres anteriores
+  - update_parallel_rates   → cada 20 min — mercado paralelo P2P
+  - update_all_rates        → orquesta todos los fetchers
   - check_significant_changes (interna) → detecta variaciones > umbral y notifica
+
+Fuente única: mercado paralelo boliviano. BCB eliminado.
 """
 from __future__ import annotations
 import logging
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.core.mail import send_mail
 from django.conf import settings
 from decimal import Decimal
@@ -28,42 +31,100 @@ _RETRY_BACKOFF = [60, 300, 900, 1800, 3600]   # 1m, 5m, 15m, 30m, 1h
 @shared_task(
     bind=True,
     acks_late=True,
-    max_retries=5,
-    name='rates.update_bcb_rates',
+    reject_on_worker_lost=True,
+    max_retries=3,
+    soft_time_limit=60,
+    time_limit=90,
+    name='rates.fetch_parallel_rate',
 )
-def update_bcb_rates(self):
+def fetch_parallel_rate(self):
     """
-    Actualiza tasas desde el Banco Central de Bolivia.
-    market_type: official + bcb
+    Obtiene tasa paralela USD/BOB desde dolarbluebolivia.click cada 15 minutos.
+    Guarda como ExchangeRate con market_type='paralelo_digital', source='dolarbluebolivia_click'.
+    Invalida caché de tasas al guardar.
     """
-    from .fetchers.bcb_fetcher import BCBOfficialFetcher, BCBReferenceFetcher
-    from .aggregator import RateAggregator
+    from django.utils import timezone
+    from django.core.cache import cache
+    from .scrapers.dolar_blue_bolivia import scrape_parallel_rate
+    from .models import Currency, ExchangeRate
 
-    log.info("TASK_START rates.update_bcb_rates")
+    log.info('TASK_START rates.fetch_parallel_rate')
     try:
-        results = []
-        for cls in (BCBOfficialFetcher, BCBReferenceFetcher):
-            results.extend(cls().fetch())
+        data = scrape_parallel_rate()
 
-        agg       = RateAggregator()
-        aggregated = agg.aggregate(results)
-        saved     = agg.save_to_db(aggregated)
+        if not data.get('mid'):
+            log.warning('TASK_WARN rates.fetch_parallel_rate — no mid rate extracted')
+            return {'success': False, 'reason': 'no_mid_rate'}
 
-        _notify_ws_if_needed(aggregated)
-        _run_alert_generator_for_branches(list(aggregated.keys()))
-        log.info("TASK_DONE rates.update_bcb_rates saved=%d", saved)
-        return {'success': True, 'saved': saved}
+        usd = Currency.objects.filter(code='USD').first()
+        bob = Currency.objects.filter(code='BOB').first()
+        if not usd or not bob:
+            log.error('TASK_ERROR rates.fetch_parallel_rate — missing USD/BOB currencies')
+            return {'success': False, 'reason': 'missing_currencies'}
+
+        now = timezone.now()
+
+        # Cerrar tasa activa anterior
+        ExchangeRate.objects.filter(
+            currency_from=usd,
+            currency_to=bob,
+            market_type='paralelo_digital',
+            source='dolarbluebolivia_click',
+            valid_until__isnull=True,
+        ).update(valid_until=now)
+
+        # Crear nueva tasa
+        rate = ExchangeRate.objects.create(
+            currency_from = usd,
+            currency_to   = bob,
+            market_type   = 'paralelo_digital',
+            source        = 'dolarbluebolivia_click',
+            official_rate = data['mid'],
+            buy_rate      = data['buy'] or data['mid'],
+            sell_rate     = data['sell'] or data['mid'],
+            valid_from    = now,
+            valid_until   = None,
+            source_method = 'SCRAP',
+            source_url    = data['source_url'],
+            fetched_at    = now,
+            confidence    = Decimal('0.850'),
+            is_validated  = False,
+        )
+
+        # Invalidar cachés relacionadas
+        for pattern in ('primary_rate_USD_BOB', 'rates_summary_USD_BOB', 'parallel_rate:*'):
+            try:
+                cache.delete(pattern)
+            except Exception:
+                pass
+
+        _run_alert_generator_for_branches(['USD'])
+
+        log.info(
+            'TASK_DONE rates.fetch_parallel_rate id=%d buy=%s sell=%s mid=%s',
+            rate.pk, data['buy'], data['sell'], data['mid'],
+        )
+        return {
+            'success': True,
+            'rate_id': rate.pk,
+            'buy':  str(data['buy']),
+            'sell': str(data['sell']),
+            'mid':  str(data['mid']),
+        }
 
     except Exception as exc:
-        delay = _RETRY_BACKOFF[min(self.request.retries, len(_RETRY_BACKOFF) - 1)]
-        log.error("TASK_ERROR rates.update_bcb_rates error=%s retry_in=%ds", exc, delay)
+        delay = _RETRY_BACKOFF[min(self.request.retries, 2)]
+        log.error('TASK_ERROR rates.fetch_parallel_rate error=%s retry_in=%ds', exc, delay)
         raise self.retry(exc=exc, countdown=delay)
 
 
 @shared_task(
     bind=True,
     acks_late=True,
+    reject_on_worker_lost=True,
     max_retries=5,
+    soft_time_limit=120,
+    time_limit=150,
     name='rates.update_digital_rates',
 )
 def update_digital_rates(self):
@@ -72,15 +133,17 @@ def update_digital_rates(self):
     market_type: digital
     """
     from .fetchers.digital_fetcher import TakenosFetcher, AirtmFetcher
+    from .fetchers.dolar_blue_bolivia import DolarBlueBoliviaFetcher
     from .aggregator import RateAggregator
 
     log.info("TASK_START rates.update_digital_rates")
     try:
         results = []
-        for cls in (TakenosFetcher, AirtmFetcher):
+        for cls in (TakenosFetcher, AirtmFetcher, DolarBlueBoliviaFetcher):
             results.extend(cls().fetch())
 
         agg       = RateAggregator()
+        agg.save_raw_to_db(results)
         aggregated = agg.aggregate(results)
         saved     = agg.save_to_db(aggregated)
 
@@ -98,7 +161,10 @@ def update_digital_rates(self):
 @shared_task(
     bind=True,
     acks_late=True,
+    reject_on_worker_lost=True,
     max_retries=5,
+    soft_time_limit=120,
+    time_limit=150,
     name='rates.update_parallel_rates',
 )
 def update_parallel_rates(self):
@@ -113,6 +179,7 @@ def update_parallel_rates(self):
     try:
         results   = ParallelMarketFetcher().fetch()
         agg       = RateAggregator()
+        agg.save_raw_to_db(results)
         aggregated = agg.aggregate(results)
         saved     = agg.save_to_db(aggregated)
 
@@ -130,7 +197,10 @@ def update_parallel_rates(self):
 @shared_task(
     bind=True,
     acks_late=True,
+    reject_on_worker_lost=True,
     max_retries=3,
+    soft_time_limit=180,
+    time_limit=240,
     name='rates.update_all_rates',
 )
 def update_all_rates(self):
@@ -166,7 +236,10 @@ def update_all_rates(self):
 @shared_task(
     bind=True,
     acks_late=True,
+    reject_on_worker_lost=True,
     max_retries=3,
+    soft_time_limit=90,
+    time_limit=120,
     name='rates.run_fx_engine',
 )
 def run_fx_engine_task(self):
@@ -206,36 +279,6 @@ def run_fx_engine_task(self):
     except Exception as exc:
         delay = _RETRY_BACKOFF[min(self.request.retries, 2)]
         log.error('TASK_ERROR rates.run_fx_engine error=%s retry_in=%ds', exc, delay)
-        raise self.retry(exc=exc, countdown=delay)
-
-
-# ------------------------------------------------------------------ #
-#  Tasas de referencia BCB/BCP (solo display — NO para operaciones)    #
-# ------------------------------------------------------------------ #
-
-@shared_task(
-    bind=True,
-    acks_late=True,
-    max_retries=3,
-    name='rates.fetch_reference_rates',
-)
-def fetch_reference_rates_task(self):
-    """
-    Obtiene y guarda las tasas de referencia del BCB (cucu.bo) y BCP.
-    SOLO para display en el panel de referencia — NUNCA para trading.
-    Programar cada 30 minutos.
-    """
-    from .fetchers.reference_fetcher import fetch_and_save_reference_rates
-
-    log.info('TASK_START rates.fetch_reference_rates')
-    try:
-        saved = fetch_and_save_reference_rates()
-        log.info('TASK_DONE rates.fetch_reference_rates saved=%d', len(saved))
-        return {'success': True, 'saved': len(saved), 'records': saved}
-
-    except Exception as exc:
-        delay = _RETRY_BACKOFF[min(self.request.retries, 2)]
-        log.error('TASK_ERROR rates.fetch_reference_rates error=%s retry_in=%ds', exc, delay)
         raise self.retry(exc=exc, countdown=delay)
 
 
@@ -395,7 +438,10 @@ def _send_divergence_alert(divergences: list[dict]) -> None:
 @shared_task(
     bind=True,
     acks_late=True,
+    reject_on_worker_lost=True,
     max_retries=3,
+    soft_time_limit=45,
+    time_limit=60,
     name='rates.fetch_binance_p2p',
 )
 def fetch_binance_p2p_task(self):
@@ -429,7 +475,7 @@ def fetch_binance_p2p_task(self):
                             'code':  code, 'market_type': mtype,
                             'buy':   float(r.buy_rate),
                             'sell':  float(r.sell_rate),
-                            'official': float(r.official_rate),
+                            'mid':   float(r.avg_rate or (r.buy_rate + r.sell_rate) / 2),
                         }
                     async_to_sync(layer.group_send)(
                         'rates_updates',
@@ -462,20 +508,46 @@ def fetch_dolar_blue_bolivia_task(self):
     Scraping de DolarBlueBolivia — referencia del mercado paralelo boliviano.
     URL: https://www.dolarbluebolivia.click/
     Programar cada 15 minutos en Celery Beat.
+
+    Extrae: USD/BOB paralelo + oficial, 8 exchanges P2P, 7 cross rates regionales.
     """
     log.info('TASK_START rates.fetch_dolar_blue_bolivia')
     try:
         from .fetchers.dolar_blue_bolivia import DolarBlueBoliviaFetcher
+        from .aggregator import RateAggregator
+
         results = DolarBlueBoliviaFetcher().fetch()
 
-        if results:
-            _run_alert_generator_for_branches(['USD'])
-            log.info('TASK_DONE rates.fetch_dolar_blue_bolivia buy=%s sell=%s',
-                     results[0].buy_rate, results[0].sell_rate)
-            return {'success': True, 'buy': str(results[0].buy_rate), 'sell': str(results[0].sell_rate)}
-        else:
+        if not results:
             log.warning('TASK_DONE rates.fetch_dolar_blue_bolivia — no rates fetched (site may be down)')
             return {'success': False, 'reason': 'no_rates_from_site'}
+
+        # Persistir todas las tasas (exchanges + cross rates) vía el agregador
+        agg  = RateAggregator()
+        agg.save_raw_to_db(results)
+        agg_results = agg.aggregate(results)
+        saved = agg.save_to_db(agg_results)
+
+        # Tasa principal para el log
+        main = next((r for r in results if r.source_name == 'DOLARBLUE_BO'), results[0])
+        currencies = list({r.currency_code for r in results})
+        exchanges  = [r.source_name for r in results if r.source_name.startswith('DOLARBLUE_') and r.currency_code == 'USD']
+
+        _run_alert_generator_for_branches(currencies)
+        log.info(
+            'TASK_DONE rates.fetch_dolar_blue_bolivia buy=%s sell=%s '
+            'total=%d saved=%d currencies=%s exchanges=%d',
+            main.buy_rate, main.sell_rate,
+            len(results), saved, currencies, len(exchanges),
+        )
+        return {
+            'success':    True,
+            'buy':        str(main.buy_rate),
+            'sell':       str(main.sell_rate),
+            'total':      len(results),
+            'saved':      saved,
+            'currencies': currencies,
+        }
 
     except Exception as exc:
         delay = _RETRY_BACKOFF[min(self.request.retries, 2)]
@@ -503,7 +575,7 @@ def _notify_ws_if_needed(aggregated) -> None:
                 code: {
                     'buy':         float(r.buy_rate),
                     'sell':        float(r.sell_rate),
-                    'official':    float(r.official_rate),
+                    'mid':         float((r.buy_rate + r.sell_rate) / 2),
                     'market_type': r.market_type,
                     'scale_factor': r.scale_factor,
                     'confidence':  r.confidence,
@@ -1053,3 +1125,320 @@ def check_smart_alerts_task(self):
 
     log.info('TASK_DONE rates.check_smart_alerts alerts=%d', len(alerts))
     return {'alerts': len(alerts), 'details': alerts}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Capa integrations/ — fetch_all_rates, calculate_consensus, cleanup_old_rates
+# ─────────────────────────────────────────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=2,
+    name='rates.fetch_all_rates',
+)
+def fetch_all_rates_task(self):
+    """
+    Consulta TODAS las fuentes activas en paralelo (Celery group),
+    persiste cada NormalizedRate en ExchangeRateRaw y calcula el consenso.
+    Programar cada 5 minutos en Celery Beat.
+    """
+    from celery import group as celery_group
+    log.info('TASK_START rates.fetch_all_rates')
+    try:
+        from .integrations.registry import get_active_fetchers
+        from .integrations.consensus import calculate_consensus
+        from .models import ExchangeRateRaw, ExchangeRateSource
+
+        fetchers = get_active_fetchers()
+        saved    = 0
+        all_rates = []
+
+        # Ejecutar fetchers secuencialmente (group() requiere que las tareas
+        # sean compartidas — aquí las ejecutamos inline para simplicidad)
+        for fetcher in fetchers:
+            rates = fetcher.fetch_safe()
+            for nr in rates:
+                try:
+                    # Resolver FK de fuente si existe
+                    fuente_obj = None
+                    try:
+                        fuente_obj = ExchangeRateSource.objects.get(id_fuente=nr.fuente)
+                    except ExchangeRateSource.DoesNotExist:
+                        pass
+
+                    ExchangeRateRaw.objects.create(
+                        fuente       = fuente_obj,
+                        **nr.to_db(),
+                    )
+                    saved += 1
+                    if nr.es_valido:
+                        all_rates.append(nr)
+                except Exception as exc:
+                    log.warning('FETCH_ALL_SAVE_ERROR fuente=%s error=%s', nr.fuente, exc)
+
+        # Calcular consenso a partir de los datos recién guardados
+        consensus = calculate_consensus()
+
+        # Publicar via WebSocket
+        _broadcast_consensus(consensus)
+
+        log.info('TASK_DONE rates.fetch_all_rates saved=%d consensus_pairs=%d',
+                 saved, len(consensus))
+        return {'success': True, 'saved': saved, 'consensus_pairs': len(consensus)}
+
+    except Exception as exc:
+        delay = _RETRY_BACKOFF[min(self.request.retries, 1)]
+        log.error('TASK_ERROR rates.fetch_all_rates error=%s', exc, exc_info=True)
+        raise self.retry(exc=exc, countdown=delay)
+
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=1,
+    name='rates.calculate_consensus',
+)
+def calculate_consensus_task(self, pairs: list | None = None):
+    """
+    Calcula el consenso ponderado para todos los pares (o los indicados).
+    Puede llamarse de forma independiente después de fetch_all_rates.
+    """
+    log.info('TASK_START rates.calculate_consensus pairs=%s', pairs)
+    try:
+        from .integrations.consensus import calculate_consensus
+        consensus = calculate_consensus(pairs=pairs)
+        _broadcast_consensus(consensus)
+        log.info('TASK_DONE rates.calculate_consensus pairs=%d', len(consensus))
+        return {'success': True, 'pairs': len(consensus), 'result': consensus}
+    except Exception as exc:
+        log.error('TASK_ERROR rates.calculate_consensus error=%s', exc)
+        raise self.retry(exc=exc, countdown=60)
+
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=1,
+    name='rates.cleanup_old_rates',
+)
+def cleanup_old_rates_task(self):
+    """
+    Archiva en S3 los ExchangeRateRaw con más de 90 días.
+    NO borra — comprime y mueve. Los datos históricos son activo de ML.
+    Programar diariamente a las 3am.
+    """
+    import datetime, json, gzip
+    from django.conf import settings as _settings
+    log.info('TASK_START rates.cleanup_old_rates')
+    try:
+        from .models import ExchangeRateRaw
+        cutoff = __import__('django.utils', fromlist=['timezone']).timezone.now() - \
+                 datetime.timedelta(days=90)
+
+        old_qs = ExchangeRateRaw.objects.filter(timestamp_captura__lt=cutoff)
+        count  = old_qs.count()
+
+        if count == 0:
+            log.info('TASK_DONE rates.cleanup_old_rates — nothing to archive')
+            return {'archived': 0}
+
+        # Intentar subir a S3 si boto3 disponible
+        archived = 0
+        try:
+            import boto3
+            from io import BytesIO
+
+            s3     = boto3.client('s3')
+            bucket = getattr(_settings, 'AWS_STORAGE_BUCKET_NAME', None)
+            if bucket:
+                batch_size = 500
+                offset     = 0
+                while offset < count:
+                    batch = list(old_qs.values()[offset:offset + batch_size])
+                    key   = (f"rates_archive/"
+                             f"{cutoff.strftime('%Y-%m')}/"
+                             f"raw_{offset}_{offset + len(batch)}.json.gz")
+                    buf = BytesIO()
+                    with gzip.GzipFile(fileobj=buf, mode='wb') as gz:
+                        gz.write(json.dumps(batch, default=str).encode())
+                    buf.seek(0)
+                    s3.put_object(Bucket=bucket, Key=key, Body=buf.read(),
+                                  ContentType='application/gzip')
+                    archived += len(batch)
+                    offset   += batch_size
+                    log.info('CLEANUP_ARCHIVED batch=%d key=%s', len(batch), key)
+        except Exception as s3_exc:
+            log.warning('CLEANUP_S3_SKIP error=%s — datos NO eliminados', s3_exc)
+
+        log.info('TASK_DONE rates.cleanup_old_rates total=%d archived=%d', count, archived)
+        return {'total': count, 'archived': archived}
+
+    except Exception as exc:
+        log.error('TASK_ERROR rates.cleanup_old_rates error=%s', exc)
+        raise self.retry(exc=exc, countdown=300)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Loop continuo de extracción — nunca se detiene
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Intervalo entre ciclos (segundos). Redis lock TTL = COUNTDOWN * 2 para evitar
+# que dos instancias corran en paralelo ante un reinicio rápido del worker.
+_CONTINUOUS_COUNTDOWN = 30
+_LOOP_LOCK_KEY        = 'rates:continuous_fx_loop:running'
+_LOOP_LOCK_TTL        = _CONTINUOUS_COUNTDOWN * 3   # 90 s — margen generoso
+
+# Fetchers activos en el loop continuo: (nombre_source, clase_fetcher, currency_pair)
+_CONTINUOUS_FETCHERS = [
+    ('binance_p2p',        'rates.fetchers.binance_p2p.fetch_binance_p2p',       'USDT/BOB'),
+    ('dolar_blue_bolivia', 'rates.fetchers.dolar_blue_bolivia.DolarBlueBoliviaFetcher', 'USD/BOB'),
+    ('airtm',              'rates.fetchers.airtm_v2_fetcher.AirtmV2Fetcher',     'USD/BOB'),
+    ('eldorado',           'rates.fetchers.eldorado_fetcher.EldoradoFetcher',    'USDT/BOB'),
+    ('wallbit',            'rates.fetchers.wallbit_fetcher.WallbitFetcher',      'USDT/BOB'),
+    ('saldoar',            'rates.fetchers.saldoar_fetcher.SaldoARFetcher',      'USDT/ARS'),
+    ('p2p_exchanges',      'rates.fetchers.p2p_exchanges.P2PExchangesFetcher',   'USDT/BOB'),
+]
+
+
+def _import_fetcher(dotpath: str):
+    """Importa un fetcher por su ruta de módulo con punto."""
+    parts  = dotpath.rsplit('.', 1)
+    module = __import__(parts[0], fromlist=[parts[1]])
+    return getattr(module, parts[1])
+
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=None,           # loop perpetuo — nunca agota reintentos
+    name='rates.continuous_fx_extraction',
+    queue='critical',
+    ignore_result=True,
+)
+def continuous_fx_extraction(self):
+    """
+    Loop perpetuo de extracción de tasas.
+
+    Al terminar se re-encola a sí mismo con countdown=30 s.
+    Si un fetcher individual falla, el error se registra y el ciclo continúa
+    con los demás fetchers sin interrumpir el loop.
+
+    Usa un Redis lock distribuido para evitar ejecuciones concurrentes si el
+    worker se reinicia mientras una instancia ya está corriendo.
+    """
+    import time
+    from django.core.cache import cache
+    from django.utils import timezone
+    from .models import RawRateSnapshot
+
+    log.info('CONTINUOUS_FX start cycle=%s', self.request.id)
+
+    # ── Distributed lock ─────────────────────────────────────────────────────
+    if not cache.add(_LOOP_LOCK_KEY, self.request.id or 'running', _LOOP_LOCK_TTL):
+        log.info('CONTINUOUS_FX already_running — re-schedule in %ds', _CONTINUOUS_COUNTDOWN)
+        continuous_fx_extraction.apply_async(countdown=_CONTINUOUS_COUNTDOWN)
+        return
+
+    snapshots_created = 0
+    try:
+        for source_name, fetcher_path, currency_pair in _CONTINUOUS_FETCHERS:
+            t0  = time.monotonic()
+            ok  = False
+            val = None
+            err = None
+
+            try:
+                fetcher_obj = _import_fetcher(fetcher_path)
+
+                # Soporte para dos patrones: función directa o clase con .fetch()
+                if callable(fetcher_obj) and not isinstance(fetcher_obj, type):
+                    # función directa (ej. fetch_binance_p2p)
+                    result = fetcher_obj()
+                    if isinstance(result, dict):
+                        val = result.get('mid') or result.get('sell') or result.get('buy')
+                    elif hasattr(result, '__iter__'):
+                        first = next(iter(result), None)
+                        val   = getattr(first, 'mid_rate', None) if first else None
+                else:
+                    # clase con .fetch()
+                    results = fetcher_obj().fetch()
+                    first   = results[0] if results else None
+                    val     = first.mid_rate if first else None
+
+                if val is not None:
+                    ok = True
+                    # Actualizar caché Redis con el nuevo valor
+                    cache_key = f'rate:{source_name}:{currency_pair}'
+                    cache.set(cache_key, str(val), timeout=_CONTINUOUS_COUNTDOWN * 4)
+
+            except Exception as fetch_exc:
+                err = str(fetch_exc)
+                log.warning(
+                    'CONTINUOUS_FX_FETCHER_ERROR source=%s pair=%s error=%s',
+                    source_name, currency_pair, fetch_exc,
+                )
+
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+            # Persistir snapshot crudo
+            try:
+                RawRateSnapshot.objects.create(
+                    source           = source_name,
+                    currency_pair    = currency_pair,
+                    raw_value        = val,
+                    response_time_ms = elapsed_ms,
+                    success          = ok,
+                    error_message    = err,
+                )
+                snapshots_created += 1
+            except Exception as db_exc:
+                log.error('CONTINUOUS_FX_DB_ERROR source=%s error=%s', source_name, db_exc)
+
+            log.debug(
+                'CONTINUOUS_FX_TICK source=%s pair=%s ok=%s val=%s ms=%d',
+                source_name, currency_pair, ok, val, elapsed_ms,
+            )
+
+    finally:
+        cache.delete(_LOOP_LOCK_KEY)
+
+    log.info('CONTINUOUS_FX cycle_done snapshots=%d — re-queuing in %ds',
+             snapshots_created, _CONTINUOUS_COUNTDOWN)
+
+    # Auto re-encolarse para el siguiente ciclo
+    continuous_fx_extraction.apply_async(countdown=_CONTINUOUS_COUNTDOWN)
+
+
+def _broadcast_consensus(consensus: dict) -> None:
+    """Publica el consenso al group 'rates_live' via Django Channels."""
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        from django.utils import timezone
+
+        layer = get_channel_layer()
+        if layer is None:
+            return
+
+        pares_payload = {}
+        for par, data in consensus.items():
+            cambio = data.get('cambio_pct_24h')
+            pares_payload[par] = {
+                'consenso':      data.get('consenso'),
+                'compra':        data.get('compra'),
+                'venta':         data.get('venta'),
+                'fuentes':       data.get('fuentes', 0),
+                'confianza':     data.get('confianza', 0),
+                'cambio_pct':    float(cambio) if cambio else 0.0,
+                'tendencia':     data.get('tendencia', 'NEUTRAL'),
+            }
+
+        async_to_sync(layer.group_send)('rates_live', {
+            'type':      'rates_update',
+            'timestamp': timezone.now().isoformat(),
+            'pares':     pares_payload,
+        })
+        log.debug('WS_BROADCAST_CONSENSUS pairs=%d', len(consensus))
+    except Exception as exc:
+        log.debug('WS_BROADCAST_CONSENSUS_SKIP error=%s', exc)

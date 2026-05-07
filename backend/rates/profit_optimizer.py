@@ -295,10 +295,6 @@ class ProfitOptimizer:
         if result:
             return result
 
-        # BCB referencial como último recurso
-        result = self._try_bcb_ref(currency_code)
-        if result:
-            return result
 
         raise ValueError(f'Sin datos de mercado disponibles para {currency_code}')
 
@@ -342,26 +338,6 @@ class ProfitOptimizer:
                 )
         except Exception as exc:
             log.debug('OPTIMIZER_DB_FAIL currency=%s %s', currency_code, exc)
-        return None
-
-    def _try_bcb_ref(self, currency_code: str) -> Optional[tuple[Decimal, Decimal, str, Decimal]]:
-        """BCB referencial — baseline, confidenzia baja."""
-        BCB_REFS = {
-            'USD': Decimal('6.96'),
-            'EUR': Decimal('7.52'),
-            'BRL': Decimal('1.22'),
-            'ARS': Decimal('7.00'),      # por 1000 ARS
-            'CLP': Decimal('10.50'),     # por 1000 CLP
-            'PEN': Decimal('1.85'),
-            'GBP': Decimal('8.80'),
-            'CNY': Decimal('0.96'),
-        }
-        base_code = currency_code.split('_')[0]
-        ref = BCB_REFS.get(base_code)
-        if ref:
-            buy  = _q(ref * Decimal('0.98'))
-            sell = _q(ref * Decimal('1.02'))
-            return buy, sell, 'bcb_ref', Decimal('0.400')
         return None
 
     # ── Descuento efectivo por variante ──────────────────────────────────────

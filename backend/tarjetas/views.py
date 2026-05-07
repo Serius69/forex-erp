@@ -9,7 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
 
-from .models import TipoTarjeta, LoteCompra, VentaTarjeta, MovimientoTarjeta
+from django.core.cache import cache
+from .models import TipoTarjeta, LoteCompra, VentaTarjeta, MovimientoTarjeta, AlertaInventarioTarjeta
 from .serializers import (
     TipoTarjetaSerializer, LoteCompraSerializer, VentaTarjetaSerializer,
     RegistrarLoteSerializer, RegistrarVentaSerializer,
@@ -162,8 +163,10 @@ class LoteCompraViewSet(viewsets.ModelViewSet):
         return Response({'error': 'Los lotes no pueden eliminarse'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
 
-class VentaTarjetaViewSet(viewsets.ReadOnlyModelViewSet):
-    """Consulta de ventas de tarjetas + resumen de ganancias."""
+class VentaTarjetaViewSet(viewsets.GenericViewSet,
+                          viewsets.mixins.ListModelMixin,
+                          viewsets.mixins.RetrieveModelMixin):
+    """Consulta de ventas de tarjetas + resumen de ganancias + anulación."""
     queryset           = VentaTarjeta.objects.select_related(
         'tipo_tarjeta', 'cajero', 'branch'
     ).prefetch_related('detalles_lote__lote').all()
@@ -223,6 +226,23 @@ class VentaTarjetaViewSet(viewsets.ReadOnlyModelViewSet):
             'totales':    agg,
             'por_tipo':   por_tipo,
         })
+
+    @action(detail=True, methods=['POST'], url_path='anular',
+            permission_classes=[IsAdminOrSupervisor])
+    def anular(self, request, pk=None):
+        """POST /api/tarjetas/ventas/{id}/anular/ — anula la venta con motivo."""
+        venta = self.get_object()
+        motivo = request.data.get('motivo', '').strip()
+        if not motivo:
+            return Response(
+                {'error': 'El campo motivo es obligatorio.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            venta = TarjetaService.anular_venta(venta, motivo, request.user)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(VentaTarjetaSerializer(venta).data)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -537,4 +557,132 @@ class MovimientoTarjetaViewSet(viewsets.ReadOnlyModelViewSet):
             },
             'por_operadora': por_operadora,
             'por_tipo':      por_tipo,
+        })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Nuevos endpoints de inventario avanzado
+# ══════════════════════════════════════════════════════════════════════════════
+
+CACHE_KEY_POSICION = 'tarjetas:posicion_inventario'
+CACHE_TTL_POSICION = 30  # segundos
+
+
+class PosicionInventarioView(GenericAPIView):
+    """
+    GET /api/tarjetas/inventario/posicion/
+
+    Posición valorizada del inventario. Cacheada 30 s en Redis.
+    ?refresh=true fuerza recálculo.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        force = request.query_params.get('refresh') == 'true'
+        if not force:
+            cached = cache.get(CACHE_KEY_POSICION)
+            if cached is not None:
+                return Response(cached)
+
+        branch = getattr(request.user, 'branch', None) if request.user.role != 'ADMIN' else None
+        data = TarjetaService.get_posicion_inventario(branch=branch)
+        cache.set(CACHE_KEY_POSICION, data, CACHE_TTL_POSICION)
+        return Response(data)
+
+
+class AlertasInventarioView(GenericAPIView):
+    """
+    GET /api/tarjetas/inventario/alertas/
+
+    Tipos de tarjeta con stock bajo (warning) o crítico.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        branch = getattr(request.user, 'branch', None) if request.user.role != 'ADMIN' else None
+        posicion = TarjetaService.get_posicion_inventario(branch=branch)
+
+        alertas = [
+            item for item in posicion['items']
+            if item['estado_stock'] in ('bajo', 'critico')
+        ]
+        return Response({
+            'total_alertas': len(alertas),
+            'alertas': alertas,
+        })
+
+
+class HistorialMovimientosView(GenericAPIView):
+    """
+    GET /api/tarjetas/inventario/historial_movimientos/
+
+    Timeline unificado de ingresos y ventas.
+    Parámetros: ?dias=30 (default 30) &tipo_tarjeta=ID
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        dias     = int(request.query_params.get('dias', 30))
+        tipo_id  = request.query_params.get('tipo_tarjeta')
+        desde    = timezone.now() - timezone.timedelta(days=dias)
+
+        qs = MovimientoTarjeta.objects.select_related(
+            'tipo_tarjeta', 'usuario', 'branch',
+        ).filter(created_at__gte=desde)
+
+        user = request.user
+        if getattr(user, 'company_id', None):
+            qs = qs.filter(branch__company_id=user.company_id)
+        if user.role != 'ADMIN' and getattr(user, 'branch', None):
+            qs = qs.filter(branch=user.branch)
+        if tipo_id:
+            qs = qs.filter(tipo_tarjeta_id=tipo_id)
+
+        from .serializers import MovimientoTarjetaSerializer
+        data = MovimientoTarjetaSerializer(qs.order_by('-created_at')[:200], many=True).data
+        return Response({'dias': dias, 'movimientos': data})
+
+
+class KPIsTarjetasView(GenericAPIView):
+    """
+    GET /api/tarjetas/inventario/kpis/
+
+    KPIs del módulo para el dashboard principal.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        hoy = timezone.localdate()
+        inicio_mes = hoy.replace(day=1)
+
+        posicion = TarjetaService.get_posicion_inventario()
+
+        ventas_mes = VentaTarjeta.objects.filter(
+            created_at__date__gte=inicio_mes,
+            created_at__date__lte=hoy,
+            estado='COMPLETADA',
+        )
+        v_agg = ventas_mes.aggregate(
+            total_ventas   = Count('id'),
+            total_unidades = Sum('cantidad'),
+            ingresos_bob   = Sum('total_bob'),
+            ganancia_bob   = Sum('ganancia_bob'),
+        )
+
+        alertas_count = sum(
+            1 for item in posicion['items']
+            if item['estado_stock'] in ('bajo', 'critico')
+        )
+
+        return Response({
+            'inventario': posicion['resumen'],
+            'mes': {
+                'desde': str(inicio_mes),
+                'hasta': str(hoy),
+                'total_ventas':    v_agg['total_ventas'] or 0,
+                'total_unidades':  v_agg['total_unidades'] or 0,
+                'ingresos_bob':    str(v_agg['ingresos_bob'] or Decimal('0')),
+                'ganancia_bob':    str(v_agg['ganancia_bob'] or Decimal('0')),
+            },
+            'alertas_activas': alertas_count,
         })

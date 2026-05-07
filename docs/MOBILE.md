@@ -132,9 +132,9 @@ reportsApi.getDaily(date?)          // GET /transactions/... + agrupación local
 **Configuración de URL base:**
 ```typescript
 // src/services/api.ts
-const BASE_URL = 'http://10.0.2.2:8000/api'; // Android emulator
+const BASE_URL = 'http://10.0.2.2:8007/api'; // Android emulator
 // Para dispositivo físico, cambiar a la IP local del servidor
-// const BASE_URL = 'http://192.168.1.X:8000/api';
+// const BASE_URL = 'http://192.168.1.X:8007/api';
 ```
 
 ---
@@ -172,7 +172,7 @@ npm run ios
 **Prerrequisitos:**
 - Android Studio con emulador configurado (o dispositivo físico con USB debugging)
 - Java 17+
-- Backend Django corriendo en puerto 8000
+- Backend Django corriendo en puerto 8007
 
 ---
 

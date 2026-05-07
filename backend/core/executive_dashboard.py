@@ -340,7 +340,7 @@ def _get_inventory_summary(branch_id=None) -> list:
                 'branch':    str(inv.branch) if inv.branch else None,
                 'stock':     _safe_float(stock),
                 'stock_pct': round(stock_pct, 1),
-                'wac':       _safe_float(inv.wac),
+                'wac':       _safe_float(inv.weighted_average_cost),
                 'status':    status,
             })
         return result

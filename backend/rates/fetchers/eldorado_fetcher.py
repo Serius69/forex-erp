@@ -18,13 +18,9 @@ log = logging.getLogger('kapitalya.rates.fetcher.eldorado')
 
 ELDORADO_URL = 'https://api.eldorado.io/api/v1/rates'
 
-# BCB reference per currency (used as official_rate field only)
-BCB_REF = {
-    'USD': Decimal('6.96'),  'EUR': Decimal('7.52'),
-    'BRL': Decimal('1.22'),  'PEN': Decimal('1.85'),
-    'CLP': Decimal('0.0076'),'ARS': Decimal('0.007'),
-}
 SCALE_FACTORS = {'ARS': 1000, 'CLP': 1000}
+
+_KNOWN_CURRENCIES = frozenset({'USD', 'EUR', 'BRL', 'PEN', 'ARS', 'CLP'})
 
 _Q4 = Decimal('0.0001')
 
@@ -49,7 +45,7 @@ class EldoradoFetcher(BaseFetcher):
 
         token = self._get_token()
         if not token:
-            log.warning('ELDORADO_NO_TOKEN — skipping fetcher')
+            log.debug('ELDORADO_NO_TOKEN — skipping fetcher (configure ELDORADO_API_TOKEN)')
             return []
 
         session = self._get_session()
@@ -90,13 +86,12 @@ class EldoradoFetcher(BaseFetcher):
                 item.get('currency') or item.get('code') or item.get('asset') or ''
             ).upper()
 
-            if code not in BCB_REF:
+            if code not in _KNOWN_CURRENCIES:
                 continue
 
             try:
                 buy  = _q(item.get('buy')    or item.get('compra') or item.get('bid') or 0)
                 sell = _q(item.get('sell')   or item.get('venta')  or item.get('ask') or 0)
-                ref  = BCB_REF[code]
                 scale = SCALE_FACTORS.get(code, 1)
 
                 # Eldorado may return per-unit rates — scale if needed
@@ -107,7 +102,7 @@ class EldoradoFetcher(BaseFetcher):
                     currency_code = code,
                     market_type   = self.market_type,
                     source_name   = self.source_name,
-                    official_rate = ref,
+                    official_rate = (buy_scaled + sell_scaled) / Decimal('2'),
                     buy_rate      = buy_scaled,
                     sell_rate     = sell_scaled,
                     scale_factor  = scale,

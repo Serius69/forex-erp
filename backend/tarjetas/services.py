@@ -8,10 +8,30 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction as db_tx
 from django.utils import timezone
 
-from .models import TipoTarjeta, LoteCompra, VentaTarjeta, DetalleVentaLote, MovimientoTarjeta
+from .models import (
+    TipoTarjeta, LoteCompra, VentaTarjeta, DetalleVentaLote,
+    MovimientoTarjeta, AlertaInventarioTarjeta,
+)
 
 log = logging.getLogger('tarjetas')
 MONEY_Q = Decimal('0.01')
+
+
+def _publish_inventario_ws():
+    """Publica snapshot de inventario al grupo WS 'tarjetas_inventario'."""
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        layer = get_channel_layer()
+        if layer is None:
+            return
+        snapshot = TarjetaService.get_posicion_inventario()
+        async_to_sync(layer.group_send)(
+            'tarjetas_inventario',
+            {'type': 'inventario_update', 'data': snapshot},
+        )
+    except Exception:
+        pass  # Silencioso cuando Redis/Channels no está disponible en dev
 
 
 class TarjetaService:
@@ -65,6 +85,9 @@ class TarjetaService:
             "LOTE_COMPRA id=%s tipo=%s cantidad=%s costo_unit=%s total=%s",
             lote.id, tipo_tarjeta, cantidad, precio_costo, total,
         )
+        # Publicar cambio de inventario por WebSocket (fuera de la transacción)
+        from django.db import transaction as _tx
+        _tx.on_commit(_publish_inventario_ws)
         return lote
 
     # ── Venta de tarjetas (FIFO) ──────────────────────────────────────────────
@@ -196,7 +219,132 @@ class TarjetaService:
             venta.id, numero_venta, tipo_tarjeta,
             cantidad, precio_venta, ganancia, cajero.username,
         )
+        from django.db import transaction as _tx
+        _tx.on_commit(_publish_inventario_ws)
         return venta
+
+    # ── Anulación de venta ────────────────────────────────────────────────────
+
+    @staticmethod
+    @db_tx.atomic
+    def anular_venta(venta: VentaTarjeta, motivo: str, anulado_por) -> VentaTarjeta:
+        """
+        Anula una venta ya registrada.
+
+        Devuelve las unidades a los lotes originales (según DetalleVentaLote).
+        Si el lote estaba agotado, lo reactiva. Requiere motivo.
+        """
+        if not motivo or not motivo.strip():
+            raise ValueError("El motivo de anulación es obligatorio.")
+        if venta.estado == 'ANULADA':
+            raise ValueError(f"La venta {venta.numero_venta} ya está anulada.")
+
+        for detalle in venta.detalles_lote.select_for_update().select_related('lote'):
+            lote = detalle.lote
+            lote.cantidad_restante += detalle.cantidad_consumida
+            lote.is_active = True
+            lote.save(update_fields=['cantidad_restante', 'is_active', 'updated_at'])
+
+        VentaTarjeta.objects.filter(pk=venta.pk).update(
+            estado           = 'ANULADA',
+            motivo_anulacion = motivo.strip(),
+            anulado_por      = anulado_por,
+            anulado_at       = timezone.now(),
+        )
+        venta.refresh_from_db()
+
+        MovimientoTarjeta.objects.create(
+            tipo_movimiento = 'COMPRA',
+            tipo_tarjeta    = venta.tipo_tarjeta,
+            cantidad        = venta.cantidad,
+            precio_unitario = venta.costo_fifo_bob / venta.cantidad if venta.cantidad else Decimal('0'),
+            total_bob       = venta.costo_fifo_bob,
+            ganancia_bob    = None,
+            usuario         = anulado_por,
+            branch          = venta.branch,
+            notas           = f"Anulación venta {venta.numero_venta}: {motivo}",
+        )
+        log.info(
+            "VENTA_ANULADA id=%s num=%s motivo=%s by=%s",
+            venta.id, venta.numero_venta, motivo, anulado_por.username,
+        )
+        from django.db import transaction as _tx
+        _tx.on_commit(_publish_inventario_ws)
+        return venta
+
+    # ── Posición de inventario valorizada ─────────────────────────────────────
+
+    @staticmethod
+    def get_posicion_inventario(branch=None) -> dict:
+        """
+        Posición valorizada del inventario agrupada por tipo de tarjeta.
+        Para cada tipo: stock, valor costo, valor venta, margen potencial, lotes activos.
+        """
+        from django.db.models import Sum
+        tipos = TipoTarjeta.objects.filter(is_active=True).prefetch_related(
+            'lotes', 'alertas_inventario',
+        )
+
+        items = []
+        total_unidades = 0
+        total_costo    = Decimal('0')
+        total_venta    = Decimal('0')
+
+        for t in tipos:
+            lotes_activos = list(
+                t.lotes.filter(is_active=True, cantidad_restante__gt=0)
+                .order_by('fecha_compra')
+            )
+            stock = sum(l.cantidad_restante for l in lotes_activos)
+            costo_prom = t.costo_promedio
+            valor_costo = t.valor_inventario_bob
+            valor_venta = (t.denominacion * stock).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
+            margen_potencial = (valor_venta - valor_costo).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
+
+            alerta = t.alertas_inventario.filter(
+                is_active=True,
+                branch=branch,
+            ).first() or t.alertas_inventario.filter(
+                is_active=True, branch__isnull=True,
+            ).first()
+
+            estado_stock = 'ok'
+            if alerta:
+                if stock <= alerta.stock_critico:
+                    estado_stock = 'critico'
+                elif stock <= alerta.stock_minimo:
+                    estado_stock = 'bajo'
+
+            items.append({
+                'id':                t.id,
+                'nombre':            t.nombre,
+                'operadora':         t.operadora,
+                'denominacion':      str(t.denominacion),
+                'stock':             stock,
+                'lotes_activos':     len(lotes_activos),
+                'costo_promedio':    str(costo_prom),
+                'valor_costo_bob':   str(valor_costo),
+                'valor_venta_bob':   str(valor_venta),
+                'margen_potencial':  str(margen_potencial),
+                'estado_stock':      estado_stock,
+                'stock_minimo':      alerta.stock_minimo if alerta else None,
+                'stock_critico':     alerta.stock_critico if alerta else None,
+            })
+            total_unidades += stock
+            total_costo    += valor_costo
+            total_venta    += valor_venta
+
+        return {
+            'timestamp': timezone.now().isoformat(),
+            'resumen': {
+                'total_tipos':     len(items),
+                'total_unidades':  total_unidades,
+                'valor_costo_bob': str(total_costo.quantize(MONEY_Q)),
+                'valor_venta_bob': str(total_venta.quantize(MONEY_Q)),
+                'margen_potencial': str((total_venta - total_costo).quantize(MONEY_Q)),
+            },
+            'items': items,
+        }
 
     # ── Consultas de inventario ───────────────────────────────────────────────
 

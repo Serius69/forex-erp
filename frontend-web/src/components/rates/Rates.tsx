@@ -12,6 +12,7 @@ import {
   CheckCircle, Warning, Error as ErrorIcon, HelpOutline,
   CurrencyExchange, AutoMode, MonetizationOn, Savings,
   FlashOn, KeyboardArrowRight, InfoOutlined,
+  Psychology, EditNote, FlashOnOutlined,
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import { TOKENS } from '../../styles/theme';
@@ -26,6 +27,13 @@ import { useWebSocket } from '../../contexts/WebSocketContext';
 import { isScaled, formatScale, formatRate } from '../../utils/finance';
 import ArbitrageAlerts from './ArbitrageAlerts';
 import RateHistoryChart from './RateHistoryChart';
+import RateCard from './RateCard';
+import PredictionCard from './PredictionCard';
+import ManualRatesTable from './ManualRatesTable';
+import WebSocketStatus from './WebSocketStatus';
+import { useRatesWebSocket } from '../../hooks/useRatesWebSocket';
+import RatesPanel from './RatesPanel';
+import SourcesGrid from './SourcesGrid';
 
 // ── Source method config ──────────────────────────────────────────────────────
 const SOURCE_CONFIG: Record<string, {
@@ -69,7 +77,6 @@ const LIVE_SOURCE_CONFIG: Record<string, {
   dolarblue:{ color: 'warning', bgcolor: '#fff8e1', dot: '🟡', label: 'DOLARBLUE',   description: 'Referencia paralela — DolarBlueBolivia (scraping)' },
   db_cache: { color: 'warning', bgcolor: '#fff8e1', dot: '🟡', label: 'SCRAPING',    description: 'Dato en caché de fuente scrapeada' },
   MANUAL:   { color: 'info',    bgcolor: '#e3f2fd', dot: '🔵', label: 'MANUAL',      description: 'Tasa ingresada manualmente' },
-  bcb_ref:  { color: 'default', bgcolor: '#f5f5f5', dot: '⚪', label: 'REFERENCIAL', description: 'Tasa BCB referencial — solo baseline' },
 };
 
 // ── Confidence helpers ────────────────────────────────────────────────────────
@@ -78,6 +85,11 @@ const confidenceColor = (v: number) =>
 
 const confidenceDot = (v: number) =>
   v >= 0.90 ? '🟢' : v >= 0.70 ? '🟡' : '🔴';
+
+const isStale = (timestamp: string | null | undefined, thresholdMinutes = 30): boolean => {
+  if (!timestamp) return true;
+  return (Date.now() - new Date(timestamp).getTime()) > thresholdMinutes * 60 * 1000;
+};
 
 const confidenceLabel = (v: number) =>
   v >= 0.90 ? 'Alta' : v >= 0.70 ? 'Media' : 'Baja';
@@ -178,9 +190,20 @@ const LiveRateCard: React.FC<{ currency?: string }> = ({ currency = 'USD' }) => 
               {confidenceDot(rate.confidence)} {(rate.confidence * 100).toFixed(0)}%
             </strong>
           </Typography>
-          <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.6rem' }}>
-            {rate.timestamp ? format(new Date(rate.timestamp), 'HH:mm:ss', { locale: es }) : '—'}
-          </Typography>
+          <Box display="flex" alignItems="center" gap={0.5}>
+            {isStale(rate.timestamp) && (
+              <Chip
+                label="⚠ Precio desactualizado"
+                size="small"
+                color="warning"
+                variant="outlined"
+                sx={{ fontSize: '0.6rem', height: 18, fontWeight: 700 }}
+              />
+            )}
+            <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.6rem' }}>
+              {rate.timestamp ? format(new Date(rate.timestamp), 'HH:mm:ss', { locale: es }) : '—'}
+            </Typography>
+          </Box>
         </Box>
         {hasAnomalies && (
           <Box mt={0.75}>
@@ -797,6 +820,121 @@ const CashVariantsPanel: React.FC = () => {
   );
 };
 
+// ── Digital Rates Section (Tab 0) ─────────────────────────────────────────────
+const DIGITAL_CURRENCIES = ['USD', 'EUR', 'BRL', 'PEN', 'CLP', 'ARS'];
+
+const DigitalRatesSection: React.FC = () => {
+  return (
+    <Box>
+      {/* Motor FX — Cards en tiempo real */}
+      <Box mb={4}>
+        <Box display="flex" alignItems="center" gap={1.5} mb={2}>
+          <Box>
+            <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', letterSpacing: 1 }}>
+              MOTOR FX — FUENTE EN TIEMPO REAL
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Tasas obtenidas directamente desde P2P crypto y scraping. Confianza, anomalías y trazabilidad completa.
+            </Typography>
+          </Box>
+        </Box>
+        <Grid container spacing={2}>
+          {DIGITAL_CURRENCIES.map(cur => (
+            <Grid item xs={12} sm={6} md={4} key={cur}>
+              <RateCard currency={cur} refreshInterval={60_000} />
+            </Grid>
+          ))}
+        </Grid>
+      </Box>
+
+      {/* Todas las fuentes por plataforma */}
+      <Box mb={4}>
+        <Box mb={1.5}>
+          <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', letterSpacing: 1 }}>
+            TODAS LAS PLATAFORMAS — TIEMPO REAL
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Tasas individuales por fuente: Binance, Bitget, Bybit, OKX, El Dorado, Wallbit, Airtm, SaldoAR y más.
+            Actualización automática cada 90 segundos.
+          </Typography>
+        </Box>
+        <SourcesGrid />
+      </Box>
+
+      {/* Consenso WebSocket — RatesPanel */}
+      <Box>
+        <Box mb={1.5}>
+          <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', letterSpacing: 1 }}>
+            CONSENSO MULTI-FUENTE (WEBSOCKET)
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Tasas de consenso calculadas en tiempo real ponderando múltiples fuentes.
+            Variación 24h, tendencia y confianza global.
+          </Typography>
+        </Box>
+        <RatesPanel />
+      </Box>
+    </Box>
+  );
+};
+
+// ── Predictions Section (Tab 1) ───────────────────────────────────────────────
+const PREDICTION_PAIRS = [
+  { pair: 'USD-BOB', color: '#2563eb' },
+  { pair: 'EUR-BOB', color: '#7c3aed' },
+  { pair: 'BRL-BOB', color: '#059669' },
+  { pair: 'PEN-BOB', color: '#d97706' },
+  { pair: 'CLP-BOB', color: '#db2777' },
+  { pair: 'ARS-BOB', color: '#dc2626' },
+];
+
+const PredictionsSection: React.FC = () => {
+  const [horizon, setHorizon] = React.useState<'1h' | '4h' | '24h' | '7d'>('24h');
+
+  return (
+    <Box>
+      {/* Header con selector de horizonte */}
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2} flexWrap="wrap" gap={1}>
+        <Box>
+          <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', letterSpacing: 1 }}>
+            MOTOR ML — ENSEMBLE DE 5 MODELOS
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Prophet · BiLSTM · XGBoost · ARIMA · Ridge. Pesos dinámicos por PSI drift.
+            Intervalo de confianza 95%.
+          </Typography>
+        </Box>
+        <Box display="flex" gap={0.5}>
+          {(['1h', '4h', '24h', '7d'] as const).map(h => (
+            <Chip
+              key={h}
+              label={h}
+              size="small"
+              onClick={() => setHorizon(h)}
+              color={horizon === h ? 'info' : 'default'}
+              variant={horizon === h ? 'filled' : 'outlined'}
+              sx={{ fontWeight: 700, fontSize: '0.7rem', cursor: 'pointer' }}
+            />
+          ))}
+        </Box>
+      </Box>
+
+      <Alert severity="info" sx={{ mb: 2.5, py: 0.5 }} icon={<Psychology />}>
+        Los pronósticos son estimaciones estadísticas basadas en datos históricos.
+        <strong> No garantizan valores futuros.</strong> Úsalos como referencia operacional, no como base única de decisión.
+      </Alert>
+
+      <Grid container spacing={2}>
+        {PREDICTION_PAIRS.map(({ pair, color }) => (
+          <Grid item xs={12} sm={6} md={4} key={pair}>
+            <PredictionCard pair={pair} horizon={horizon} color={color} />
+          </Grid>
+        ))}
+      </Grid>
+    </Box>
+  );
+};
+
 // ── Main component ────────────────────────────────────────────────────────────
 const Rates: React.FC = () => {
   const [rates,      setRates]      = useState<any[]>([]);
@@ -805,9 +943,11 @@ const Rates: React.FC = () => {
   const [editOpen,   setEditOpen]   = useState(false);
   const [selected,   setSelected]   = useState<any>(null);
   const [tab,        setTab]        = useState(0);
-  const { user }                    = useAuth();
-  const { enqueueSnackbar }         = useSnackbar();
-  const { lastSheetsSync }          = useWebSocket();
+  const { user }                           = useAuth();
+  const { enqueueSnackbar }                = useSnackbar();
+  const { lastSheetsSync }                 = useWebSocket();
+  const { connected: wsConnected,
+          lastUpdate: wsLastUpdate }        = useRatesWebSocket();
 
   const loadRates = useCallback(async () => {
     setLoading(true);
@@ -829,10 +969,10 @@ const Rates: React.FC = () => {
     loadRates();
   }, [lastSheetsSync, loadRates]);
 
-  const handleUpdateFromBCB = async () => {
+  const handleUpdateParallelRate = async () => {
     try {
-      await api.post('/rates/exchange-rates/update_rates/', { source: 'BCB' });
-      enqueueSnackbar('Tasas actualizadas desde BCB', { variant: 'success' });
+      await api.post('/rates/exchange-rates/update_rates/', { source: 'dolarbluebolivia_click' });
+      enqueueSnackbar('Tasa paralela actualizada desde mercado paralelo', { variant: 'success' });
       loadRates();
     } catch {
       enqueueSnackbar('Error al actualizar tasas', { variant: 'error' });
@@ -840,16 +980,18 @@ const Rates: React.FC = () => {
   };
 
   const formik = useFormik({
-    initialValues: { buy_rate: '', sell_rate: '', official_rate: '' },
+    initialValues: { buy_rate: '', sell_rate: '' },
     validationSchema: yup.object({
-      buy_rate:      yup.number().min(0.0001).required('Requerido'),
-      sell_rate:     yup.number().min(0.0001).required('Requerido'),
-      official_rate: yup.number().min(0.0001).required('Requerido'),
+      buy_rate:  yup.number().min(0.0001).required('Requerido'),
+      sell_rate: yup.number().min(0.0001).required('Requerido'),
     }),
     onSubmit: async (values) => {
       try {
+        const buy = parseFloat(values.buy_rate);
+        const sell = parseFloat(values.sell_rate);
         await api.patch(`/rates/exchange-rates/${selected.id}/`, {
           ...values,
+          official_rate: ((buy + sell) / 2).toFixed(4),
           valid_from:    new Date().toISOString(),
           source_method: 'MANUAL',
           is_validated:  true,
@@ -866,9 +1008,8 @@ const Rates: React.FC = () => {
   const handleEdit = (rate: any) => {
     setSelected(rate);
     formik.setValues({
-      buy_rate:      rate.buy_rate,
-      sell_rate:     rate.sell_rate,
-      official_rate: rate.official_rate,
+      buy_rate:  rate.buy_rate,
+      sell_rate: rate.sell_rate,
     });
     setEditOpen(true);
   };
@@ -894,13 +1035,14 @@ const Rates: React.FC = () => {
             </Typography>
           </Box>
         </Box>
-        <Box display="flex" gap={1}>
-          {tab === 0 && user?.role === 'ADMIN' && (
-            <Button variant="outlined" startIcon={<Refresh />} onClick={handleUpdateFromBCB}>
-              Actualizar BCB
+        <Box display="flex" gap={1} alignItems="center">
+          <WebSocketStatus connected={wsConnected} lastUpdate={wsLastUpdate} />
+          {tab === 3 && user?.role === 'ADMIN' && (
+            <Button variant="outlined" startIcon={<Refresh />} onClick={handleUpdateParallelRate}>
+              Actualizar mercado paralelo
             </Button>
           )}
-          {tab === 0 && (
+          {tab === 3 && (
             <Button variant="outlined" startIcon={<Refresh />} onClick={loadRates}>
               Recargar
             </Button>
@@ -909,7 +1051,7 @@ const Rates: React.FC = () => {
       </Box>
 
       {/* INFERENCE warning */}
-      {inferenceRates.length > 0 && tab === 0 && (
+      {inferenceRates.length > 0 && tab === 3 && (
         <Alert severity="error" sx={{ mb: 2 }} icon={<ErrorIcon />}>
           <AlertTitle>Advertencia — Tasas Estimadas (INFERENCE)</AlertTitle>
           {inferenceRates.length} tasa(s) <strong>sin fuente verificable</strong>.
@@ -931,20 +1073,35 @@ const Rates: React.FC = () => {
         variant="scrollable"
         scrollButtons="auto"
       >
-        <Tab label="Tasas Actuales" />
-        <Tab label="Análisis de Arbitraje" icon={<Analytics />} iconPosition="start" />
-        <Tab label="Historial" icon={<TrendingUp />} iconPosition="start" />
-        <Tab label="Auto Profit Mode" icon={<AutoMode />} iconPosition="start"
+        <Tab label="Tasas Digitales"  icon={<FlashOnOutlined />} iconPosition="start"
+          sx={{ fontWeight: 700, color: 'success.main', '&.Mui-selected': { color: 'success.dark' } }} />
+        <Tab label="Predicciones ML"  icon={<Psychology />}      iconPosition="start"
+          sx={{ fontWeight: 700, color: 'info.main',    '&.Mui-selected': { color: 'info.dark'    } }} />
+        <Tab label="Tasas Manuales"   icon={<EditNote />}        iconPosition="start"
           sx={{ fontWeight: 700, color: 'warning.main', '&.Mui-selected': { color: 'warning.dark' } }} />
-        <Tab label="Efectivo Físico" icon={<Savings />} iconPosition="start" />
+        <Tab label="Tabla Completa" />
+        <Tab label="Arbitraje"        icon={<Analytics />}       iconPosition="start" />
+        <Tab label="Historial"        icon={<TrendingUp />}      iconPosition="start" />
+        <Tab label="Auto Profit"      icon={<AutoMode />}        iconPosition="start"
+          sx={{ fontWeight: 700, color: 'warning.main', '&.Mui-selected': { color: 'warning.dark' } }} />
+        <Tab label="Efectivo Físico"  icon={<Savings />}         iconPosition="start" />
       </Tabs>
 
-      {tab === 1 && <ArbitrageAlerts />}
-      {tab === 2 && <RateHistoryChart />}
-      {tab === 3 && <AutoProfitPanel />}
-      {tab === 4 && <CashVariantsPanel />}
+      {/* ── Tab 0: Tasas Digitales ─────────────────────────────────────── */}
+      {tab === 0 && <DigitalRatesSection />}
 
-      {tab === 0 && (
+      {/* ── Tab 1: Predicciones ML ─────────────────────────────────────── */}
+      {tab === 1 && <PredictionsSection />}
+
+      {/* ── Tab 2: Tasas Manuales ──────────────────────────────────────── */}
+      {tab === 2 && <ManualRatesTable manualOnly />}
+
+      {tab === 4 && <ArbitrageAlerts />}
+      {tab === 5 && <RateHistoryChart />}
+      {tab === 6 && <AutoProfitPanel />}
+      {tab === 7 && <CashVariantsPanel />}
+
+      {tab === 3 && (
         <Box>
           {/* Live Rate Cards */}
           <Box mb={3}>
@@ -1047,7 +1204,7 @@ const Rates: React.FC = () => {
                 <TableRow>
                   <TableCell>Par</TableCell>
                   <TableCell>Mercado</TableCell>
-                  <TableCell align="right">Oficial BCB</TableCell>
+                  <TableCell align="right">Tasa mercado</TableCell>
                   <TableCell align="right">Compra</TableCell>
                   <TableCell align="right">Venta</TableCell>
                   <TableCell align="right">Spread</TableCell>
@@ -1086,20 +1243,19 @@ const Rates: React.FC = () => {
                       <TableCell>
                         <Chip
                           label={
-                            rate.market_type === 'official'      ? 'Oficial' :
-                            rate.market_type === 'bcb'           ? 'BCB Ref.' :
                             rate.market_type?.includes('paralelo_digital') ? 'Digital' :
-                            rate.market_type?.includes('paralelo') ? 'Paralelo' : rate.market_type
+                            rate.market_type?.includes('paralelo') ? 'Paralelo' :
+                            rate.market_type === 'digital' ? 'Digital' : 'Paralelo'
                           }
                           size="small"
-                          color={rate.market_type === 'official' ? 'primary' : 'default'}
-                          variant={rate.market_type === 'official' ? 'filled' : 'outlined'}
+                          color="default"
+                          variant="outlined"
                         />
                       </TableCell>
                       <TableCell align="right">
-                        <Tooltip title="Tasa BCB por unidad individual" arrow>
+                        <Tooltip title="Mid-rate paralelo por unidad" arrow>
                           <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', cursor: 'help' }}>
-                            {parseFloat(rate.official_rate).toFixed(4)}
+                            {((parseFloat(rate.buy_rate) + parseFloat(rate.sell_rate)) / 2).toFixed(4)}
                           </Typography>
                         </Tooltip>
                       </TableCell>
@@ -1222,12 +1378,6 @@ const Rates: React.FC = () => {
             </DialogTitle>
             <DialogContent>
               <Grid container spacing={2} sx={{ mt: 0.5 }}>
-                <Grid item xs={12}>
-                  <TextField fullWidth label="Tasa Oficial BCB" name="official_rate" type="number"
-                    inputProps={{ step: '0.0001' }}
-                    value={formik.values.official_rate} onChange={formik.handleChange}
-                    error={formik.touched.official_rate && Boolean(formik.errors.official_rate)} />
-                </Grid>
                 <Grid item xs={6}>
                   <TextField fullWidth label="Tasa Compra" name="buy_rate" type="number"
                     inputProps={{ step: '0.0001' }}

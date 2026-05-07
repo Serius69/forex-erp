@@ -260,6 +260,44 @@ def _record_response_metric(path: str, method: str, status: int, elapsed_ms: flo
         pass  # nunca romper el request por métricas
 
 
+class Request400LoggerMiddleware:
+    """
+    Loguea el payload y los errores de validación de todas las respuestas 400.
+    Facilita el diagnóstico de formularios que fallan silenciosamente.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if response.status_code == 400:
+            try:
+                body_raw = request.body[:2000].decode('utf-8', errors='replace')
+            except Exception:
+                body_raw = '<unreadable>'
+
+            user_info = '-'
+            if hasattr(request, 'user') and request.user.is_authenticated:
+                user_info = f"{request.user.username}(id={request.user.id})"
+
+            try:
+                import json as _json
+                resp_data = _json.loads(response.content)[:500] if response.content else {}
+            except Exception:
+                resp_data = response.content[:200].decode('utf-8', errors='replace')
+
+            log_requests.warning(
+                'HTTP_400 method=%s path=%s user=%s rid=%s payload=%s errors=%s',
+                request.method,
+                request.path,
+                user_info,
+                getattr(request, 'request_id', '-'),
+                body_raw,
+                resp_data,
+            )
+        return response
+
+
 def get_metrics_snapshot() -> dict:
     """Devuelve snapshot de métricas actuales."""
     times = _metrics['response_times_ms']

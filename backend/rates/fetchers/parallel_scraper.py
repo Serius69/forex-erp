@@ -20,27 +20,30 @@ from .base import BaseFetcher, FetchResult, DEFAULT_TIMEOUT
 
 log = logging.getLogger('kapitalya.rates.fetcher.parallel')
 
-# Spread estimado del mercado paralelo boliviano
-# Basado en observación histórica 2023-2025
-# USD: ~30-38% sobre BCB (6.96 → ~9.10-9.60)
-# EUR: spread similar al USD en términos relativos
-PARALLEL_SPREAD_ESTIMATE = {
-    'USD': {'buy_premium': Decimal('0.32'), 'sell_premium': Decimal('0.38')},
-    'EUR': {'buy_premium': Decimal('0.28'), 'sell_premium': Decimal('0.34')},
-    'BRL': {'buy_premium': Decimal('0.18'), 'sell_premium': Decimal('0.24')},
-    'ARS': {'buy_premium': Decimal('0.12'), 'sell_premium': Decimal('0.18')},
-    'CLP': {'buy_premium': Decimal('0.22'), 'sell_premium': Decimal('0.28')},
-    'PEN': {'buy_premium': Decimal('0.18'), 'sell_premium': Decimal('0.24')},
+# Tasas base del mercado paralelo boliviano (estimaciones conservadoras)
+# Usadas SOLO cuando todas las fuentes en tiempo real fallan.
+# Actualizar manualmente si el mercado cambia sustancialmente.
+PARALLEL_BASE = {
+    'USD': Decimal('9.60'),
+    'EUR': Decimal('10.40'),
+    'BRL': Decimal('1.65'),
+    'ARS': Decimal('8.00'),   # por 1000 ARS
+    'CLP': Decimal('10.00'),  # por 1000 CLP
+    'PEN': Decimal('2.55'),
 }
 
-BCB_REFERENCE = {
-    'USD': Decimal('6.96'),
-    'EUR': Decimal('7.52'),
-    'BRL': Decimal('1.22'),
-    'ARS': Decimal('0.007'),
-    'CLP': Decimal('0.0076'),
-    'PEN': Decimal('1.85'),
+# Spread buy/sell expresado como fracción del precio base
+PARALLEL_SPREAD_ESTIMATE = {
+    'USD': {'buy_discount': Decimal('0.015'), 'sell_premium': Decimal('0.015')},
+    'EUR': {'buy_discount': Decimal('0.015'), 'sell_premium': Decimal('0.015')},
+    'BRL': {'buy_discount': Decimal('0.020'), 'sell_premium': Decimal('0.020')},
+    'ARS': {'buy_discount': Decimal('0.025'), 'sell_premium': Decimal('0.025')},
+    'CLP': {'buy_discount': Decimal('0.025'), 'sell_premium': Decimal('0.025')},
+    'PEN': {'buy_discount': Decimal('0.020'), 'sell_premium': Decimal('0.020')},
 }
+
+# Alias para validación de rango (mismos valores base)
+PARALLEL_REFERENCE = PARALLEL_BASE
 
 SCALE_FACTORS = {'USD': 1, 'EUR': 1, 'BRL': 1, 'PEN': 1, 'ARS': 1000, 'CLP': 1000}
 
@@ -209,7 +212,7 @@ class ParallelMarketFetcher(BaseFetcher):
                 sell = decimals[1] if len(decimals) >= 2 else decimals[0] * Decimal('1.02')
 
                 # Sanity check: valores razonables para BOB
-                ref = BCB_REFERENCE.get(code, Decimal('1'))
+                ref = PARALLEL_REFERENCE.get(code, Decimal('1'))
                 scale = SCALE_FACTORS.get(code, 1)
                 # buy/sell deben estar en el rango [0.5*ref, 5*ref] (por unidad)
                 buy_per_unit  = buy  / Decimal(str(scale))
@@ -225,14 +228,13 @@ class ParallelMarketFetcher(BaseFetcher):
 
         # Construir FetchResults
         for code, vals in found_data.items():
-            ref   = BCB_REFERENCE.get(code, Decimal('1'))
             scale = SCALE_FACTORS.get(code, 1)
 
             result = FetchResult(
                 currency_code = code,
                 market_type   = self.market_type,
                 source_name   = self.source_name,
-                official_rate = ref,
+                official_rate = (vals['buy'] + vals['sell']) / Decimal('2'),
                 buy_rate      = vals['buy'],
                 sell_rate     = vals['sell'],
                 scale_factor  = scale,
@@ -267,16 +269,18 @@ class ParallelMarketFetcher(BaseFetcher):
             try:
                 buy  = self._to_decimal(item.get('buy',  item.get('compra')))
                 sell = self._to_decimal(item.get('sell', item.get('venta')))
-                ref  = BCB_REFERENCE.get(code, Decimal('1'))
+                ref  = PARALLEL_REFERENCE.get(code, Decimal('1'))
                 scale = SCALE_FACTORS.get(code, 1)
+                buy_scaled  = buy  * Decimal(str(scale)) if scale > 1 and buy < ref * 10 else buy
+                sell_scaled = sell * Decimal(str(scale)) if scale > 1 and sell < ref * 10 else sell
 
                 result = FetchResult(
                     currency_code = code,
                     market_type   = self.market_type,
                     source_name   = source_suffix,
-                    official_rate = ref,
-                    buy_rate      = buy  * Decimal(str(scale)) if scale > 1 and buy < ref * 10 else buy,
-                    sell_rate     = sell * Decimal(str(scale)) if scale > 1 and sell < ref * 10 else sell,
+                    official_rate = (buy_scaled + sell_scaled) / Decimal('2'),
+                    buy_rate      = buy_scaled,
+                    sell_rate     = sell_scaled,
                     scale_factor  = scale,
                     confidence    = 0.75,
                     raw_data      = item,
@@ -298,7 +302,7 @@ class ParallelMarketFetcher(BaseFetcher):
             'BOB', 'GBP', 'JPY', 'CHF',
         }
         if text in exact:
-            return text if text in BCB_REFERENCE else None
+            return text if text in PARALLEL_REFERENCE else None
 
         # Nombres en español
         spanish_map = {
@@ -333,29 +337,29 @@ class ParallelMarketFetcher(BaseFetcher):
         results    = []
         fetched_at = tz.now()
 
-        for code, ref in BCB_REFERENCE.items():
-            spread = PARALLEL_SPREAD_ESTIMATE.get(code, {
-                'buy_premium':  Decimal('0.25'),
-                'sell_premium': Decimal('0.32'),
+        for code, ref in PARALLEL_REFERENCE.items():
+            spread  = PARALLEL_SPREAD_ESTIMATE.get(code, {
+                'buy_discount': Decimal('0.015'),
+                'sell_premium': Decimal('0.015'),
             })
             scale     = SCALE_FACTORS.get(code, 1)
-            buy_unit  = ref * (1 + spread['buy_premium'])
-            sell_unit = ref * (1 + spread['sell_premium'])
+            # base es la tasa paralela estimada; buy ligeramente menor, sell ligeramente mayor
+            buy_scaled  = (ref * (1 - spread['buy_discount']))
+            sell_scaled = (ref * (1 + spread['sell_premium']))
 
             result = FetchResult(
                 currency_code = code,
                 market_type   = self.market_type,
                 source_name   = 'PARALELO_EST',
                 official_rate = ref,
-                buy_rate      = buy_unit  * Decimal(str(scale)),
-                sell_rate     = sell_unit * Decimal(str(scale)),
+                buy_rate      = buy_scaled,
+                sell_rate     = sell_scaled,
                 scale_factor  = scale,
-                confidence    = 0.60,
+                confidence    = 0.50,
                 raw_data      = {
-                    'method':       'estimated',
-                    'buy_premium':  float(spread['buy_premium']),
-                    'sell_premium': float(spread['sell_premium']),
-                    'warning':      'NOT_REAL_TIME',
+                    'method':    'estimated_parallel_base',
+                    'base_rate': float(ref),
+                    'warning':   'NOT_REAL_TIME',
                 },
                 source_method = 'INFERENCE',
                 source_url    = None,

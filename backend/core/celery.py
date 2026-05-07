@@ -18,12 +18,47 @@ log = logging.getLogger('kapitalya.tasks')
 # ── Beat schedule ─────────────────────────────────────────────────────────────
 app.conf.beat_schedule = {
     # ── Tasas de cambio multi-fuente ───────────────────────────────────────────
-    # BCB oficial + referencial: cada 30 min (BCB actualiza ~2x al día, pero
-    # verificamos con más frecuencia por si hay conexión intermitente)
-    'update-bcb-rates': {
-        'task':    'rates.update_bcb_rates',
+    # Binance P2P: cada 5 min — fuente principal USD/BOB
+    'fetch-binance-p2p': {
+        'task':    'rates.fetch_binance_p2p',
+        'schedule': crontab(minute='*/5'),
+        'options': {'queue': 'high', 'expires': 300},
+    },
+    # DolarBlueBolivia: cada 15 min — scraping con 8 exchanges + cross rates regionales
+    'fetch-dolar-blue-bolivia': {
+        'task':    'rates.fetch_dolar_blue_bolivia',
+        'schedule': crontab(minute='*/15'),
+        'options': {'queue': 'high', 'expires': 900},
+    },
+    # Todas las fuentes (integrations layer) + consenso: cada 5 min
+    'fetch-all-rates': {
+        'task':    'rates.fetch_all_rates',
+        'schedule': crontab(minute='*/5'),
+        'options': {'queue': 'high', 'expires': 300},
+    },
+    # FX Engine: cada 5 min (después de fetch Binance)
+    'run-fx-engine': {
+        'task':    'rates.run_fx_engine',
+        'schedule': crontab(minute='*/5'),
+        'options': {'queue': 'high', 'expires': 300},
+    },
+    # Marcar tasas primarias: cada 30 min
+    'mark-primary-rates': {
+        'task':    'rates.mark_primary_rates',
         'schedule': crontab(minute='*/30'),
-        'options': {'queue': 'high', 'expires': 1800},
+        'options': {'queue': 'default', 'expires': 1800},
+    },
+    # Snapshot diario al cierre de operaciones (18:00 BOT)
+    'daily-rates-snapshot': {
+        'task':    'rates.create_daily_snapshot',
+        'schedule': crontab(hour=18, minute=0),
+        'options': {'queue': 'low'},
+    },
+    # Tasa paralela principal: cada 15 min desde dolarbluebolivia.click
+    'fetch-parallel-rate': {
+        'task':    'rates.fetch_parallel_rate',
+        'schedule': crontab(minute='*/15'),
+        'options': {'queue': 'high', 'expires': 900},
     },
     # Plataformas digitales: cada 60 min (estimaciones cambian poco)
     'update-digital-rates': {
@@ -43,11 +78,48 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute='15', hour='*/2'),
         'options': {'queue': 'default', 'expires': 7200},
     },
-    # Modelos ML: 2 AM diario
+    # ── Motor ML ──────────────────────────────────────────────────────────────
+    # Reentrenamiento diario: 2 AM (todos los modelos)
+    'train-all-prediction-models': {
+        'task':     'predictions.train_all_prediction_models',
+        'schedule':  crontab(hour=2, minute=0),
+        'options':  {'queue': 'low'},
+    },
+    # Compatibilidad legacy (core tasks también lanza el training)
     'train-prediction-models': {
         'task':    'core.tasks.train_prediction_models',
-        'schedule': crontab(hour=2, minute=0),
+        'schedule': crontab(hour=2, minute=30),   # 30min después, por si acaso
         'options': {'queue': 'low'},
+    },
+    # Pesos del ensemble: cada 4 horas
+    'refresh-ensemble-weights': {
+        'task':    'predictions.refresh_ensemble_weights',
+        'schedule': crontab(minute=0, hour='*/4'),
+        'options': {'queue': 'default', 'expires': 14400},
+    },
+    # Caché de pronósticos: cada hora
+    'cache-forecast-hourly': {
+        'task':    'predictions.cache_forecast_hourly',
+        'schedule': crontab(minute=5),   # minuto 5 de cada hora (después de actualizar tasas)
+        'options': {'queue': 'default', 'expires': 3600},
+    },
+    # Backtesting semanal: domingos a las 3 AM
+    'weekly-backtest-report': {
+        'task':    'predictions.weekly_backtest_report',
+        'schedule': crontab(hour=3, minute=0, day_of_week=0),
+        'options': {'queue': 'low'},
+    },
+    # Tuning de hiperparámetros: sábados a las 4 AM (baja prioridad)
+    'weekly-hyperparameter-tuning': {
+        'task':    'predictions.weekly_hyperparameter_tuning',
+        'schedule': crontab(hour=4, minute=0, day_of_week=6),
+        'options': {'queue': 'low'},
+    },
+    # Evaluación de predicciones pasadas: diaria a las 12:00
+    'evaluate-predictions': {
+        'task':    'predictions.evaluate_predictions',
+        'schedule': crontab(hour=12, minute=0),
+        'options': {'queue': 'default', 'expires': 7200},
     },
     # Inventario: cada 15 minutos
     'check-inventory-alerts': {
@@ -101,6 +173,32 @@ app.conf.beat_schedule = {
         'task':    'data_migration.auto_sync_sheets',
         'schedule': crontab(minute='*/30'),   # sobreescribir con env si se necesita otro valor
         'options': {'queue': 'default', 'expires': 1700},
+    },
+    # ── Capital: posición en tiempo real y P&L ────────────────────────────────
+    # Snapshot diario de posición: 23:45 (después del closing snapshot general)
+    'capital-daily-snapshots': {
+        'task':    'capital.save_daily_snapshots',
+        'schedule': crontab(hour=23, minute=45),
+        'options': {'queue': 'low'},
+    },
+    # Alertas de capital: cada 15 minutos
+    'capital-check-alerts': {
+        'task':    'capital.check_capital_alerts',
+        'schedule': crontab(minute='*/15'),
+        'options': {'queue': 'high', 'expires': 900},
+    },
+    # Actualizar P&L no realizado: cada hora (valuación a tasas actuales)
+    'capital-update-unrealized-pnl': {
+        'task':    'capital.update_unrealized_pnl',
+        'schedule': crontab(minute=10, hour='*/1'),  # minuto 10 de cada hora
+        'options': {'queue': 'default', 'expires': 3600},
+    },
+    # ── Anti-fraude: invalidar caché de reglas ────────────────────────────────
+    # Cada 5 minutos para que cambios en admin se propaguen rápido
+    'fraud-rules-cache-refresh': {
+        'task':    'transactions.refresh_fraud_rules_cache',
+        'schedule': crontab(minute='*/5'),
+        'options': {'queue': 'high', 'expires': 300},
     },
 }
 

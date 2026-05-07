@@ -35,6 +35,109 @@ log = logging.getLogger('kapitalya.health')
 _START_TIME = time.time()
 
 
+# ── /api/health/ — estado general con circuit breakers ───────────────────────
+
+@require_http_methods(['GET'])
+def api_health(request):
+    """
+    Endpoint de health accesible desde el frontend.
+    Retorna estado de: DB, Redis, Celery, WebSocket, fetchers (CB status).
+    Nginx puede usar esto como healthcheck.
+    """
+    checks = {}
+    overall_ok = True
+
+    db_ok, db_msg = _check_database()
+    checks['database'] = {'ok': db_ok, 'message': db_msg}
+    if not db_ok:
+        overall_ok = False
+
+    cache_ok, cache_msg = _check_cache()
+    checks['redis'] = {'ok': cache_ok, 'message': cache_msg}
+    if not cache_ok:
+        overall_ok = False
+
+    celery_ok, celery_msg = _check_celery()
+    checks['celery'] = {'ok': celery_ok, 'message': celery_msg}
+
+    # Circuit breaker status de fetchers
+    try:
+        from rates.fetchers.base import cb_get_all_states
+        cb_states = cb_get_all_states()
+        open_count = sum(1 for s in cb_states.values() if s == 'OPEN')
+        checks['fetchers'] = {
+            'ok':         open_count == 0,
+            'message':    f'{len(cb_states)} fetchers, {open_count} OPEN',
+            'states':     cb_states,
+        }
+    except Exception as e:
+        checks['fetchers'] = {'ok': True, 'message': f'check skipped: {e}'}
+
+    http_status = 200 if overall_ok else 503
+    return JsonResponse({
+        'status':    'ok' if overall_ok else 'degraded',
+        'checks':    checks,
+        'uptime_s':  int(time.time() - _START_TIME),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'version':   getattr(settings, 'KAPITALYA_VERSION', '1.0.0'),
+    }, status=http_status)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def api_health_detailed(request):
+    """
+    Health check detallado — solo ADMIN.
+    Incluye: latencia DB, colas RabbitMQ, memoria Redis,
+    último éxito de cada fetcher, métricas Celery.
+    """
+    result = {}
+
+    # DB latency
+    try:
+        start = time.monotonic()
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT 1')
+        result['db_latency_ms'] = round((time.monotonic() - start) * 1000, 2)
+    except Exception as e:
+        result['db_latency_ms'] = None
+        result['db_error'] = str(e)
+
+    # Redis memory
+    try:
+        from django.conf import settings as s
+        import redis as redis_lib
+        redis_url = s.CACHES.get('default', {}).get('LOCATION', '')
+        if redis_url:
+            r = redis_lib.from_url(redis_url, decode_responses=True)
+            info = r.info('memory')
+            result['redis_used_memory_mb'] = round(info.get('used_memory', 0) / 1024 / 1024, 2)
+            result['redis_peak_memory_mb'] = round(info.get('used_memory_peak', 0) / 1024 / 1024, 2)
+    except Exception as e:
+        result['redis_error'] = str(e)
+
+    # Circuit breaker states
+    try:
+        from rates.fetchers.base import cb_get_all_states
+        result['circuit_breakers'] = cb_get_all_states()
+    except Exception as e:
+        result['circuit_breakers'] = {'error': str(e)}
+
+    # Celery stats
+    result['celery'] = _get_celery_stats()
+
+    # DB stats
+    result['database'] = _get_db_stats()
+
+    # Transactions today
+    result['transactions_today'] = _get_today_tx_stats()
+
+    result['timestamp'] = datetime.now(timezone.utc).isoformat()
+    result['uptime_s']  = int(time.time() - _START_TIME)
+
+    return Response(result)
+
+
 @require_http_methods(['GET'])
 def health_check(request):
     """

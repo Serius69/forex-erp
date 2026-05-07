@@ -6,6 +6,7 @@ RateConsumer  — /ws/rates/
   · Emite tasas actuales al conectar
   · Recibe broadcast del grupo 'rates_updates' cuando las tasas cambian
   · Broadcast se origina en: ExchangeRate post_save signal y Celery tasks
+  · Rooms multi-tenant: company_{id} y branch_{id}
 
 AlertConsumer — /ws/alerts/
   · Autenticación por scope['user'] (ya poblado por JWTAuthMiddleware)
@@ -20,6 +21,7 @@ log = logging.getLogger('kapitalya.ws')
 
 GROUP_RATES   = 'rates_updates'
 GROUP_CAPITAL = 'capital_updates'
+GROUP_RATES_LIVE = 'rates_live'
 
 
 class RateConsumer(AsyncWebsocketConsumer):
@@ -33,29 +35,56 @@ class RateConsumer(AsyncWebsocketConsumer):
             return
 
         self.user = user
-        await self.channel_layer.group_add(GROUP_RATES,   self.channel_name)
-        await self.channel_layer.group_add(GROUP_CAPITAL, self.channel_name)
+        # accept() primero para completar el handshake ASGI inmediatamente.
+        # Hacer I/O (Redis group_add) antes de accept() puede causar 1001
+        # si el cliente agota el handshake timeout.
         await self.accept()
         log.info('WS_RATES_CONNECT user=%s channel=%s', user.username, self.channel_name)
 
-        # Send current rates immediately on connect
-        rates = await self._get_current_rates()
-        await self.send(text_data=json.dumps({
-            'type':  'rates_update',
-            'rates': rates,
-        }))
+        try:
+            await self.channel_layer.group_add(GROUP_RATES,   self.channel_name)
+            await self.channel_layer.group_add(GROUP_CAPITAL, self.channel_name)
 
-        # Send active system alerts
-        alerts = await self._get_active_alerts()
-        if alerts:
+            # Multi-tenant: unirse a rooms de empresa y sucursal
+            company_id = getattr(getattr(user, 'company', None), 'id', None)
+            branch_id  = getattr(getattr(user, 'branch',  None), 'id', None)
+            if company_id:
+                await self.channel_layer.group_add(f'company_{company_id}', self.channel_name)
+            if branch_id:
+                await self.channel_layer.group_add(f'branch_{branch_id}', self.channel_name)
+
+            self._company_id = company_id
+            self._branch_id  = branch_id
+        except Exception as exc:
+            log.error('WS_RATES_GROUP_ADD_FAIL channel=%s error=%s', self.channel_name, exc)
+
+        # Send current rates immediately on connect
+        try:
+            rates = await self._get_current_rates()
             await self.send(text_data=json.dumps({
-                'type':   'system_alerts',
-                'alerts': alerts,
+                'type':  'rates_update',
+                'rates': rates,
             }))
+
+            # Send active system alerts
+            alerts = await self._get_active_alerts()
+            if alerts:
+                await self.send(text_data=json.dumps({
+                    'type':   'system_alerts',
+                    'alerts': alerts,
+                }))
+        except Exception as exc:
+            log.error('WS_RATES_INIT_FAIL channel=%s error=%s', self.channel_name, exc)
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(GROUP_RATES,   self.channel_name)
         await self.channel_layer.group_discard(GROUP_CAPITAL, self.channel_name)
+        company_id = getattr(self, '_company_id', None)
+        branch_id  = getattr(self, '_branch_id',  None)
+        if company_id:
+            await self.channel_layer.group_discard(f'company_{company_id}', self.channel_name)
+        if branch_id:
+            await self.channel_layer.group_discard(f'branch_{branch_id}', self.channel_name)
         log.info('WS_RATES_DISCONNECT channel=%s code=%s', self.channel_name, close_code)
 
     async def receive(self, text_data):
@@ -107,13 +136,42 @@ class RateConsumer(AsyncWebsocketConsumer):
         }))
 
     async def alert_log(self, event):
-        """
-        Reenvía una alerta persistida (AlertLog) al cliente WebSocket.
-        Emitido por GlobalAlertService._push_websocket().
-        """
+        """Reenvía una alerta persistida (AlertLog) al cliente WebSocket."""
         await self.send(text_data=json.dumps({
-            'type':  'alert_log',
-            'alert': event.get('alert', {}),
+            'type':       'alert_log',
+            'event_type': event.get('event_type', 'ALERT_TRIGGERED'),
+            'alert':      event.get('alert', {}),
+        }))
+
+    async def transaction_event(self, event):
+        """Reenvía eventos de transacciones (creación o cambio de estado)."""
+        await self.send(text_data=json.dumps({
+            'type':       'transaction_event',
+            'event_type': event.get('event_type', 'TRANSACTION_CREATED'),
+            'data':       {k: v for k, v in event.items() if k not in ('type', 'event_type')},
+        }))
+
+    async def inventory_update(self, event):
+        """Reenvía cambios de inventario al cliente."""
+        await self.send(text_data=json.dumps({
+            'type':       'inventory_update',
+            'event_type': event.get('event_type', 'INVENTORY_UPDATED'),
+            'data':       {k: v for k, v in event.items() if k not in ('type', 'event_type')},
+        }))
+
+    async def kpi_update(self, event):
+        """Reenvía actualizaciones de KPIs."""
+        await self.send(text_data=json.dumps({
+            'type':       'kpi_update',
+            'event_type': event.get('event_type', 'KPI_UPDATED'),
+            'data':       {k: v for k, v in event.items() if k not in ('type', 'event_type')},
+        }))
+
+    async def extraction_update(self, event):
+        """Reenvía estado del ciclo de extracción continua."""
+        await self.send(text_data=json.dumps({
+            'type': 'extraction_update',
+            'data': {k: v for k, v in event.items() if k not in ('type',)},
         }))
 
     # ── DB helpers ────────────────────────────────────────────────────────────
@@ -158,6 +216,97 @@ class RateConsumer(AsyncWebsocketConsumer):
             return SystemAlert.get_active(limit=5)
         except Exception:
             return []
+
+
+class RatesConsumer(AsyncWebsocketConsumer):
+    """
+    /ws/rates-live/
+    Consumer para el feed de consenso en tiempo real.
+
+    Al conectarse: envía inmediatamente el último consenso de todos los pares.
+    Broadcast: cada vez que calculate_consensus termina publica al group 'rates_live'.
+
+    Autenticación: JWT via ?token= (igual que RateConsumer).
+    Formato saliente:
+    {
+      "type": "rates_update",
+      "timestamp": "…",
+      "pares": {
+        "USD/BOB": {"consenso": 9.82, "compra": …, "cambio_pct": 0.51, "tendencia": "ALCISTA"},
+        …
+      }
+    }
+    """
+
+    async def connect(self):
+        user = self.scope.get('user')
+        if user is None or not getattr(user, 'is_authenticated', False):
+            log.warning('WS_RATES_LIVE_REJECT anonymous %s', self.scope.get('client'))
+            await self.close(code=4001)
+            return
+
+        self.user = user
+        await self.channel_layer.group_add(GROUP_RATES_LIVE, self.channel_name)
+        await self.accept()
+        log.info('WS_RATES_LIVE_CONNECT user=%s', user.username)
+
+        # Enviar consenso actual inmediatamente
+        snapshot = await self._get_consensus_snapshot()
+        await self.send(text_data=json.dumps({
+            'type':      'rates_update',
+            'timestamp': snapshot['timestamp'],
+            'pares':     snapshot['pares'],
+        }))
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(GROUP_RATES_LIVE, self.channel_name)
+        log.info('WS_RATES_LIVE_DISCONNECT code=%s', close_code)
+
+    async def receive(self, text_data):
+        try:
+            msg = json.loads(text_data)
+        except json.JSONDecodeError:
+            return
+        if msg.get('type') == 'ping':
+            await self.send(text_data=json.dumps({'type': 'pong'}))
+        elif msg.get('type') == 'request_consensus':
+            snapshot = await self._get_consensus_snapshot()
+            await self.send(text_data=json.dumps({
+                'type':      'rates_update',
+                'timestamp': snapshot['timestamp'],
+                'pares':     snapshot['pares'],
+            }))
+
+    async def rates_update(self, event):
+        """Handler del broadcast de consensus task → clientes WS."""
+        await self.send(text_data=json.dumps({
+            'type':      'rates_update',
+            'timestamp': event.get('timestamp', ''),
+            'pares':     event.get('pares', {}),
+        }))
+
+    @database_sync_to_async
+    def _get_consensus_snapshot(self) -> dict:
+        """Carga el consenso vigente de todos los pares desde DB."""
+        try:
+            from .models import ExchangeRateConsensus
+            from django.utils import timezone
+            vigentes = ExchangeRateConsensus.objects.filter(vigente=True).order_by('par')
+            pares = {}
+            for c in vigentes:
+                pares[c.par] = {
+                    'consenso':      float(c.precio_consenso),
+                    'compra':        float(c.precio_compra)    if c.precio_compra  else None,
+                    'venta':         float(c.precio_venta)     if c.precio_venta   else None,
+                    'fuentes':       c.fuentes_count,
+                    'confianza':     c.confianza_pct,
+                    'cambio_pct':    float(c.cambio_pct_24h)   if c.cambio_pct_24h else 0.0,
+                    'tendencia':     c.tendencia or 'NEUTRAL',
+                }
+            return {'timestamp': timezone.now().isoformat(), 'pares': pares}
+        except Exception as exc:
+            log.error('WS_RATES_LIVE_SNAPSHOT_ERROR %s', exc)
+            return {'timestamp': '', 'pares': {}}
 
 
 class AlertConsumer(AsyncWebsocketConsumer):

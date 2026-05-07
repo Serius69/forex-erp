@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Currency, ExchangeRate, ExchangeRateSource,
-    RateConfiguration, ExchangeRateSnapshot, ReferenceRate,
+    RateConfiguration, ExchangeRateSnapshot,
 )
 
 
@@ -142,24 +142,6 @@ class ExchangeRateSnapshotSerializer(serializers.ModelSerializer):
         return None
 
 
-class ReferenceRateSerializer(serializers.ModelSerializer):
-    """
-    Tasa de referencia BCB / BCP — SOLO para display.
-    ⚠️  No usar para operaciones de cambio.
-    """
-    display_label = serializers.SerializerMethodField()
-
-    class Meta:
-        model  = ReferenceRate
-        fields = [
-            'id', 'currency', 'source',
-            'reference_buy', 'reference_sell',
-            'display_label', 'timestamp',
-        ]
-        read_only_fields = fields
-
-    def get_display_label(self, obj) -> str:
-        return 'Solo referencia - no usado para operaciones'
 
 
 class LiveEngineRateSerializer(serializers.Serializer):

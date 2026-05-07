@@ -3,7 +3,7 @@
 Motor de precios AI para tipo de cambio.
 
 Fórmula:
-    TC_base = (w_bcb*BCB + w_binance*Binance + w_hist*Histórico + w_comp*Competencia)
+    TC_base = (w_binance*Binance + w_dolarblue*DolarBlue + w_hist*Histórico + w_comp*Competencia)
               / sum(pesos_disponibles)
 
 Ajustes dinámicos:
@@ -77,12 +77,11 @@ class AIPricingEngine:
 
         # Mapeo: source_type → componente del motor
         mapping = {
-            'bcb_official':  'bcb',
-            'bcb_reference': 'bcb',
-            'digital':       'binance',    # Binance/Takenos/Airtm son "digital"
-            'parallel':      'competition',
+            'digital':  'binance',    # Binance/Takenos/Airtm son "digital"
+            'parallel': 'dolarblue',  # Mercado paralelo (DolarBlue Bolivia)
+            'paralelo_digital': 'dolarblue',
         }
-        result: dict[str, Decimal] = {'bcb': Decimal('0'), 'binance': Decimal('0'),
+        result: dict[str, Decimal] = {'binance': Decimal('0'), 'dolarblue': Decimal('0'),
                                        'historical': Decimal('0.25'), 'competition': Decimal('0')}
         for st, w in raw.items():
             component = mapping.get(st)
@@ -94,31 +93,31 @@ class AIPricingEngine:
         if total > 0:
             result = {k: _q(v / total, '0.0001') for k, v in result.items()}
         else:
-            result = {'bcb': Decimal('0.25'), 'binance': Decimal('0.35'),
-                      'historical': Decimal('0.25'), 'competition': Decimal('0.15')}
+            result = {'binance': Decimal('0.40'), 'dolarblue': Decimal('0.35'),
+                      'historical': Decimal('0.15'), 'competition': Decimal('0.10')}
 
         self._source_weights = result
         return result
 
     # ── Obtener tasas de cada fuente ──────────────────────────────────────────
 
-    def _get_rate_bcb(self, currency_code: str) -> Decimal | None:
-        """Última tasa oficial BCB (no más antigua que STALE_MINUTES)."""
+    def _get_rate_dolarblue(self, currency_code: str) -> Decimal | None:
+        """Última tasa del mercado paralelo digital (DolarBlue Bolivia / Binance)."""
         from rates.models import ExchangeRate, Currency
         try:
             bob = Currency.objects.get(code='BOB')
             cur = Currency.objects.get(code=currency_code)
-            cutoff = timezone.now() - timedelta(minutes=STALE_MINUTES * 4)  # BCB más lento
+            cutoff = timezone.now() - timedelta(minutes=STALE_MINUTES)
             rate = (ExchangeRate.objects
                     .filter(currency_from=cur, currency_to=bob,
-                            market_type__in=('official', 'bcb'),
+                            market_type__in=('paralelo_digital', 'parallel'),
                             valid_from__gte=cutoff)
                     .order_by('-valid_from')
                     .first())
             if rate:
                 return _q(rate.sell_rate)
         except Exception as exc:
-            log.debug('BCB rate lookup failed for %s: %s', currency_code, exc)
+            log.debug('DolarBlue rate lookup failed for %s: %s', currency_code, exc)
         return None
 
     def _get_rate_binance(self, currency_code: str) -> Decimal | None:
@@ -288,8 +287,8 @@ class AIPricingEngine:
 
         # Obtener tasas disponibles
         rates = {
-            'bcb':         self._get_rate_bcb(currency_code),
             'binance':     self._get_rate_binance(currency_code),
+            'dolarblue':   self._get_rate_dolarblue(currency_code),
             'historical':  self._get_rate_historical(currency_code),
             'competition': self._get_rate_competition(currency_code),
         }

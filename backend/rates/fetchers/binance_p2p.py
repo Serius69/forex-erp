@@ -106,6 +106,26 @@ def fetch_binance_p2p() -> dict:
     sell_price = Decimal(str(round(median(sell_prices), 4)))
     buy_price  = Decimal(str(round(median(buy_prices),  4)))
 
+    # Rango Bolivia (7.0-15.0 BOB/USD) — fuera de rango sí descartamos
+    BOB_MIN = Decimal('7.0')
+    BOB_MAX = Decimal('15.0')
+    if not (BOB_MIN <= buy_price <= BOB_MAX) or not (BOB_MIN <= sell_price <= BOB_MAX):
+        raise ValueError(
+            f'Binance P2P fuera de rango Bolivia: compra={buy_price} venta={sell_price}'
+        )
+
+    # Spread cruzado: medianas de BUY/SELL se invierten en mercados delgados.
+    # Intercambiamos para garantizar buy < sell sin perder los datos reales.
+    if buy_price >= sell_price:
+        log.warning(
+            'BINANCE_P2P_SPREAD_CRUZADO compra=%s >= venta=%s — intercambiando valores',
+            buy_price, sell_price,
+        )
+        buy_price, sell_price = min(buy_price, sell_price), max(buy_price, sell_price)
+        confidence = Decimal('0.870')
+    else:
+        confidence = Decimal('0.950')
+
     result = {
         'buy':           buy_price,
         'sell':          sell_price,
@@ -115,16 +135,22 @@ def fetch_binance_p2p() -> dict:
         'source_url':    BINANCE_P2P_URL,
         'fetched_at':    fetched_at,
         'from_cache':    False,
+        'confidence':    confidence,
     }
 
     cache.set(CACHE_KEY, result, CACHE_TTL)
-    _save_to_db(buy_price, sell_price, fetched_at=fetched_at)
+    _save_to_db(buy_price, sell_price, fetched_at=fetched_at, confidence=confidence)
 
     log.info('BINANCE_P2P fetched buy=%s sell=%s', buy_price, sell_price)
     return result
 
 
-def _save_to_db(buy_rate: Decimal, sell_rate: Decimal, fetched_at=None) -> None:
+def _save_to_db(
+    buy_rate: Decimal,
+    sell_rate: Decimal,
+    fetched_at=None,
+    confidence: Decimal = Decimal('0.950'),
+) -> None:
     """
     Persiste la tasa en ExchangeRate como paralelo_digital con trazabilidad completa.
     source_method='API' — Binance P2P es una API REST pública, dato en tiempo real.
@@ -164,10 +190,35 @@ def _save_to_db(buy_rate: Decimal, sell_rate: Decimal, fetched_at=None) -> None:
                 source_method = 'API',
                 source_url    = BINANCE_P2P_URL,
                 fetched_at    = now,
-                confidence    = Decimal('0.950'),
+                confidence    = confidence,
                 is_validated  = False,
             )
-        log.info('BINANCE_P2P_SAVED buy=%s sell=%s method=API', buy_rate, sell_rate)
+        log.info('BINANCE_P2P_SAVED buy=%s sell=%s confidence=%s method=API',
+                 buy_rate, sell_rate, confidence)
+
+        # También persistir en ExchangeRateRaw (archivo ML por fuente)
+        try:
+            from rates.models import ExchangeRateRaw, ExchangeRateSource
+            mid = (buy_rate + sell_rate) / Decimal('2')
+            spread_pct = (
+                (sell_rate - buy_rate) / buy_rate * 100
+            ).quantize(Decimal('0.000001'))
+            fuente_obj = ExchangeRateSource.objects.filter(id_fuente='BINANCE_P2P').first()
+            ExchangeRateRaw.objects.create(
+                fuente           = fuente_obj,
+                id_fuente_str    = 'BINANCE_P2P',
+                moneda_base      = 'USD',
+                moneda_cotizada  = 'BOB',
+                precio_compra    = buy_rate,
+                precio_venta     = sell_rate,
+                precio_promedio  = mid,
+                spread_pct       = spread_pct,
+                timestamp_fuente = now,
+                payload_raw      = {'source': 'binance_p2p', 'confidence': str(confidence)},
+                es_valido        = True,
+            )
+        except Exception as raw_exc:
+            log.warning('BINANCE_P2P_RAW_SAVE_ERROR %s', raw_exc)
 
     except Exception as exc:
         log.error('BINANCE_P2P_SAVE_ERROR %s', exc, exc_info=True)

@@ -593,9 +593,9 @@ const TransactionForm: React.FC<Props> = ({ open, onClose, onSuccess, preset }) 
                   mono: true,
                 },
                 { label: 'Pago', value: PAYMENT_METHODS.find(m => m.value === payMethod)?.label ?? payMethod },
-                { label: 'Tipo', value: isReportable ? '🟢 Reportable (ASFI)' : '🔵 Interna' },
-              ].map(row => (
-                <Box key={row.label} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                { label: 'Categoría', value: isReportable ? '🟢 Reportable (ASFI)' : '🔵 Interna' },
+              ].map((row, i) => (
+                <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Typography variant="body2" color="text.secondary">{row.label}</Typography>
                   <Typography variant="body2" fontWeight={600} sx={row.mono ? { fontVariantNumeric: 'tabular-nums' } : {}}>
                     {row.value}

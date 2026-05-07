@@ -17,6 +17,8 @@ celery==5.3.6
 django-celery-beat==2.6.0
 django-celery-results==2.5.1
 redis==5.0.8
+kombu==5.3.4
+amqp==5.2.0
 
 # ── WebSockets (Channels) ──────────────────────────────────────────────────────
 channels==4.0.0
@@ -27,22 +29,32 @@ reportlab==4.2.2
 openpyxl==3.1.5
 Pillow==10.4.0
 
-# ── Machine Learning ───────────────────────────────────────────────────────────
+# ── Machine Learning — core ────────────────────────────────────────────────────
 numpy==1.26.4
 pandas==2.1.4
 scikit-learn==1.4.2
 joblib==1.4.2
 prophet==1.1.5
 plotly==5.18.0
+matplotlib==3.8.4
+seaborn==0.13.2
 
 # ── TensorFlow (instalar al final por su tamaño) ───────────────────────────────
 tensorflow==2.15.0
+
+# ── Machine Learning — ensemble / nuevos modelos ──────────────────────────────
+xgboost==2.0.3
+pmdarima==2.0.4
+statsmodels==0.14.1
+optuna==3.5.0
+holidays==0.45
 
 # ── HTTP / Scraping ────────────────────────────────────────────────────────────
 urllib3==2.1.0
 charset-normalizer==3.3.2
 requests==2.31.0
 beautifulsoup4==4.12.3
+playwright==1.44.0
 
 # ── Seguridad / 2FA / OAuth ────────────────────────────────────────────────────
 pyotp==2.9.0
@@ -54,3 +66,4 @@ boto3==1.35.36
 
 # ── Servidor producción ────────────────────────────────────────────────────────
 gunicorn==22.0.0
+daphne==4.1.2

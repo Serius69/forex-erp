@@ -531,7 +531,7 @@ class ReportGenerator:
         
         # Transacciones de alto valor (>$5000 o equivalente)
         high_value_threshold = Decimal('5000')
-        bob_threshold = high_value_threshold * Decimal('6.96')  # Aproximado
+        bob_threshold = high_value_threshold * Decimal('9.50')  # Tasa paralela aproximada
         
         high_value_transactions = Transaction.objects.filter(
             Q(created_at__range=[self.start_date, self.end_date]) &

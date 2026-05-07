@@ -81,6 +81,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -90,10 +91,11 @@ MIDDLEWARE = [
     # Kapitalya custom middleware — orden importa
     'core.middleware.RequestIDMiddleware',       # 1. Asignar ID único al request
     'core.middleware.RequestLoggingMiddleware',  # 2. Log request + tiempo respuesta
-    'core.middleware.IdempotencyMiddleware',     # 3. Deduplicar transacciones
-    'core.middleware.SecurityHeadersMiddleware', # 4. Headers de seguridad
-    'core.middleware.QueryCountMiddleware',      # 5. Detectar N+1 queries
-    'core.maintenance.MaintenanceModeMiddleware', # 6. Bloquear en mantenimiento
+    'core.middleware.Request400LoggerMiddleware',# 3. Loguear payload en errores 400
+    'core.middleware.IdempotencyMiddleware',     # 4. Deduplicar transacciones
+    'core.middleware.SecurityHeadersMiddleware', # 5. Headers de seguridad
+    'core.middleware.QueryCountMiddleware',      # 6. Detectar N+1 queries
+    'core.maintenance.MaintenanceModeMiddleware', # 7. Bloquear en mantenimiento
 ]
 
 ROOT_URLCONF     = 'core.urls'
@@ -102,8 +104,9 @@ ASGI_APPLICATION = 'core.asgi.application'
 AUTH_USER_MODEL  = 'users.User'
 
 AUTHENTICATION_BACKENDS = [
-    'django.contrib.auth.backends.ModelBackend',
+    # EmailOrUsername primero: evita el dummy-hash de ModelBackend en logins por email
     'users.auth_backends.EmailOrUsernameBackend',
+    'django.contrib.auth.backends.ModelBackend',
 ]
 
 GOOGLE_CLIENT_ID = env('GOOGLE_CLIENT_ID', default='')
@@ -122,16 +125,21 @@ TEMPLATES = [{
 
 DATABASES = {
     'default': {
-        'ENGINE':       env('DB_ENGINE',   default='django.db.backends.postgresql'),
-        'NAME':         env('DB_NAME',     default='forex_erp'),
-        'USER':         env('DB_USER',     default='postgres'),
-        'PASSWORD':     env('DB_PASSWORD', default=''),
-        'HOST':         env('DB_HOST',     default='127.0.0.1'),
-        'PORT':         env('DB_PORT',     default='5432'),
-        'CONN_MAX_AGE': 60,
+        'ENGINE':   env('DB_ENGINE',   default='django.db.backends.postgresql'),
+        'NAME':     env('DB_NAME',     default='forex_erp'),
+        'USER':     env('DB_USER',     default='postgres'),
+        'PASSWORD': env('DB_PASSWORD', default=''),
+        # Con pgbouncer en modo transaction: conectar al pgbouncer, no directo a postgres
+        'HOST':     env('DB_HOST',     default='pgbouncer'),
+        'PORT':     env('DB_PORT',     default='5432'),
+        # pgbouncer transaction mode + CONN_MAX_AGE=0: Django no reutiliza conexiones,
+        # deja que pgbouncer gestione el pool (evita "prepared statements" errors)
+        'CONN_MAX_AGE': env.int('CONN_MAX_AGE', default=0),
         'OPTIONS': {
-            'connect_timeout': 10,
+            'connect_timeout':  10,
             'application_name': 'kapitalya-erp',
+            # Deshabilitar prepared statements (incompatibles con pgbouncer transaction mode)
+            'options': '-c statement_timeout=30000',
         },
         'TEST': {
             'NAME': 'test_forex_erp',
@@ -162,11 +170,18 @@ REST_FRAMEWORK = {
     },
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 25,
+    'CURSOR_PAGINATION_CLASS': 'core.pagination.KapitalyaCursorPagination',
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
     'EXCEPTION_HANDLER': 'core.exceptions.custom_exception_handler',
 }
+
+# ── Cache TTLs (seconds) — match values in core/cache.py ─────────────────────
+PARALLEL_RATE_CACHE_TTL     = 60
+CAPITAL_POSITION_CACHE_TTL  = 30
+SPREAD_CACHE_TTL            = 30
+KPI_CACHE_TTL               = 300
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME':    timedelta(minutes=15),
@@ -218,8 +233,14 @@ else:
         }
     }
 
-CELERY_BROKER_URL                    = env('CELERY_BROKER_URL',     default='redis://localhost:6379/0')
-CELERY_RESULT_BACKEND                = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/1')
+# ── RabbitMQ (Celery broker) — Redis solo para caché y channel layer ──────────
+RABBITMQ_URL = env(
+    'RABBITMQ_URL',
+    default='amqp://kapitalya:kapitalya_mq_pass@rabbitmq:5672/kapitalya',
+)
+
+CELERY_BROKER_URL                    = RABBITMQ_URL
+CELERY_RESULT_BACKEND                = env('CELERY_RESULT_BACKEND', default='redis://redis:6379/1')
 CELERY_ACCEPT_CONTENT                = ['json']
 CELERY_TASK_SERIALIZER               = 'json'
 CELERY_RESULT_SERIALIZER             = 'json'
@@ -227,24 +248,62 @@ CELERY_TIMEZONE                      = 'America/La_Paz'
 CELERY_BEAT_SCHEDULER                = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_TASK_TRACK_STARTED            = True
 CELERY_TASK_TIME_LIMIT               = 30 * 60
-CELERY_TASK_SOFT_TIME_LIMIT          = 25 * 60  # warn before hard kill
-CELERY_TASK_ACKS_LATE                = True      # ack after task succeeds
-CELERY_TASK_REJECT_ON_WORKER_LOST   = True      # requeue if worker dies
-CELERY_WORKER_PREFETCH_MULTIPLIER   = 1         # no prefetch — fair scheduling
+CELERY_TASK_SOFT_TIME_LIMIT          = 25 * 60
+CELERY_TASK_ACKS_LATE                = True
+CELERY_TASK_REJECT_ON_WORKER_LOST   = True
+CELERY_WORKER_PREFETCH_MULTIPLIER   = 1
 CELERY_TASK_MAX_RETRIES             = 5
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_BROKER_CONNECTION_MAX_RETRIES      = 10
-CELERY_TASK_ALWAYS_EAGER                  = False  # siempre async
+CELERY_TASK_ALWAYS_EAGER                  = False
 
-# Rutas de tareas por prioridad
+# Reintentos con backoff exponencial (Celery 5+)
+CELERY_TASK_AUTORETRY_FOR          = (Exception,)
+CELERY_TASK_RETRY_BACKOFF          = True
+CELERY_TASK_RETRY_BACKOFF_MAX      = 600   # máximo 10 minutos entre reintentos
+CELERY_TASK_RETRY_JITTER           = True
+
+# Colas kombu con exchanges dedicados para durabilidad
+from kombu import Queue, Exchange
+
+_critical_exchange = Exchange('critical', type='direct', durable=True)
+_default_exchange  = Exchange('default',  type='direct', durable=True)
+_low_exchange      = Exchange('low',      type='direct', durable=True)
+
+CELERY_TASK_QUEUES = (
+    Queue('critical', _critical_exchange, routing_key='critical', durable=True),
+    Queue('high',     _critical_exchange, routing_key='high',     durable=True),
+    Queue('default',  _default_exchange,  routing_key='default',  durable=True),
+    Queue('low',      _low_exchange,      routing_key='low',      durable=True),
+)
+CELERY_TASK_DEFAULT_QUEUE        = 'default'
+CELERY_TASK_DEFAULT_EXCHANGE     = 'default'
+CELERY_TASK_DEFAULT_ROUTING_KEY = 'default'
+
+# Rutas de tareas — 3 colas: critical (tiempo real), default, low (batch)
 CELERY_TASK_ROUTES = {
-    'transactions.*':   {'queue': 'critical'},
-    'rates.*':          {'queue': 'high'},
-    'inventory.*':      {'queue': 'high'},
+    # ── critical: operaciones de negocio con impacto inmediato ────────────────
+    'rates.tasks.continuous_fx_extraction':      {'queue': 'critical'},
+    'rates.tasks.refresh_parallel_rates':        {'queue': 'critical'},
+    'capital.tasks.update_position':             {'queue': 'critical'},
+    'capital.check_capital_alerts':              {'queue': 'critical'},
+    'transactions.refresh_fraud_rules_cache':    {'queue': 'critical'},
+    'transactions.check_rate_lock_expirations':  {'queue': 'critical'},
+    'rates.fetch_binance_p2p':                   {'queue': 'critical'},
+    'rates.run_fx_engine':                       {'queue': 'critical'},
+    # ── default: actualizaciones periódicas y analytics ──────────────────────
+    'rates.*':          {'queue': 'default'},
+    'inventory.*':      {'queue': 'default'},
     'analytics.*':      {'queue': 'default'},
+    'capital.*':        {'queue': 'default'},
+    'core.tasks.*':     {'queue': 'default'},
+    # ── low: batch, ML, reportes, backups ────────────────────────────────────
+    'predictions.tasks.generate_forecasts':      {'queue': 'low'},
+    'predictions.tasks.retrain_models':          {'queue': 'low'},
     'predictions.*':    {'queue': 'low'},
     'reports.*':        {'queue': 'low'},
-    'core.tasks.*':     {'queue': 'default'},
+    'data_migration.*': {'queue': 'low'},
+    'snapshots.*':      {'queue': 'low'},
 }
 
 # Guardar resultados de tareas 24h
@@ -302,13 +361,7 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 10 * 60,
         'options':  {'queue': 'default'},
     },
-    # BCB rates: cada 30 minutos
-    'rates-bcb-update': {
-        'task':     'rates.update_bcb_rates',
-        'schedule': 30 * 60,
-        'options':  {'queue': 'high'},
-    },
-    # ALL rates (todas las fuentes incluyendo DolarApi, BCP, externos): cada 3 minutos
+    # ALL rates (todas las fuentes paralelas): cada 3 minutos
     'rates-all-update': {
         'task':     'rates.update_all_rates',
         'schedule': 3 * 60,

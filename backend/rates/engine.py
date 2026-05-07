@@ -72,45 +72,63 @@ class RateEngine:
     """
 
     # Orden de prioridad de fuentes (mayor índice = menor prioridad)
-    SOURCE_PRIORITY = ['binance', 'dolarblue', 'db_cache', 'bcb_ref']
+    SOURCE_PRIORITY = ['binance', 'dolarblue', 'db_cache']
 
     def get_best_rate(self, currency: str = 'USD') -> RateResult | None:
         """
         Obtiene la mejor tasa disponible para la divisa dada.
         Intenta fuentes en orden de prioridad hasta obtener un resultado.
         """
+        from django.core.cache import cache as _cache
         currency = currency.upper()
+        _ck = f'engine_best_rate_v2_{currency}'
+        _cached = _cache.get(_ck)
+        if _cached is not None:
+            return _cached
 
-        # 1. Binance P2P — API real
+        # 1. Binance P2P — API real (solo USD/BOB)
         result = self._try_binance(currency)
         if result:
             result.anomalies = self._detect_anomalies(result)
             log.info('ENGINE_RATE source=binance currency=%s buy=%s sell=%s',
                      currency, result.buy, result.sell)
+            _cache.set(_ck, result, 90)
             return result
 
-        # 2. DolarBlueBolivia — scraping
+        # 2. DolarBlueBolivia — scraping (solo USD/BOB)
         result = self._try_dolar_blue(currency)
         if result:
             result.anomalies = self._detect_anomalies(result)
             log.info('ENGINE_RATE source=dolarblue currency=%s buy=%s sell=%s',
                      currency, result.buy, result.sell)
+            _cache.set(_ck, result, 90)
             return result
 
-        # 3. DB cache — última tasa paralelo_digital guardada
+        # 3. API externa (OpenExchangeRates) — cubre EUR, BRL, PEN, ARS, CLP, USD
+        result = self._try_external_api(currency)
+        if result:
+            result.anomalies = self._detect_anomalies(result)
+            log.info('ENGINE_RATE source=external_api currency=%s buy=%s sell=%s',
+                     currency, result.buy, result.sell)
+            _cache.set(_ck, result, 90)
+            return result
+
+        # 4. DB cache — última tasa activa guardada
         result = self._try_db_cache(currency)
         if result:
             result.anomalies = self._detect_anomalies(result)
             log.info('ENGINE_RATE source=db_cache currency=%s buy=%s sell=%s',
                      currency, result.buy, result.sell)
+            _cache.set(_ck, result, 90)
             return result
 
-        # 4. BCB referencial — solo baseline
-        result = self._try_bcb_ref(currency)
+        # 5. DB histórico — última tasa conocida aunque esté expirada
+        result = self._try_db_historical(currency)
         if result:
             result.anomalies = self._detect_anomalies(result)
-            log.warning('ENGINE_RATE source=bcb_ref currency=%s — all live sources failed',
-                        currency)
+            log.info('ENGINE_RATE source=db_historical currency=%s buy=%s sell=%s',
+                     currency, result.buy, result.sell)
+            _cache.set(_ck, result, 90)
             return result
 
         log.error('ENGINE_NO_RATE currency=%s — all sources exhausted', currency)
@@ -152,6 +170,30 @@ class RateEngine:
         except Exception as exc:
             log.warning('ENGINE_BINANCE_FAIL currency=%s error=%s', currency, exc)
             return None
+
+    def _try_external_api(self, currency: str) -> RateResult | None:
+        """
+        Open Exchange Rates (free, no key) — cubre USD, EUR, BRL, PEN, ARS, CLP.
+        Confianza 0.85 (referencial, no paralelo).
+        """
+        try:
+            from rates.fetchers.dolarapi_fetcher import OpenExchangeRatesFetcher
+            results = OpenExchangeRatesFetcher().fetch()
+            for r in results:
+                if r.currency_code == currency:
+                    return self._build_result(
+                        currency   = currency,
+                        buy        = r.buy_rate,
+                        sell       = r.sell_rate,
+                        source     = 'open_er_api',
+                        source_url = 'https://open.er-api.com/v6/latest/BOB',
+                        confidence = Decimal(str(r.confidence)),
+                        timestamp  = r.fetched_at or timezone.now(),
+                        is_live    = True,
+                    )
+        except Exception as exc:
+            log.warning('ENGINE_EXTERNAL_API_FAIL currency=%s error=%s', currency, exc)
+        return None
 
     def _try_dolar_blue(self, currency: str) -> RateResult | None:
         if currency != 'USD':
@@ -211,27 +253,35 @@ class RateEngine:
             log.warning('ENGINE_DB_CACHE_FAIL currency=%s error=%s', currency, exc)
         return None
 
-    def _try_bcb_ref(self, currency: str) -> RateResult | None:
-        """BCB referencial — sólo como último recurso, confidence muy baja."""
-        BCB_REF = {
-            'USD': Decimal('6.96'), 'EUR': Decimal('7.52'),
-            'BRL': Decimal('1.22'), 'ARS': Decimal('0.007'),
-            'CLP': Decimal('0.0076'), 'PEN': Decimal('1.85'),
-        }
-        ref = BCB_REF.get(currency)
-        if ref is None:
-            return None
-
-        return self._build_result(
-            currency   = currency,
-            buy        = ref,
-            sell       = ref,
-            source     = 'bcb_ref',
-            source_url = 'https://www.bcb.gob.bo/',
-            confidence = Decimal('0.400'),
-            timestamp  = timezone.now(),
-            is_live    = False,
-        )
+    def _try_db_historical(self, currency: str) -> RateResult | None:
+        """
+        Fallback final: cualquier tasa guardada para la divisa, incluso expirada.
+        Confianza fuertemente penalizada (×0.60) para señalar que es dato obsoleto.
+        """
+        try:
+            from rates.models import Currency, ExchangeRate
+            cur = Currency.objects.get(code=currency)
+            bob = Currency.objects.get(code='BOB')
+            rate = (
+                ExchangeRate.objects
+                .filter(currency_from=cur, currency_to=bob)
+                .order_by('-valid_from')
+                .first()
+            )
+            if rate:
+                return self._build_result(
+                    currency   = currency,
+                    buy        = rate.buy_rate,
+                    sell       = rate.sell_rate,
+                    source     = f'db_historical:{rate.source or "unknown"}',
+                    source_url = rate.source_url,
+                    confidence = Decimal(str(rate.confidence)) * Decimal('0.60'),
+                    timestamp  = rate.fetched_at or rate.valid_from,
+                    is_live    = False,
+                )
+        except Exception as exc:
+            log.warning('ENGINE_DB_HISTORICAL_FAIL currency=%s error=%s', currency, exc)
+        return None
 
     # ------------------------------------------------------------------ #
     #  Construcción de resultado                                            #

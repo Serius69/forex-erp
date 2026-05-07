@@ -11,7 +11,9 @@ from tensorflow.keras.optimizers import Adam
 import joblib
 import json
 from datetime import datetime, timedelta
+from decimal import Decimal
 from django.conf import settings
+from django.utils import timezone
 import os
 import logging
 
@@ -387,14 +389,11 @@ class ForexPredictionService:
        predictions = []
        
        # Obtener configuración de márgenes
-       try:
-           rate_config = RateConfiguration.objects.get(
-               currency_from__code=currency_pair.split('/')[0],
-               currency_to__code=currency_pair.split('/')[1],
-               is_active=True
-           )
-       except RateConfiguration.DoesNotExist:
-           rate_config = None
+       rate_config = RateConfiguration.objects.filter(
+           currency_from__code=currency_pair.split('/')[0],
+           currency_to__code=currency_pair.split('/')[1],
+           is_active=True
+       ).first()
        
        # Obtener modelos activos
        models = PredictionModel.objects.filter(
@@ -452,104 +451,191 @@ class ForexPredictionService:
        
        return predictions
    
+    def _predict_naive_fallback(self, horizon: int) -> list[dict]:
+       """
+       Predicción de último recurso basada en la última tasa paralela conocida.
+       Retorna el mismo formato que los modelos ML reales.
+       Confidence interval: ±0.5% de la tasa actual.
+       """
+       from rates.models import ExchangeRate
+       from decimal import Decimal
+
+       rate = Decimal('9.80')
+       try:
+           latest = (
+               ExchangeRate.objects
+               .filter(
+                   currency_from__code='USD',
+                   currency_to__code='BOB',
+                   market_type__in=('paralelo_digital', 'parallel', 'digital'),
+               )
+               .order_by('-valid_from')
+               .first()
+           )
+           if latest:
+               rate = (latest.buy_rate + latest.sell_rate) / 2
+       except Exception as exc:
+           logger.warning('naive_fallback could not get latest rate: %s', exc)
+
+       margin = rate * Decimal('0.005')
+       predictions = []
+       now = timezone.now()
+
+       for i in range(horizon):
+           prediction_dt = now + timedelta(hours=i + 1)
+           predictions.append({
+               'prediction_date': prediction_dt,
+               'rate':            float(rate),
+               'lower':           float(rate - margin),
+               'upper':           float(rate + margin),
+               'confidence':      0.60,
+               'external_factors': {'model': 'NAIVE_FALLBACK', 'is_fallback': True},
+           })
+
+       return predictions
+
     def _predict_prophet(self, model_record, horizon):
        """Predicciones con Prophet"""
-       # Cargar modelo
-       model_path = model_record.model_file.path
-       model = joblib.load(model_path)
-       
-       # Crear dataframe futuro
-       future = model.make_future_dataframe(periods=horizon, freq='H')
-       
-       # Agregar regresores (usar últimos valores conocidos)
-       if 'international_rate' in model.extra_regressors:
-           future['international_rate'] = (
-               future['international_rate']
-               .ffill()
-               .fillna(6.96)  # Valor por defecto
+       # Defensive: verificar que el archivo del modelo existe
+       if not model_record.model_file or not model_record.model_file.name:
+           logger.warning(
+               'Prophet model_file faltante para %s — usando fallback naive',
+               model_record.currency_pair,
            )
-       
-       # Predecir
-       forecast = model.predict(future)
-       
-       # Extraer predicciones
-       predictions = []
-       for i in range(len(forecast) - horizon, len(forecast)):
-           predictions.append({
-               'prediction_date': forecast.iloc[i]['ds'],
-               'rate': float(forecast.iloc[i]['yhat']),
-               'lower': float(forecast.iloc[i]['yhat_lower']),
-               'upper': float(forecast.iloc[i]['yhat_upper']),
-               'confidence': 0.95,
-               'external_factors': {}
-           })
-       
-       return predictions
+           return self._predict_naive_fallback(horizon)
+
+       try:
+           model_path = model_record.model_file.path
+           if not os.path.exists(model_path):
+               logger.warning(
+                   'Prophet model file no encontrado en %s — usando fallback naive',
+                   model_path,
+               )
+               return self._predict_naive_fallback(horizon)
+
+           model = joblib.load(model_path)
+
+           # Crear dataframe futuro
+           future = model.make_future_dataframe(periods=horizon, freq='H')
+
+           # Agregar regresores (usar últimos valores conocidos)
+           if 'international_rate' in model.extra_regressors:
+               future['international_rate'] = (
+                   future['international_rate']
+                   .ffill()
+                   .fillna(9.50)
+               )
+
+           # Predecir
+           forecast = model.predict(future)
+
+           # Extraer predicciones
+           predictions = []
+           for i in range(len(forecast) - horizon, len(forecast)):
+               predictions.append({
+                   'prediction_date': forecast.iloc[i]['ds'],
+                   'rate':            float(forecast.iloc[i]['yhat']),
+                   'lower':           float(forecast.iloc[i]['yhat_lower']),
+                   'upper':           float(forecast.iloc[i]['yhat_upper']),
+                   'confidence':      0.95,
+                   'external_factors': {},
+               })
+
+           return predictions
+
+       except Exception as exc:
+           logger.error(
+               'Prophet load error para %s: %s — usando fallback naive',
+               model_record.currency_pair, exc,
+           )
+           return self._predict_naive_fallback(horizon)
    
     def _predict_lstm(self, model_record, horizon):
        """Predicciones con LSTM"""
-       # Cargar modelo y scaler
-       model = tf.keras.models.load_model(model_record.model_file.path)
-       scaler_path = model_record.model_file.path.replace('lstm_', 'scaler_lstm_').replace('.h5', '.pkl')
-       scaler = joblib.load(scaler_path)
-       
-       # Obtener datos recientes
-       from .models import TrainingData
-       
-       sequence_length = model_record.parameters['sequence_length']
-       recent_data = TrainingData.objects.filter(
-           currency_pair=model_record.currency_pair
-       ).order_by('-date')[:sequence_length]
-       
-       # Preparar datos
-       df = pd.DataFrame(list(recent_data.values()))
-       df['date'] = pd.to_datetime(df['date'])
-       df.set_index('date', inplace=True)
-       df = df.sort_index()
-       
-       # Ingeniería de características
-       df = self._engineer_features(df)
-       
-       # Seleccionar características
-       features = model_record.parameters['features']
-       feature_data = df[features].values
-       
-       # Normalizar
-       scaled_data = scaler.transform(feature_data)
-       
-       # Predecir iterativamente
-       predictions = []
-       current_sequence = scaled_data[-sequence_length:]
-       
-       for i in range(horizon):
-           # Predecir siguiente valor
-           pred = model.predict(current_sequence.reshape(1, sequence_length, -1))
-           
-           # Desnormalizar
-           pred_full = np.zeros((1, scaler.n_features_in_))
-           pred_full[0, 0] = pred[0, 0]
-           pred_denorm = scaler.inverse_transform(pred_full)[0, 0]
-           
-           # Agregar predicción
-           prediction_date = df.index[-1] + timedelta(hours=i+1)
-           predictions.append({
-               'prediction_date': prediction_date,
-               'rate': float(pred_denorm),
-               'lower': float(pred_denorm * 0.98),
-               'upper': float(pred_denorm * 1.02),
-               'confidence': 0.85,
-               'external_factors': {}
-           })
-           
-           # Actualizar secuencia (usar predicción como nuevo valor)
-           new_row = current_sequence[-1].copy()
-           new_row[0] = pred[0, 0]
-           current_sequence = np.vstack([current_sequence[1:], new_row])
-       
-       return predictions
+       # Defensive: verificar que el archivo del modelo existe
+       if not model_record.model_file or not model_record.model_file.name:
+           logger.warning(
+               'LSTM model_file faltante para %s — usando fallback naive',
+               model_record.currency_pair,
+           )
+           return self._predict_naive_fallback(horizon)
+
+       model_path = model_record.model_file.path
+       if not os.path.exists(model_path):
+           logger.warning(
+               'LSTM model file no encontrado en %s — usando fallback naive',
+               model_path,
+           )
+           return self._predict_naive_fallback(horizon)
+
+       try:
+           model = tf.keras.models.load_model(model_path)
+       except Exception as exc:
+           logger.error('LSTM load error para %s: %s — usando fallback naive',
+                        model_record.currency_pair, exc)
+           return self._predict_naive_fallback(horizon)
+
+       scaler_path = model_path.replace('lstm_', 'scaler_lstm_').replace('.h5', '.pkl')
+       if not os.path.exists(scaler_path):
+           logger.warning('LSTM scaler no encontrado en %s — usando fallback naive', scaler_path)
+           return self._predict_naive_fallback(horizon)
+
+       try:
+           scaler = joblib.load(scaler_path)
+       except Exception as exc:
+           logger.error('LSTM scaler load error: %s — usando fallback naive', exc)
+           return self._predict_naive_fallback(horizon)
+
+       try:
+           # Obtener datos recientes
+           from .models import TrainingData
+
+           sequence_length = model_record.parameters['sequence_length']
+           recent_data = TrainingData.objects.filter(
+               currency_pair=model_record.currency_pair
+           ).order_by('-date')[:sequence_length]
+
+           df = pd.DataFrame(list(recent_data.values()))
+           df['date'] = pd.to_datetime(df['date'])
+           df.set_index('date', inplace=True)
+           df = df.sort_index()
+           df = self._engineer_features(df)
+
+           features = model_record.parameters['features']
+           feature_data = df[features].values
+           scaled_data = scaler.transform(feature_data)
+
+           predictions = []
+           current_sequence = scaled_data[-sequence_length:]
+
+           for i in range(horizon):
+               pred = model.predict(current_sequence.reshape(1, sequence_length, -1))
+               pred_full = np.zeros((1, scaler.n_features_in_))
+               pred_full[0, 0] = pred[0, 0]
+               pred_denorm = scaler.inverse_transform(pred_full)[0, 0]
+               prediction_date = df.index[-1] + timedelta(hours=i + 1)
+               predictions.append({
+                   'prediction_date': prediction_date,
+                   'rate':            float(pred_denorm),
+                   'lower':           float(pred_denorm * 0.98),
+                   'upper':           float(pred_denorm * 1.02),
+                   'confidence':      0.85,
+                   'external_factors': {},
+               })
+               new_row = current_sequence[-1].copy()
+               new_row[0] = pred[0, 0]
+               current_sequence = np.vstack([current_sequence[1:], new_row])
+
+           return predictions
+
+       except Exception as exc:
+           logger.error('LSTM predict error para %s: %s — usando fallback naive',
+                        model_record.currency_pair, exc)
+           return self._predict_naive_fallback(horizon)
    
     def _predict_ensemble(self, model_record, horizon):
        """Predicciones con modelo ensemble"""
+       from .models import PredictionModel
        # Obtener predicciones de modelos individuales
        prophet_model = PredictionModel.objects.get(
            model_type='PROPHET',

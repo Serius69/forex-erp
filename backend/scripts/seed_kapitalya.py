@@ -164,16 +164,16 @@ now = timezone.now()
 
 # Datos reales del archivo Excel del negocio
 TASAS = [
-    # (divisa_code, compra, venta, oficial_bcb)
-    ('USD',   Decimal('9.30'),  Decimal('9.60'),  Decimal('6.96')),
-    ('EUR',   Decimal('10.40'), Decimal('10.85'), Decimal('7.55')),
-    ('CLP',   Decimal('10.00'), Decimal('10.60'), Decimal('0.0076')),
-    ('PEN',   Decimal('2.60'),  Decimal('2.78'),  Decimal('1.85')),
-    ('BRL',   Decimal('1.40'),  Decimal('1.80'),  Decimal('1.22')),
-    ('ARS',   Decimal('5.00'),  Decimal('8.00'),  Decimal('0.007')),
-    ('USS', Decimal('8.00'),  Decimal('9.00'),  Decimal('6.96')),
-    ('US1', Decimal('7.00'),  Decimal('8.50'),  Decimal('6.96')),
-    ('PEM', Decimal('2.00'),  Decimal('2.50'),  Decimal('1.85')),
+    # (divisa_code, compra, venta)
+    ('USD',   Decimal('9.30'),  Decimal('9.60')),
+    ('EUR',   Decimal('10.40'), Decimal('10.85')),
+    ('CLP',   Decimal('10.00'), Decimal('10.60')),
+    ('PEN',   Decimal('2.60'),  Decimal('2.78')),
+    ('BRL',   Decimal('1.40'),  Decimal('1.80')),
+    ('ARS',   Decimal('5.00'),  Decimal('8.00')),
+    ('USS',   Decimal('8.00'),  Decimal('9.00')),
+    ('US1',   Decimal('7.00'),  Decimal('8.50')),
+    ('PEM',   Decimal('2.00'),  Decimal('2.50')),
 ]
 
 # Cerrar tasas anteriores
@@ -181,13 +181,13 @@ ExchangeRate.objects.filter(currency_to=bob, valid_until__isnull=True).update(
     valid_until=now - timedelta(minutes=1)
 )
 
-for code, buy, sell, oficial in TASAS:
+for code, buy, sell in TASAS:
     if code not in currencies:
         continue
     cur = currencies[code]
     ExchangeRate.objects.create(
         currency_from=cur, currency_to=bob,
-        official_rate=oficial, buy_rate=buy, sell_rate=sell,
+        official_rate=(buy + sell) / Decimal('2'), buy_rate=buy, sell_rate=sell,
         market_type='parallel',   # Tasas reales del negocio (mercado paralelo boliviano)
         valid_from=now, source='KAPITALYA',
     )
@@ -230,7 +230,7 @@ for row in HISTORIAL_TC:
                 currency_from=currencies[cur_code], currency_to=bob,
                 valid_from=dt.replace(hour=8, minute=0),
                 defaults={
-                    'official_rate': Decimal('6.96'),
+                    'official_rate': (Decimal(str(row[buy_i])) + Decimal(str(row[sell_i]))) / Decimal('2'),
                     'buy_rate':  Decimal(str(row[buy_i])),
                     'sell_rate': Decimal(str(row[sell_i])),
                     'market_type': 'parallel',
@@ -247,20 +247,6 @@ h("FUENTES DE TASAS")
 
 SOURCES = [
     # (name, source_type, url, weight, priority, fetch_interval_min, notes)
-    (
-        'BCB Oficial',
-        'bcb_official',
-        'https://www.bcb.gob.bo/',
-        Decimal('1.00'), 1, 30,
-        'Banco Central de Bolivia — tasa oficial regulada',
-    ),
-    (
-        'BCB Referencial',
-        'bcb_reference',
-        'https://www.bcb.gob.bo/',
-        Decimal('1.10'), 2, 30,
-        'Tasa referencial BCB para el sistema bancario',
-    ),
     (
         'Takenos',
         'digital',
@@ -454,7 +440,7 @@ TX_REALES = [
     ('2026-02-03', 'BUY',  'EUR',   50,    10.2,  510,    'CASH', 'sergio'),
     ('2026-02-03', 'SELL', 'EUR',   30,    10.85, 325.5,  'CASH', 'sergio'),
     ('2026-02-05', 'BUY',  'USD',   500,   9.4,   4700,   'CASH', 'sergio'),
-    ('2026-02-05', 'SELL', 'USD',   800,   10.0,  8000,   'CASH', 'tiffani'),
+    ('2026-02-05', 'SELL', 'USD',   800,   10.0,  8007,   'CASH', 'tiffani'),
     ('2026-02-10', 'BUY',  'PEN',   200,   2.5,   500,    'CASH', 'sergio'),
     ('2026-02-10', 'SELL', 'PEN',   150,   2.78,  417,    'CASH', 'sergio'),
     ('2026-02-15', 'BUY',  'BRL',   100,   1.4,   140,    'CASH', 'sergio'),
@@ -618,7 +604,7 @@ h("CAPITAL")
 gastos_data = [
     {'categoria': 'ALQUILER', 'descripcion': 'Alquiler mensual oficina', 'monto_bob': Decimal('2500'), 'medio_pago': 'TRANSFER', 'proveedor': 'Propietario'},
     {'categoria': 'SERVICIOS', 'descripcion': 'Luz y agua', 'monto_bob': Decimal('450'), 'medio_pago': 'EFECTIVO'},
-    {'categoria': 'SUELDOS', 'descripcion': 'Sueldos empleados', 'monto_bob': Decimal('8000'), 'medio_pago': 'TRANSFER'},
+    {'categoria': 'SUELDOS', 'descripcion': 'Sueldos empleados', 'monto_bob': Decimal('8007'), 'medio_pago': 'TRANSFER'},
     {'categoria': 'COMISIONES', 'descripcion': 'Comisiones bancarias', 'monto_bob': Decimal('120'), 'medio_pago': 'QR'},
     {'categoria': 'PUBLICIDAD', 'descripcion': 'Anuncios en redes sociales', 'monto_bob': Decimal('300'), 'medio_pago': 'TARJETA'},
     {'categoria': 'IMPUESTOS', 'descripcion': 'Impuestos municipales', 'monto_bob': Decimal('500'), 'medio_pago': 'TRANSFER'},
@@ -652,7 +638,7 @@ for i in range(7):
             'divisas_bob': Decimal('50000') + Decimal(random.randint(-5000, 5000)),
             'tarjetas_bob': Decimal('10000') + Decimal(random.randint(-1000, 1000)),
             'pasivos_bob': Decimal('2000') + Decimal(random.randint(-200, 200)),
-            'total_bob': Decimal('78000') + Decimal(random.randint(-2000, 2000)),
+            'total_bob': Decimal('78007') + Decimal(random.randint(-2000, 2000)),
             'tipo': 'CIERRE' if i == 0 else 'MANUAL',
             'generado_por': admin,
         }
@@ -925,8 +911,8 @@ for i in range(7):
         date=fecha_log,
         branch=branch,
         defaults={
-            'opening_balance': Decimal(random.uniform(8000, 12000)),
-            'closing_balance': Decimal(random.uniform(12000, 18000)),
+            'opening_balance': Decimal(random.uniform(8007, 12000)),
+            'closing_balance': Decimal(random.uniform(12000, 18007)),
             'total_transactions': random.randint(10, 30),
             'generated_at': timezone.now(),
         }
@@ -1061,7 +1047,7 @@ print(f"""
   Admin genérico : admin      / Admin123!
 
   URL Web   : http://localhost:3000
-  URL Admin  : http://localhost:8000/admin/
+  URL Admin  : http://localhost:8007/admin/
 
   DATOS CREADOS:
   ─────────────────────────────────────────────

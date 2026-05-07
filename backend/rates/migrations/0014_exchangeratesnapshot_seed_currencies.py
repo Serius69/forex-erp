@@ -66,7 +66,10 @@ def seed_special_currencies(apps, schema_editor):
     ]
 
     for data in special_currencies:
-        Currency.objects.get_or_create(code=data['code'], defaults=data)
+        try:
+            Currency.objects.get_or_create(code=data['code'], defaults=data)
+        except Exception as e:
+            print(f"[MIGRATION WARN] Currency {data['code']}: {e}")
 
 
 def seed_exchange_rate_sources(apps, schema_editor):
@@ -157,10 +160,13 @@ def seed_exchange_rate_sources(apps, schema_editor):
     ]
 
     for data in sources:
-        ExchangeRateSource.objects.get_or_create(
-            name=data['name'],
-            defaults={k: v for k, v in data.items() if k != 'name'},
-        )
+        try:
+            ExchangeRateSource.objects.get_or_create(
+                name=data['name'],
+                defaults={k: v for k, v in data.items() if k != 'name'},
+            )
+        except Exception as e:
+            print(f"[MIGRATION WARN] ExchangeRateSource {data['name']}: {e}")
 
 
 def undo_seeds(apps, schema_editor):
@@ -175,6 +181,13 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        # ── Widen Currency.code to fit extended codes like USD_CASH_LOOSE ─────
+        migrations.AlterField(
+            model_name='currency',
+            name='code',
+            field=models.CharField(max_length=20, unique=True),
+        ),
+
         # ── ExchangeRateSnapshot ──────────────────────────────────────────────
         migrations.CreateModel(
             name='ExchangeRateSnapshot',

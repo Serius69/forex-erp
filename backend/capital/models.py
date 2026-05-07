@@ -285,6 +285,11 @@ class CapitalComposicion(models.Model):
         """Capital neto SIN divisas extranjeras."""
         return self.total_activos - self.pasivos
 
+    @property
+    def total_bob(self) -> Decimal:
+        """Alias de capital_neto_local para compatibilidad con dashboard."""
+        return self.capital_neto_local
+
     def to_snapshot_dict(self) -> dict:
         """Serializes this composicion to a JSON-safe dict for history snapshots."""
         return {
@@ -442,6 +447,123 @@ class CashBOB(models.Model):
     def total_general_bob(self) -> Decimal:
         """Total BOB = efectivo físico + QR/transferencias."""
         return self.total_efectivo_fisico() + self.qr_transferencias
+
+
+class CurrencyPosition(models.Model):
+    """
+    Posición neta por divisa en una sucursal.
+
+    Actualizada automáticamente al completar cada Transaction.
+    Permite calcular P&L no realizado a tasa paralela y oficial.
+
+    Una entrada por (branch, currency).
+    """
+    branch   = models.ForeignKey(
+        'users.Branch', on_delete=models.PROTECT,
+        related_name='currency_positions',
+    )
+    currency = models.ForeignKey(
+        'rates.Currency', on_delete=models.PROTECT,
+        related_name='positions',
+    )
+
+    # ── Posición ──────────────────────────────────────────────────────────────
+    net_position = models.DecimalField(
+        max_digits=18, decimal_places=4, default=Decimal('0'),
+        help_text='Posición neta en unidades de la divisa (+ = largo, - = corto).',
+    )
+    avg_acquisition_cost = models.DecimalField(
+        max_digits=10, decimal_places=4, default=Decimal('0'),
+        help_text='Costo promedio de adquisición en BOB (WAC).',
+    )
+    total_bought    = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'))
+    total_sold      = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'))
+    total_cost_bob  = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal('0'),
+        help_text='Costo total acumulado en BOB (para calcular WAC).',
+    )
+
+    # ── P&L no realizado (calculado al momento del snapshot) ─────────────────
+    unrealized_pnl_parallel  = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal('0'),
+        help_text='P&L no realizado valorizado a tasa paralela.',
+    )
+    unrealized_pnl_official  = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal('0'),
+        help_text='P&L no realizado valorizado a tasa paralela (alias histórico, igual a unrealized_pnl_parallel).',
+    )
+    parallel_rate_used  = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    official_rate_used  = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True,
+        help_text='Alias histórico — almacena la tasa paralela usada (BCB eliminado).',
+    )
+
+    last_tx_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table        = 'capital_currency_position'
+        unique_together = [('branch', 'currency')]
+        ordering        = ['branch', 'currency__code']
+        verbose_name        = 'Posición por Divisa'
+        verbose_name_plural = 'Posiciones por Divisa'
+        indexes = [
+            models.Index(fields=['branch', 'currency']),
+        ]
+
+    def __str__(self):
+        sign = '+' if self.net_position >= 0 else ''
+        return f'{self.branch} | {self.currency.code} {sign}{self.net_position}'
+
+    def apply_buy(self, amount: Decimal, rate_bob: Decimal) -> None:
+        """Empresa compra divisa: aumenta posición, actualiza WAC."""
+        self.total_bought  += amount
+        self.total_cost_bob += amount * rate_bob
+        self.net_position  += amount
+        if self.net_position > 0:
+            self.avg_acquisition_cost = self.total_cost_bob / self.net_position
+        self.last_tx_at = timezone.now()
+
+    def apply_sell(self, amount: Decimal, rate_bob: Decimal) -> None:
+        """Empresa vende divisa: reduce posición."""
+        self.total_sold   += amount
+        self.net_position -= amount
+        self.last_tx_at    = timezone.now()
+
+    def update_unrealized_pnl(self, parallel_rate: Decimal, official_rate: Decimal = None) -> None:
+        """Recalcula el P&L no realizado a tasa paralela. official_rate ignorado (BCB eliminado)."""
+        book_value = self.net_position * self.avg_acquisition_cost
+        market_value = self.net_position * parallel_rate
+        pnl = market_value - book_value
+        self.unrealized_pnl_parallel = pnl
+        self.unrealized_pnl_official = pnl  # mismo valor — BCB eliminado
+        self.parallel_rate_used = parallel_rate
+        self.official_rate_used = parallel_rate  # alias histórico
+
+
+class CurrencyPositionHistory(models.Model):
+    """Snapshot diario de la posición por divisa — append-only."""
+    position    = models.ForeignKey(CurrencyPosition, on_delete=models.PROTECT, related_name='history')
+    fecha       = models.DateField(db_index=True)
+    net_position = models.DecimalField(max_digits=18, decimal_places=4)
+    avg_acquisition_cost = models.DecimalField(max_digits=10, decimal_places=4)
+    unrealized_pnl_parallel = models.DecimalField(max_digits=18, decimal_places=2)
+    unrealized_pnl_official = models.DecimalField(max_digits=18, decimal_places=2)
+    parallel_rate = models.DecimalField(max_digits=10, decimal_places=4, null=True)
+    official_rate = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True,
+        help_text='Alias histórico — almacena la tasa paralela (BCB eliminado).',
+    )
+    snapshot_type = models.CharField(max_length=10, choices=[('DAILY', 'Diario'), ('MANUAL', 'Manual')], default='DAILY')
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table  = 'capital_currency_position_history'
+        ordering  = ['-fecha', '-created_at']
+        verbose_name        = 'Historial Posición Divisa'
+        verbose_name_plural = 'Historial Posiciones Divisa'
+        indexes = [models.Index(fields=['position', '-fecha'])]
 
 
 class CashFlowLog(models.Model):

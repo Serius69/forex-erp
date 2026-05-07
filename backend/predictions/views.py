@@ -12,6 +12,68 @@ from .models import PredictionModel, Prediction
 from .serializers import PredictionModelSerializer, PredictionSerializer
 from .tasks import train_prediction_models, generate_predictions
 
+VALID_HORIZONS = {'1h', '4h', '24h', '7d'}
+
+_HORIZON_HOURS = {'1h': 1, '4h': 4, '24h': 24, '7d': 168}
+
+
+def _forecast_fallback(currency_pair: str, horizon: str) -> dict | None:
+    """
+    Builds a flat-rate inference forecast using the current parallel market rate.
+    Used when no trained ML model exists for the pair.
+    """
+    pair_norm = currency_pair.replace('-', '/')
+    parts = pair_norm.split('/')
+    if len(parts) != 2:
+        return None
+    from_code, to_code = parts
+    try:
+        from rates.models import ExchangeRate
+        rate = (
+            ExchangeRate.objects
+            .filter(
+                currency_from__code=from_code,
+                currency_to__code=to_code,
+                valid_until__isnull=True,
+            )
+            .order_by('-confidence', '-valid_from')
+            .first()
+        )
+        if not rate:
+            return None
+
+        mid = float((rate.buy_rate + rate.sell_rate) / 2)
+        horizon_h = _HORIZON_HOURS.get(horizon, 24)
+        now = timezone.now()
+        step = max(1, horizon_h // 24) if horizon_h > 24 else 1
+        points = min(horizon_h, 48)
+
+        predictions = [
+            {
+                'datetime': (now + timedelta(hours=(i + 1) * step)).isoformat(),
+                'rate':  mid,
+                'lower': round(mid * 0.98, 4),
+                'upper': round(mid * 1.02, 4),
+            }
+            for i in range(points)
+        ]
+
+        return {
+            'currency_pair':       pair_norm,
+            'horizon':             horizon,
+            'horizon_hours':       horizon_h,
+            'predicted_rate':      mid,
+            'confidence_interval': {'lower': round(mid * 0.97, 4), 'upper': round(mid * 1.03, 4), 'level': 0.80},
+            'model_weights':       {'inference': 1.0},
+            'backtesting_metrics': None,
+            'data_freshness':      'INFERENCE',
+            'predictions':         predictions,
+            'generated_at':        now.isoformat(),
+            'is_inference':        True,
+        }
+    except Exception:
+        return None
+
 class PredictionModelViewSet(viewsets.ModelViewSet):
     queryset = PredictionModel.objects.all()
     serializer_class = PredictionModelSerializer
@@ -110,18 +172,45 @@ class PredictionViewSet(viewsets.ModelViewSet):
             prediction_date__lte=timezone.now() + timedelta(hours=24)
         ).order_by('prediction_date')
         
-        # Si no hay predicciones, generarlas
+        # Si no hay predicciones, intentar generarlas
         if not predictions.exists():
-            from .ml_service import ForexPredictionService
-            service = ForexPredictionService()
-            service.predict_rates(currency_pair, horizon=24)
-            
-            # Re-consultar
-            predictions = self.get_queryset().filter(
-                currency_pair=currency_pair,
-                prediction_date__gte=timezone.now(),
-                prediction_date__lte=timezone.now() + timedelta(hours=24)
-            ).order_by('prediction_date')
+            try:
+                from .ml_service import ForexPredictionService
+                service = ForexPredictionService()
+                service.predict_rates(currency_pair, horizon=24)
+
+                predictions = self.get_queryset().filter(
+                    currency_pair=currency_pair,
+                    prediction_date__gte=timezone.now(),
+                    prediction_date__lte=timezone.now() + timedelta(hours=24)
+                ).order_by('prediction_date')
+            except Exception as exc:
+                import logging as _log
+                _log.getLogger('predictions').warning(
+                    'predict_rates failed for %s: %s — returning naive fallback', currency_pair, exc
+                )
+                from .ml_service import ForexPredictionService
+                service = ForexPredictionService()
+                naive = service._predict_naive_fallback(24)
+                return Response({
+                    'currency_pair': currency_pair,
+                    'model_status':  'FALLBACK',
+                    'predictions': {
+                        'NAIVE_FALLBACK': [
+                            {
+                                'date':             p['prediction_date'],
+                                'rate':             str(round(p['rate'], 4)),
+                                'buy_rate':         str(round(p['lower'], 4)),
+                                'sell_rate':        str(round(p['upper'], 4)),
+                                'confidence_lower': str(round(p['lower'], 4)),
+                                'confidence_upper': str(round(p['upper'], 4)),
+                                'confidence_score': p['confidence'],
+                            }
+                            for p in naive
+                        ]
+                    },
+                    'generated_at': timezone.now(),
+                })
         
         # Agrupar por modelo
         predictions_by_model = {}
@@ -314,3 +403,79 @@ class PredictionsDashboardView(APIView):
             'trend':              'stable',
             'anomalies':          [],
         })
+
+
+class ForecastView(APIView):
+    """
+    GET /api/predictions/forecast/{currency_pair}/
+    Query params:
+      horizon      — 1h | 4h | 24h (default) | 7d
+      ci           — true | false  (incluir intervalos de confianza)
+      refresh      — true           (forzar regeneración, ignorar caché)
+    Response:
+      predicted_rate, confidence_interval, model_weights,
+      feature_importance, backtesting_metrics, data_freshness, predictions[]
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, currency_pair):
+        horizon = request.query_params.get('horizon', '24h')
+        if horizon not in VALID_HORIZONS:
+            return Response(
+                {'error': f'horizon debe ser uno de: {", ".join(VALID_HORIZONS)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        use_cache = request.query_params.get('refresh', 'false').lower() != 'true'
+        show_ci   = request.query_params.get('ci', 'true').lower() != 'false'
+
+        try:
+            from predictions.ml_engine import ForexMLEngine
+            engine = ForexMLEngine()
+            result = engine.predict(
+                currency_pair=currency_pair.replace('-', '/'),
+                horizon_key=horizon,
+                use_cache=use_cache,
+            )
+        except ValueError as exc:
+            # No trained model — try to return inference fallback from current rate
+            fallback = _forecast_fallback(currency_pair, horizon)
+            if fallback:
+                return Response(fallback)
+            return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except RuntimeError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            return Response(
+                {'error': 'Error generando pronóstico', 'detail': str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        if not show_ci:
+            result.pop('confidence_interval', None)
+            for p in result.get('predictions', []):
+                p.pop('lower', None)
+                p.pop('upper', None)
+
+        return Response(result)
+
+
+class ModelHealthView(APIView):
+    """
+    GET /api/predictions/health/
+    Retorna estado de salud de cada modelo: última vez entrenado, MAPE reciente,
+    drift detectado, frescura de datos.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            from predictions.monitoring import ModelMonitor
+            monitor = ModelMonitor()
+            report  = monitor.health_report()
+            return Response(report)
+        except Exception as exc:
+            return Response(
+                {'error': 'No se pudo obtener estado de salud', 'detail': str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

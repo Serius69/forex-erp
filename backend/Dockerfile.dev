@@ -14,4 +14,4 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # No copiamos el código — se monta como volumen en dev
-EXPOSE 8000
+EXPOSE 8007

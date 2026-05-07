@@ -10,12 +10,55 @@ from decimal import Decimal
 from datetime import timedelta
 from django.db.models import Avg, Min, Max
 from django.db.models.functions import TruncDate, TruncHour
+from core.cache_decorators import cache_response
 from .models import Currency, ExchangeRate, ExchangeRateSource, RateConfiguration
 from .serializers import (
     CurrencySerializer, ExchangeRateSerializer,
     ExchangeRateSourceSerializer, RateConfigurationSerializer,
 )
-from .services import RateService
+
+def _live_historical_fallback(currency: str, engine=None):
+    """
+    Último recurso cuando el engine no encuentra ninguna fuente en tiempo real.
+    Lee la tasa más reciente en DB para la divisa (incluyendo tasas expiradas)
+    y la devuelve como RateResult con is_live=False y confianza degradada.
+    """
+    from decimal import Decimal
+    from rates.engine import RateEngine, RateResult
+    from rates.models import Currency, ExchangeRate
+
+    log = __import__('logging').getLogger('kapitalya.rates.engine')
+    try:
+        cur = Currency.objects.get(code=currency)
+        bob = Currency.objects.get(code='BOB')
+        rate = (
+            ExchangeRate.objects
+            .filter(currency_from=cur, currency_to=bob)
+            .order_by('-valid_from')
+            .first()
+        )
+        if not rate:
+            return None
+        age_minutes = (timezone.now() - rate.valid_from).total_seconds() / 60
+        log.warning(
+            'ENGINE_HISTORICAL_FALLBACK currency=%s source=%s age_min=%.0f',
+            currency, rate.source, age_minutes,
+        )
+        _engine = engine or RateEngine()
+        return _engine._build_result(
+            currency   = currency,
+            buy        = rate.buy_rate,
+            sell       = rate.sell_rate,
+            source     = f'historical:{rate.source or "db"}',
+            source_url = rate.source_url,
+            confidence = Decimal(str(rate.confidence)) * Decimal('0.70'),
+            timestamp  = rate.fetched_at or rate.valid_from,
+            is_live    = False,
+        )
+    except Exception as exc:
+        log.error('ENGINE_HISTORICAL_FALLBACK_ERROR currency=%s error=%s', currency, exc)
+        return None
+
 
 class CurrencyViewSet(viewsets.ModelViewSet):
     serializer_class   = CurrencySerializer
@@ -179,6 +222,189 @@ class ExchangeRateViewSet(viewsets.ModelViewSet):
             )
         return Response(summary.to_dict())
 
+    @action(detail=False, methods=['GET'], permission_classes=[AllowAny], url_path='sources-live')
+    def sources_live(self, request):
+        """
+        Retorna tasas en tiempo real por plataforma para una divisa.
+
+        ?currency=USD    (default USD)
+        ?refresh=true    fuerza nuevo fetch (ignora caché)
+
+        Estrategia:
+          1. Sirve desde caché Redis (TTL 5 min) si está disponible.
+          2. En caché miss: ejecuta fetchers en paralelo (ThreadPoolExecutor, timeout 15s).
+          3. Filtra FetchResult por currency_code pedido.
+          4. Devuelve array de fuentes con compra/venta/confianza/método/antigüedad.
+        """
+        import concurrent.futures
+        import logging
+
+        log = logging.getLogger('kapitalya.rates.sources_live')
+
+        currency_code = request.query_params.get('currency', 'USD').upper()
+        force_refresh = request.query_params.get('refresh', '').lower() == 'true'
+
+        cache_key = f'sources_live_v3_{currency_code}'
+        if not force_refresh:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return Response(cached)
+
+        # ── Select fetchers relevant to this currency ─────────────────────────
+        from .fetchers.p2p_exchanges              import BinanceP2PFetcher, BitgetP2PFetcher, BybitP2PFetcher
+        from .fetchers.dolar_blue_bolivia         import DolarBlueBoliviaFetcher
+        from .fetchers.eldorado_fetcher           import EldoradoFetcher
+        from .fetchers.wallbit_fetcher            import WallbitFetcher
+        from .fetchers.saldoar_fetcher            import SaldoARFetcher
+        from .fetchers.airtm_v2_fetcher           import AirtmQuoteFetcher
+        from .fetchers.okx_fetcher                import OKXFetcher
+        from .fetchers.p2p_multi_fiat             import BinanceCrossRateFetcher, all_binance_cross_fetchers
+        from .fetchers.dolaresabolivianos_fetcher import DolaresABolivianosLLMFetcher, DolaresABolivianosLastFetcher
+        from .fetchers.criptoya_fetcher           import CriptoYaBOBFetcher, CriptoYaCrossRateFetcher, all_criptoya_cross_fetchers
+        from .fetchers.dolarapi_bolivia_fetcher   import DolarApiBoliviaOficialFetcher, DolarApiBoliviaListFetcher
+
+        if currency_code == 'USD':
+            fetchers = [
+                BinanceP2PFetcher(),
+                BitgetP2PFetcher(),
+                BybitP2PFetcher(),
+                OKXFetcher(),
+                DolarBlueBoliviaFetcher(),
+                EldoradoFetcher(),
+                WallbitFetcher(),
+                SaldoARFetcher(),
+                AirtmQuoteFetcher(),
+                DolaresABolivianosLLMFetcher(),
+                DolaresABolivianosLastFetcher(),
+                CriptoYaBOBFetcher(),
+                DolarApiBoliviaOficialFetcher(),
+                DolarApiBoliviaListFetcher(),
+            ]
+        elif currency_code in ('ARS', 'CLP', 'PEN', 'BRL'):
+            fetchers = [
+                BinanceCrossRateFetcher(currency_code),
+                CriptoYaCrossRateFetcher(currency_code),
+                DolarBlueBoliviaFetcher(),
+            ]
+        elif currency_code == 'EUR':
+            fetchers = [
+                BinanceCrossRateFetcher(currency_code),
+                DolarBlueBoliviaFetcher(),
+            ]
+        else:
+            fetchers = [DolarBlueBoliviaFetcher()]
+
+        # ── Run in parallel ────────────────────────────────────────────────────
+        all_fetch_results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+            futures = {pool.submit(f.fetch): f.source_name for f in fetchers}
+            done, _ = concurrent.futures.wait(futures, timeout=25)
+            for fut in done:
+                try:
+                    all_fetch_results.extend(fut.result() or [])
+                except Exception as exc:
+                    log.warning('sources_live fetch error: %s', exc)
+
+        # ── Human-readable labels ──────────────────────────────────────────────
+        SOURCE_LABELS: dict[str, str] = {
+            'BINANCE_P2P':        'Binance P2P',
+            'BITGET_P2P':         'Bitget P2P',
+            'BYBIT_P2P':          'Bybit P2P',
+            'OKX_P2P':            'OKX P2P',
+            'BINANCE_ARS':        'Binance P2P / ARS',
+            'BINANCE_CLP':        'Binance P2P / CLP',
+            'BINANCE_PEN':        'Binance P2P / PEN',
+            'BINANCE_BRL':        'Binance P2P / BRL',
+            'BINANCE_EUR':        'Binance P2P / EUR',
+            'DOLARBLUE_BO':       'dolarbluebolivia.click',
+            'DOLARBLUE_ELDORADO': 'El Dorado',
+            'DOLARBLUE_TAKENOS':  'Takenos',
+            'DOLARBLUE_WALLBIT':  'Wallbit',
+            'DOLARBLUE_AIRTM':    'Airtm',
+            'DOLARBLUE_BINANCE':  'Binance (referencia)',
+            'DOLARBLUE_BYBIT':    'Bybit (referencia)',
+            'DOLARBLUE_SALDOAR':  'SaldoAR',
+            'DOLARBLUE_BITGET':   'Bitget (via dolarbluebolivia)',
+            'DOLARBLUE_MERU':     'Meru (via dolarbluebolivia)',
+            'DOLARBLUE_BRL':      'BRL / BOB',
+            'DOLARBLUE_ARS':      'ARS / BOB',
+            'DOLARBLUE_PEN':      'PEN / BOB',
+            'DOLARBLUE_EUR':      'EUR / BOB',
+            'DOLARBLUE_GBP':      'GBP / BOB',
+            'DOLARBLUE_CLP':      'CLP / BOB',
+            'DOLARBLUE_CNY':      'CNY / BOB',
+            'AIRTM':                      'Airtm',
+            'AIRTM_QUOTE':                'Airtm Quote',
+            'ELDORADO':                   'El Dorado (directo)',
+            'WALLBIT':                    'Wallbit (directo)',
+            'SALDOAR':                    'SaldoAR (directo)',
+            'DOLARESABOLIVIANOS_LLM':     'DólaresABolivianos',
+            'DOLARESABOLIVIANOS_LAST':    'DólaresABolivianos (último)',
+            'CRIPTOYA_BOB':               'CriptoYa USDT/BOB',
+            'CRIPTOYA_ARS':               'CriptoYa ARS/BOB',
+            'CRIPTOYA_CLP':               'CriptoYa CLP/BOB',
+            'CRIPTOYA_PEN':               'CriptoYa PEN/BOB',
+            'CRIPTOYA_BRL':               'CriptoYa BRL/BOB',
+            'DOLARAPI_OFICIAL':           'DolarApi Bolivia (oficial)',
+            'DOLARAPI_TARJETA':           'DolarApi Bolivia (tarjeta)',
+            'DOLARAPI_BLUE':              'DolarApi Bolivia (blue)',
+            'DOLARAPI_PARALELO':          'DolarApi Bolivia (paralelo)',
+            'DOLARAPI_LISTA':             'DolarApi Bolivia',
+        }
+
+        # ── Persist raw results to ExchangeRateRaw (ML archive) ──────────────
+        try:
+            from .aggregator import RateAggregator
+            RateAggregator().save_raw_to_db(all_fetch_results)
+        except Exception as _raw_exc:
+            log.warning('sources_live RAW_SAVE_ERROR: %s', _raw_exc)
+
+        # ── Filter + format ────────────────────────────────────────────────────
+        now = timezone.now()
+        stale_minutes = 30
+        stale_td = timedelta(minutes=stale_minutes)
+
+        seen: set[str] = set()
+        sources_out = []
+        for r in all_fetch_results:
+            if r.currency_code != currency_code:
+                continue
+            src = r.source_name.upper()
+            if src in seen:
+                continue
+            seen.add(src)
+
+            fetched_at = r.fetched_at
+            is_stale   = (now - fetched_at) > stale_td if fetched_at else True
+
+            sources_out.append({
+                'source':        src,
+                'source_label':  SOURCE_LABELS.get(src, src.replace('_', ' ').title()),
+                'currency':      currency_code,
+                'buy_rate':      str(r.buy_rate),
+                'sell_rate':     str(r.sell_rate),
+                'official_rate': str(r.official_rate),
+                'confidence':    float(r.confidence),
+                'source_method': r.source_method,
+                'market_type':   r.market_type,
+                'fetched_at':    fetched_at.isoformat() if fetched_at else None,
+                'is_stale':      is_stale,
+                'is_primary':    False,
+                'source_url':    r.source_url,
+            })
+
+        # Sort by confidence desc
+        sources_out.sort(key=lambda x: -x['confidence'])
+
+        payload = {
+            'currency':   currency_code,
+            'count':      len(sources_out),
+            'checked_at': now.isoformat(),
+            'sources':    sources_out,
+        }
+        cache.set(cache_key, payload, 300)  # 5 min cache
+        return Response(payload)
+
     @action(detail=False, methods=['GET'], permission_classes=[IsAuthenticated], url_path='divergences')
     def divergences(self, request):
         """Detecta divergencias entre fuentes de tasas. Genera alerta si > X%."""
@@ -196,29 +422,21 @@ class ExchangeRateViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['POST'])
     def update_rates(self, request):
-        """Actualiza las tasas desde fuentes externas"""
+        """Dispara actualización de tasas del mercado paralelo."""
         if request.user.role != 'ADMIN':
             return Response(
                 {'error': 'Solo administradores pueden actualizar tasas'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        source = request.data.get('source', 'BCB')
-        service = RateService()
 
         try:
-            rates = service.fetch_official_rates(source)
-            # Re-evaluate primary rates after manual update
-            try:
-                from .tasks import mark_primary_rates_task
-                mark_primary_rates_task.delay()
-            except Exception:
-                pass
+            from .tasks import fetch_dolar_blue_task, mark_primary_rates_task
+            fetch_dolar_blue_task.delay()
+            mark_primary_rates_task.delay()
             return Response({
                 'success': True,
-                'rates': rates,
-                'source': source,
-                'timestamp': timezone.now()
+                'message': 'Actualización del mercado paralelo iniciada',
+                'timestamp': timezone.now(),
             })
         except Exception as e:
             return Response({
@@ -309,6 +527,8 @@ class ExchangeRateViewSet(viewsets.ModelViewSet):
 
         rate = engine.get_best_rate(currency)
         if not rate:
+            rate = _live_historical_fallback(currency, engine)
+        if not rate:
             return Response(
                 {'error': f'No hay tasa disponible para {currency}/BOB'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -323,16 +543,16 @@ class LiveRatesView(viewsets.ViewSet):
     """
     GET /api/rates/live/
     Devuelve las mejores tasas disponibles por divisa desde la DB,
-    priorizando: parallel > digital > bcb > official.
+    priorizando: paralelo_digital > parallel > digital > competencia.
 
-    Opcionalmente acepta ?market=parallel|digital|bcb|official para filtrar
+    Opcionalmente acepta ?market=paralelo_digital|parallel|digital para filtrar
     por tipo de mercado.
 
     Formato de respuesta:
       {
-        "USD": {"buy": 9.30, "sell": 9.60, "official": 6.96,
-                "market_type": "parallel", "scale_factor": 1,
-                "sources": ["PARALELO_EST"], "updated_at": "..."},
+        "USD": {"buy": 9.30, "sell": 9.60, "mid": 9.45,
+                "market_type": "paralelo_digital", "scale_factor": 1,
+                "sources": ["DOLAR_BLUE_BO"], "updated_at": "..."},
         "CLP": {...},
         ...
       }
@@ -1183,66 +1403,6 @@ class RateSnapshotView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Reference Rate Panel — BCB / BCP display only
-# ─────────────────────────────────────────────────────────────────────────────
-
-class ReferenceRateView(APIView):
-    """
-    GET  /api/rates/reference/         — all latest reference rates
-    GET  /api/rates/reference/?currency=USD&source=BCB
-    POST /api/rates/reference/refresh/ — trigger fetch (ADMIN only)
-
-    ⚠️  Valor referencial solamente — no usado para operaciones.
-    """
-    permission_classes = [AllowAny]
-
-    def get(self, request):
-        from .models import ReferenceRate
-        from .serializers import ReferenceRateSerializer
-        from .fetchers.reference_fetcher import get_latest_reference
-
-        currency = request.query_params.get('currency', 'USD').upper()
-        source   = request.query_params.get('source')
-
-        # Return latest record per source
-        qs = ReferenceRate.objects.filter(currency=currency)
-        if source:
-            qs = qs.filter(source=source.upper())
-
-        # One record per source (most recent)
-        seen_sources: set[str] = set()
-        records = []
-        for obj in qs.order_by('source', '-timestamp'):
-            if obj.source not in seen_sources:
-                seen_sources.add(obj.source)
-                records.append(obj)
-
-        serializer = ReferenceRateSerializer(records, many=True)
-
-        return Response({
-            'currency':   currency,
-            'note':       'Valor referencial del dólar estadounidense — solo referencia, no usado para operaciones',
-            'label':      'Solo referencia - no usado para operaciones',
-            'references': serializer.data,
-        })
-
-
-class ReferenceRateRefreshView(APIView):
-    """POST /api/rates/reference/refresh/ — triggers BCB/BCP fetch."""
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        if getattr(request.user, 'role', '') not in ('ADMIN', 'MANAGER'):
-            return Response(
-                {'error': 'Requiere rol ADMIN o MANAGER'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        from .tasks import fetch_reference_rates_task
-        fetch_reference_rates_task.delay()
-        return Response({'queued': True, 'message': 'Actualización de tasas de referencia encolada.'})
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 #  FX Engine View — production parallel market rates
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1262,7 +1422,6 @@ class FXEngineView(APIView):
 
     def get(self, request):
         from .fx_engine import get_live_rates, run_engine, CASH_VARIANT_ADJUSTMENTS
-        from .fetchers.reference_fetcher import get_latest_reference
 
         force_refresh = request.query_params.get('refresh', '').lower() == 'true'
 
@@ -1276,8 +1435,7 @@ class FXEngineView(APIView):
                 if rates:
                     cache.set(self.CACHE_KEY, rates, self.CACHE_TTL)
 
-        # Attach reference rates (display panel)
-        reference = get_latest_reference('USD')
+        reference = None
 
         return Response({
             'rates':     rates,
@@ -1296,3 +1454,516 @@ class FXEngineView(APIView):
         from .tasks import run_fx_engine_task
         run_fx_engine_task.delay()
         return Response({'queued': True, 'message': 'FX Engine encolado para ejecución.'})
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# B1 / B2 / B3 — Tasa paralela, spread dinámico, rentabilidad
+# ════════════════════════════════════════════════════════════════════════════
+
+class ParallelRateView(APIView):
+    """
+    GET /api/rates/parallel-rate/?currency=USD&refresh=false
+    Retorna la tasa paralela de consenso (media Winsorizada ponderada).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        currency = request.query_params.get('currency', 'USD').upper()
+        force    = request.query_params.get('refresh', '').lower() in ('1', 'true')
+
+        from .parallel_rate_service import ParallelRateService
+        svc    = ParallelRateService()
+        result = svc.get_rate(currency, force_refresh=force)
+
+        return Response({
+            'currency':       result.currency,
+            'consensus_rate': str(result.consensus_rate),
+            'buy_rate':       str(result.buy_rate),
+            'sell_rate':      str(result.sell_rate),
+            'source_count':   result.source_count,
+            'confidence':     str(result.confidence),
+            'is_degraded':    result.is_degraded,
+            'computed_at':    result.computed_at,
+            'sources': [
+                {
+                    'name':   s.get('name'),
+                    'rate':   str(s.get('rate', '')),
+                    'weight': str(s.get('weight', '')),
+                }
+                for s in (result.sources or [])
+            ],
+        })
+
+
+class DynamicSpreadView(APIView):
+    """
+    GET /api/rates/dynamic-spread/
+    Calcula buy/sell dinámicos con factores de spread.
+
+    Query params:
+      currency            — código divisa (USD)
+      transaction_type    — BUY | SELL | BOTH (default BOTH)
+      branch_id           — int
+      customer_tier       — REGULAR | FREQUENT | VIP
+      transaction_size_bob— int
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        currency     = request.query_params.get('currency', 'USD').upper()
+        tx_type      = request.query_params.get('transaction_type', 'BOTH').upper()
+        branch_id    = request.query_params.get('branch_id') or getattr(request.user, 'branch_id', None)
+        tier         = request.query_params.get('customer_tier', 'REGULAR').upper()
+        size_bob_str = request.query_params.get('transaction_size_bob')
+        size_bob     = int(size_bob_str) if size_bob_str else None
+
+        from .parallel_rate_service import ParallelRateService
+        from .spread_engine import DynamicSpreadEngine
+
+        par_result   = ParallelRateService().get_rate(currency)
+        if not par_result.consensus_rate:
+            return Response(
+                {'error': f'No hay tasa paralela disponible para {currency}'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        branch = None
+        if branch_id:
+            try:
+                from users.models import Branch
+                branch = Branch.objects.get(pk=branch_id)
+            except Exception:
+                pass
+
+        result = DynamicSpreadEngine().calculate(
+            currency=currency,
+            parallel_rate=par_result.consensus_rate,
+            transaction_type=tx_type,
+            branch=branch,
+            customer_tier=tier,
+            transaction_size_bob=size_bob,
+        )
+
+        return Response({
+            'currency':           currency,
+            'parallel_rate':      str(result.parallel_rate),
+            'buy_rate':           str(result.buy_rate),
+            'sell_rate':          str(result.sell_rate),
+            'spread_abs':         str(result.spread_abs),
+            'spread_pct':         str(result.spread_pct),
+            'margin_per_1000':    str(result.margin_per_1000),
+            'expires_at':         result.expires_at,
+            'recommendation':     result.recommendation,
+            'factors_breakdown':  result.factors_breakdown,
+        })
+
+
+class ProfitabilityAnalysisView(APIView):
+    """
+    GET /api/rates/profitability-analysis/
+    Reporte de rentabilidad por período.
+
+    Query params:
+      start       — YYYY-MM-DD  (default: primer día del mes actual)
+      end         — YYYY-MM-DD  (default: hoy)
+      branch_id   — int
+      threshold   — Decimal, umbral mínimo de margen por TX en BOB (default 50)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.utils.dateparse import parse_date
+        from django.utils import timezone
+        from .profitability import ProfitabilityAnalyzer
+        from decimal import Decimal
+
+        today   = timezone.localdate()
+        default_start = today.replace(day=1)
+
+        start_str = request.query_params.get('start')
+        end_str   = request.query_params.get('end')
+        start     = parse_date(start_str) if start_str else default_start
+        end       = parse_date(end_str)   if end_str   else today
+
+        if not start or not end or start > end:
+            return Response({'error': 'Fechas inválidas'}, status=status.HTTP_400_BAD_REQUEST)
+
+        branch_id = request.query_params.get('branch_id')
+        try:
+            branch_id = int(branch_id) if branch_id else getattr(request.user, 'branch_id', None)
+        except ValueError:
+            return Response({'error': 'branch_id inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
+        threshold_str = request.query_params.get('threshold', '50')
+        try:
+            threshold = Decimal(threshold_str)
+        except Exception:
+            threshold = Decimal('50')
+
+        company_id = getattr(request.user, 'company_id', None)
+        if not company_id:
+            return Response({'error': 'Usuario sin company_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+        report = ProfitabilityAnalyzer().analyze(
+            company_id=company_id,
+            date_from=start,
+            date_to=end,
+            branch_id=branch_id,
+            min_margin_threshold=threshold,
+        )
+
+        return Response({
+            'period_start':         report.period_start,
+            'period_end':           report.period_end,
+            'total_transactions':   report.total_transactions,
+            'total_volume_foreign': str(report.total_volume_foreign),
+            'total_margin_bob':     str(report.total_margin_bob),
+            'avg_margin_pct':       str(report.avg_margin_pct),
+            'by_currency_pair':     report.by_currency_pair,
+            'by_cashier':           report.by_cashier,
+            'by_hour':              report.by_hour,
+            'by_customer_segment':  report.by_customer_segment,
+            'alert_count':          len(report.alerts),
+            'alerts':               report.alerts[:20],
+        })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Integration layer API — /api/v1/rates/consensus/ etc.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ConsensusView(APIView):
+    """
+    GET /api/v1/rates/consensus/
+    Tasas de consenso vigentes para todos los pares.
+
+    Response:
+    {
+      "timestamp": "…",
+      "tasas": {
+        "USD/BOB": {"compra": 9.90, "venta": 9.70, "consenso": 9.82,
+                    "fuentes": 8, "confianza": 91, "tendencia": "ALCISTA",
+                    "cambio_pct_24h": 0.51},
+        …
+      }
+    }
+    """
+    permission_classes = [AllowAny]
+    CACHE_KEY = 'integration_consensus_all'
+    CACHE_TTL = 60
+
+    def get(self, request):
+        force = request.query_params.get('refresh', '').lower() == 'true'
+        if not force:
+            cached = cache.get(self.CACHE_KEY)
+            if cached:
+                return Response(cached)
+
+        from .models import ExchangeRateConsensus
+        vigentes = (
+            ExchangeRateConsensus.objects
+            .filter(vigente=True)
+            .order_by('par')
+        )
+
+        tasas = {}
+        for c in vigentes:
+            tasas[c.par] = {
+                'compra':        float(c.precio_compra)  if c.precio_compra  else None,
+                'venta':         float(c.precio_venta)   if c.precio_venta   else None,
+                'consenso':      float(c.precio_consenso),
+                'fuentes':       c.fuentes_count,
+                'confianza':     c.confianza_pct,
+                'tendencia':     c.tendencia or 'NEUTRAL',
+                'cambio_pct_24h': float(c.cambio_pct_24h) if c.cambio_pct_24h else 0.0,
+                'metodo':        c.metodo_calculo,
+                'actualizado':   c.timestamp_calculo.isoformat(),
+            }
+
+        payload = {
+            'timestamp': timezone.now().isoformat(),
+            'pares':     len(tasas),
+            'tasas':     tasas,
+        }
+        cache.set(self.CACHE_KEY, payload, self.CACHE_TTL)
+        return Response(payload)
+
+
+class RawHistoryView(APIView):
+    """
+    GET /api/v1/rates/history/
+    Serie de tiempo de datos crudos para un par específico.
+
+    Params:
+      par      — "USD/BOB" (requerido)
+      desde    — ISO date (default: hace 7 días)
+      hasta    — ISO date (default: ahora)
+      fuente   — id_fuente filter (opcional)
+      limit    — max puntos (default 500, max 2000)
+    """
+    permission_classes = [IsAuthenticated]
+    MAX_LIMIT = 2000
+
+    def get(self, request):
+        from .models import ExchangeRateRaw
+
+        par_str = request.query_params.get('par', 'USD/BOB')
+        try:
+            base, cotiz = par_str.upper().split('/')
+        except ValueError:
+            return Response({'error': 'par debe ser formato MONEDA/MONEDA (ej: USD/BOB)'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        desde_str = request.query_params.get('desde')
+        hasta_str = request.query_params.get('hasta')
+        fuente    = request.query_params.get('fuente')
+        limit     = min(int(request.query_params.get('limit', 500)), self.MAX_LIMIT)
+
+        now = timezone.now()
+        if desde_str:
+            try:
+                desde = timezone.datetime.fromisoformat(desde_str).replace(tzinfo=timezone.utc)
+            except Exception:
+                return Response({'error': 'desde: formato inválido (ISO 8601)'}, status=400)
+        else:
+            desde = now - timedelta(days=7)
+
+        if hasta_str:
+            try:
+                hasta = timezone.datetime.fromisoformat(hasta_str).replace(tzinfo=timezone.utc)
+            except Exception:
+                return Response({'error': 'hasta: formato inválido (ISO 8601)'}, status=400)
+        else:
+            hasta = now
+
+        cache_key = f'raw_history:{par_str}:{desde_str}:{hasta_str}:{fuente}:{limit}'
+        cached = cache.get(cache_key)
+        if cached:
+            return Response(cached)
+
+        qs = (
+            ExchangeRateRaw.objects
+            .filter(
+                moneda_base      = base,
+                moneda_cotizada  = cotiz,
+                timestamp_captura__gte = desde,
+                timestamp_captura__lte = hasta,
+            )
+            .order_by('timestamp_captura')
+        )
+        if fuente:
+            qs = qs.filter(id_fuente_str=fuente)
+
+        total = qs.count()
+        puntos = qs.values(
+            'timestamp_captura', 'id_fuente_str', 'precio_compra',
+            'precio_venta', 'precio_promedio', 'es_valido',
+        )[:limit]
+
+        data = {
+            'par':    par_str,
+            'desde':  desde.isoformat(),
+            'hasta':  hasta.isoformat(),
+            'total':  total,
+            'limit':  limit,
+            'puntos': [
+                {
+                    'ts':      p['timestamp_captura'].isoformat(),
+                    'fuente':  p['id_fuente_str'],
+                    'compra':  float(p['precio_compra'])   if p['precio_compra']   else None,
+                    'venta':   float(p['precio_venta'])    if p['precio_venta']    else None,
+                    'mid':     float(p['precio_promedio']) if p['precio_promedio'] else None,
+                    'valido':  p['es_valido'],
+                }
+                for p in puntos
+            ],
+        }
+        cache.set(cache_key, data, 300)
+        return Response(data)
+
+
+class IntegrationSourcesView(APIView):
+    """
+    GET /api/v1/rates/integration-sources/
+    Lista de fuentes de integración con estado de salud.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import ExchangeRateSource, ExchangeRateRaw
+        from django.db.models import Max, Count
+
+        sources = (
+            ExchangeRateSource.objects
+            .filter(id_fuente__isnull=False)
+            .order_by('-priority', 'name')
+        )
+
+        # Última captura por fuente
+        last_captures = {
+            row['id_fuente_str']: row['last_ts']
+            for row in ExchangeRateRaw.objects.values('id_fuente_str')
+                       .annotate(last_ts=Max('timestamp_captura'))
+        }
+        # Conteo últimas 24h
+        hace_24h = timezone.now() - timedelta(hours=24)
+        counts_24h = {
+            row['id_fuente_str']: row['cnt']
+            for row in ExchangeRateRaw.objects
+                       .filter(timestamp_captura__gte=hace_24h)
+                       .values('id_fuente_str')
+                       .annotate(cnt=Count('id'))
+        }
+
+        data = []
+        for s in sources:
+            last_ts = last_captures.get(s.id_fuente)
+            data.append({
+                'id':               s.pk,
+                'id_fuente':        s.id_fuente,
+                'nombre':           s.name,
+                'tipo_fuente':      s.tipo_fuente,
+                'url':              s.url,
+                'is_active':        s.is_active,
+                'priority':         s.priority,
+                'necesita_revision': s.necesita_revision,
+                'ultima_captura':   last_ts.isoformat() if last_ts else None,
+                'capturas_24h':     counts_24h.get(s.id_fuente, 0),
+                'is_healthy':       s.is_healthy,
+                'consecutive_failures': s.consecutive_failures,
+            })
+
+        return Response({'fuentes': data, 'total': len(data)})
+
+
+class LatestRawView(APIView):
+    """
+    GET /api/v1/rates/latest/
+    Último dato raw por fuente para un par específico.
+
+    Params: par (default "USD/BOB")
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from .models import ExchangeRateRaw
+        from django.db.models import Max
+
+        par_str = request.query_params.get('par', 'USD/BOB')
+        try:
+            base, cotiz = par_str.upper().split('/')
+        except ValueError:
+            return Response({'error': 'par inválido'}, status=400)
+
+        cache_key = f'integration_latest:{par_str}'
+        cached = cache.get(cache_key)
+        if cached:
+            return Response(cached)
+
+        # Sub-query: max timestamp por fuente en últimos 30 min
+        cutoff = timezone.now() - timedelta(minutes=30)
+        latest_ids = (
+            ExchangeRateRaw.objects
+            .filter(moneda_base=base, moneda_cotizada=cotiz,
+                    timestamp_captura__gte=cutoff, es_valido=True)
+            .values('id_fuente_str')
+            .annotate(last_id=Max('id'))
+            .values_list('last_id', flat=True)
+        )
+
+        rows = (
+            ExchangeRateRaw.objects
+            .filter(pk__in=latest_ids)
+            .select_related('fuente')
+            .order_by('-precio_compra')
+        )
+
+        por_fuente = []
+        for row in rows:
+            por_fuente.append({
+                'fuente':     row.id_fuente_str,
+                'nombre':     row.fuente.name if row.fuente else row.id_fuente_str,
+                'compra':     float(row.precio_compra),
+                'venta':      float(row.precio_venta) if row.precio_venta else None,
+                'mid':        float(row.precio_promedio) if row.precio_promedio else None,
+                'spread_pct': float(row.spread_pct) if row.spread_pct else None,
+                'capturado':  row.timestamp_captura.isoformat(),
+            })
+
+        # Consenso vigente
+        from .models import ExchangeRateConsensus
+        consenso = ExchangeRateConsensus.objects.filter(par=par_str, vigente=True).first()
+
+        data = {
+            'par':        par_str,
+            'timestamp':  timezone.now().isoformat(),
+            'por_fuente': por_fuente,
+            'consenso': {
+                'precio':    float(consenso.precio_consenso) if consenso else None,
+                'fuentes':   consenso.fuentes_count          if consenso else 0,
+                'confianza': consenso.confianza_pct          if consenso else 0,
+                'tendencia': consenso.tendencia              if consenso else 'NEUTRAL',
+            } if consenso else None,
+        }
+        cache.set(cache_key, data, 60)
+        return Response(data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Continuous Extraction Status
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ExtractionStatusView(APIView):
+    """
+    GET /api/rates/extraction-status/
+
+    Devuelve métricas del loop continuo de extracción de tasas:
+      - Última actualización exitosa por fuente
+      - Tasa de éxito en las últimas 100 iteraciones
+      - Tiempo promedio de respuesta por fuente
+      - Si el loop está activo (Redis lock presente)
+    """
+    permission_classes = [IsAuthenticated]
+
+    @cache_response(ttl=30, key_prefix='extraction_status')
+    def get(self, request):
+        from django.core.cache import cache
+        from django.db.models import Avg, Count, Q
+        from django.utils import timezone
+        from .models import RawRateSnapshot
+        from .tasks import _LOOP_LOCK_KEY
+
+        loop_active = cache.get(_LOOP_LOCK_KEY) is not None
+
+        # Últimas 100 iteraciones por fuente
+        sources = RawRateSnapshot.objects.values('source').distinct()
+        stats   = []
+
+        for row in sources:
+            src = row['source']
+            qs  = (RawRateSnapshot.objects
+                   .filter(source=src)
+                   .order_by('-fetched_at')[:100])
+
+            total   = qs.count()
+            success = qs.filter(success=True).count()
+            avg_ms  = qs.aggregate(avg=Avg('response_time_ms'))['avg'] or 0
+            last_ok = (RawRateSnapshot.objects
+                       .filter(source=src, success=True)
+                       .order_by('-fetched_at')
+                       .values('fetched_at', 'currency_pair', 'raw_value')
+                       .first())
+
+            stats.append({
+                'source':          src,
+                'success_rate':    round(success / total * 100, 1) if total else 0,
+                'total_attempts':  total,
+                'avg_response_ms': round(avg_ms, 1),
+                'last_success':    last_ok,
+            })
+
+        return Response({
+            'loop_active':   loop_active,
+            'checked_at':    timezone.now().isoformat(),
+            'sources':       stats,
+        })

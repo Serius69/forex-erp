@@ -39,9 +39,9 @@ python manage.py createsuperuser
 python scripts/seed_kapitalya.py
 
 # Iniciar servidor de desarrollo
-python manage.py runserver 0.0.0.0:8000
+python manage.py runserver 0.0.0.0:8007
 ```
-uvicorn core.asgi:application --host 0.0.0.0 --port 8000 --reload 
+uvicorn core.asgi:application --host 0.0.0.0 --port 8007--reload 
 
 ### 2. Celery (en terminales separadas)
 
@@ -99,11 +99,11 @@ docker compose down
 **Servicios disponibles:**
 | Servicio | URL/Puerto |
 |----------|-----------|
-| Backend API | http://localhost:8000 |
+| Backend API | http://localhost:8007|
 | Frontend Web | http://localhost:3000 |
 | PostgreSQL | localhost:5432 |
 | Redis | localhost:6379 |
-| Django Admin | http://localhost:8000/admin |
+| Django Admin | http://localhost:8007/admin |
 
 ---
 
@@ -186,13 +186,13 @@ server {
 
     # API y WebSocket
     location /api/ {
-        proxy_pass http://backend:8000;
+        proxy_pass http://backend:8007;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 
     location /ws/ {
-        proxy_pass http://backend:8000;
+        proxy_pass http://backend:8007;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -215,12 +215,12 @@ server {
 
 ```bash
 # Para soporte WebSocket real en producción, usar Daphne o Uvicorn
-daphne -b 0.0.0.0 -p 8000 core.asgi:application
+daphne -b 0.0.0.0 -p 8007core.asgi:application
 
 # O con Uvicorn workers en Gunicorn
 gunicorn core.asgi:application \
   -k uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:8000 \
+  --bind 0.0.0.0:8007\
   --workers 4 \
   --timeout 120
 ```

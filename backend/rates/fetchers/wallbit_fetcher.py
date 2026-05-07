@@ -19,12 +19,9 @@ log = logging.getLogger('kapitalya.rates.fetcher.wallbit')
 WALLBIT_BASE_URL = 'https://api.wallbit.io/v1/rates'
 CURRENCIES_PARAM = 'USD,EUR,BRL,PEN,ARS,CLP'
 
-BCB_REF = {
-    'USD': Decimal('6.96'),  'EUR': Decimal('7.52'),
-    'BRL': Decimal('1.22'),  'PEN': Decimal('1.85'),
-    'CLP': Decimal('0.0076'),'ARS': Decimal('0.007'),
-}
 SCALE_FACTORS = {'ARS': 1000, 'CLP': 1000}
+
+_KNOWN_CURRENCIES = frozenset({'USD', 'EUR', 'BRL', 'PEN', 'ARS', 'CLP'})
 
 _Q4 = Decimal('0.0001')
 
@@ -49,7 +46,7 @@ class WallbitFetcher(BaseFetcher):
 
         api_key = self._get_api_key()
         if not api_key:
-            log.warning('WALLBIT_NO_API_KEY — skipping fetcher')
+            log.debug('WALLBIT_NO_API_KEY — skipping fetcher (configure WALLBIT_API_KEY)')
             return []
 
         session = self._get_session()
@@ -82,7 +79,7 @@ class WallbitFetcher(BaseFetcher):
             # Try direct currency-keyed dict
             items = []
             for code, val in data.items():
-                if code.upper() in BCB_REF:
+                if code.upper() in _KNOWN_CURRENCIES:
                     if isinstance(val, dict):
                         val['currency'] = code.upper()
                         items.append(val)
@@ -104,7 +101,7 @@ class WallbitFetcher(BaseFetcher):
                 item.get('currency') or item.get('code') or item.get('asset') or ''
             ).upper()
 
-            if code not in BCB_REF:
+            if code not in _KNOWN_CURRENCIES:
                 continue
 
             try:
@@ -120,7 +117,6 @@ class WallbitFetcher(BaseFetcher):
                 if sell <= 0:
                     sell = _q(buy * Decimal('1.005'))
 
-                ref   = BCB_REF[code]
                 scale = SCALE_FACTORS.get(code, 1)
 
                 buy_scaled  = buy  * Decimal(str(scale)) if scale > 1 else buy
@@ -130,7 +126,7 @@ class WallbitFetcher(BaseFetcher):
                     currency_code = code,
                     market_type   = self.market_type,
                     source_name   = self.source_name,
-                    official_rate = ref,
+                    official_rate = (buy_scaled + sell_scaled) / Decimal('2'),
                     buy_rate      = buy_scaled,
                     sell_rate     = sell_scaled,
                     scale_factor  = scale,

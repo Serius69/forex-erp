@@ -52,6 +52,10 @@ def get_logging_config(base_dir: Path, debug: bool = False) -> dict:
                 ),
                 'datefmt': '%Y-%m-%d %H:%M:%S',
             },
+            # Formato JSON para producción — parseable por cualquier stack de observabilidad
+            'json': {
+                '()': 'core.logging_config.JsonFormatter',
+            },
             # Formato para audit log financiero — NO cambiar estructura
             'audit': {
                 'format': '%(asctime)s | AUDIT | %(message)s',
@@ -146,6 +150,17 @@ def get_logging_config(base_dir: Path, debug: bool = False) -> dict:
                 'encoding': 'utf-8',
                 'formatter': 'structured',
                 'level': 'INFO',
+            },
+
+            # Archivo de errores frontend (Error Boundaries, apiClient)
+            'file_frontend_errors': {
+                'class': 'logging.handlers.TimedRotatingFileHandler',
+                'filename': str(log_dir / 'frontend_errors.log'),
+                'when': 'midnight',
+                'backupCount': 30,
+                'encoding': 'utf-8',
+                'formatter': 'json' if not debug else 'structured',
+                'level': 'WARNING',
             },
 
             # Archivo de seguridad — rate limits, accesos denegados
@@ -283,6 +298,34 @@ def get_logging_config(base_dir: Path, debug: bool = False) -> dict:
                 'propagate': False,
             },
 
+            # Frontend errors — capturados por Error Boundaries
+            'kapitalya.frontend_errors': {
+                'handlers': ['console', 'file_frontend_errors'],
+                'level': 'WARNING',
+                'propagate': False,
+            },
+
+            # Circuit breaker / fetchers de tasas
+            'kapitalya.rates.fetcher': {
+                'handlers': ['console', 'file_app', 'file_errors'],
+                'level': 'WARNING',
+                'propagate': False,
+            },
+
+            # Analytics
+            'analytics': {
+                'handlers': ['console', 'file_app', 'file_errors'],
+                'level': level,
+                'propagate': False,
+            },
+
+            # Alerts
+            'alerts': {
+                'handlers': ['console', 'file_app', 'file_errors'],
+                'level': level,
+                'propagate': False,
+            },
+
             # Silenciar librerías ruidosas
             'PIL':             {'handlers': ['null'], 'propagate': False},
             'tensorflow':      {'handlers': ['null'], 'propagate': False},
@@ -298,6 +341,31 @@ def get_logging_config(base_dir: Path, debug: bool = False) -> dict:
             'level': level,
         },
     }
+
+
+class JsonFormatter(logging.Formatter):
+    """Formatter JSON para producción — facilita parseo en Loki/ELK/CloudWatch."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        import json
+        import traceback
+        from datetime import datetime, timezone
+
+        payload = {
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'level':     record.levelname,
+            'logger':    record.name,
+            'message':   record.getMessage(),
+            'pid':       record.process,
+            'module':    record.module,
+        }
+        if record.exc_info:
+            payload['exception'] = traceback.format_exception(*record.exc_info)
+        # Incluir campos extra si los hay (error_id, user_id, etc.)
+        for key in ('error_id', 'user_id', 'company_id', 'request_id', 'task_id'):
+            if hasattr(record, key):
+                payload[key] = getattr(record, key)
+        return json.dumps(payload, ensure_ascii=False)
 
 
 class ColoredFormatter(logging.Formatter):

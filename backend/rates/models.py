@@ -12,11 +12,33 @@ class ExchangeRateSource(models.Model):
     su estado de salud y configuración de scraping/API.
     """
     SOURCE_TYPES = [
-        ('bcb_official',  'BCB Oficial'),
-        ('bcb_reference', 'BCB Referencial'),
-        ('digital',       'Plataforma Digital'),
-        ('parallel',      'Mercado Paralelo'),
+        ('digital',  'Plataforma Digital'),
+        ('parallel', 'Mercado Paralelo'),
     ]
+
+    TIPO_FUENTE_CHOICES = [
+        ('P2P',       'P2P Exchange'),
+        ('AGREGADOR', 'Agregador / Sitio Web'),
+        ('EXCHANGE',  'Exchange Centralizado'),
+        ('WALLET',    'Wallet / Remesa'),
+    ]
+
+    METODO_HTTP_CHOICES = [
+        ('GET',  'GET'),
+        ('POST', 'POST'),
+    ]
+
+    # Identificador slug único para la capa de integrations/
+    id_fuente         = models.CharField(max_length=60, unique=True, null=True, blank=True,
+                                         help_text='Slug único: binance_p2p_bob, saldoar…')
+    tipo_fuente       = models.CharField(max_length=20, choices=TIPO_FUENTE_CHOICES,
+                                         null=True, blank=True, db_index=True)
+    metodo_http       = models.CharField(max_length=4, choices=METODO_HTTP_CHOICES, default='GET')
+    requiere_auth     = models.BooleanField(default=False)
+    pais_referencia   = models.CharField(max_length=3, blank=True,
+                                          help_text='Código ISO 3166-1 alpha-2 (BO, AR, BR…)')
+    necesita_revision = models.BooleanField(default=False,
+                                             help_text='True si el parser no encontró el dato en el último ciclo')
 
     name                  = models.CharField(max_length=100, unique=True)
     source_type           = models.CharField(max_length=20, choices=SOURCE_TYPES, db_index=True)
@@ -68,7 +90,7 @@ class ExchangeRateSource(models.Model):
         return self.consecutive_failures < 5
 
 class Currency(models.Model):
-    code              = models.CharField(max_length=10, unique=True)
+    code              = models.CharField(max_length=20, unique=True)
     name_en           = models.CharField(max_length=100, verbose_name='Name (EN)')
     name_es           = models.CharField(max_length=100, verbose_name='Nombre (ES)', blank=True)
     symbol            = models.CharField(max_length=10)
@@ -99,6 +121,10 @@ class Currency(models.Model):
     def __str__(self):
         return f"{self.code} - {self.name_en}"
 
+    @property
+    def name(self) -> str:
+        return self.name_es or self.name_en
+
     def clean(self):
         from django.core.exceptions import ValidationError
         if self.is_base_currency:
@@ -110,9 +136,6 @@ class Currency(models.Model):
 
 class ExchangeRate(models.Model):
     MARKET_TYPE_CHOICES = [
-        # ── Oficiales ──────────────────────────────────────────────────────────
-        ('official',                    'Oficial BCB'),
-        ('bcb',                         'BCB Referencial'),
         # ── Paralelo digital ──────────────────────────────────────────────────
         ('paralelo_digital',            'Paralelo Digital (Binance/Takenos/Airtm)'),
         # ── Paralelo físico ───────────────────────────────────────────────────
@@ -144,7 +167,7 @@ class ExchangeRate(models.Model):
     market_type = models.CharField(
         max_length=30,
         choices=MARKET_TYPE_CHOICES,
-        default='official',
+        default='paralelo_digital',
         db_index=True,
         help_text='Tipo de mercado que representa esta tasa.',
     )
@@ -159,7 +182,7 @@ class ExchangeRate(models.Model):
     official_rate = models.DecimalField(max_digits=10, decimal_places=4)
     buy_rate  = models.DecimalField(max_digits=10, decimal_places=4)
     sell_rate = models.DecimalField(max_digits=10, decimal_places=4)
-    source    = models.CharField(max_length=50, default='BCB',
+    source    = models.CharField(max_length=50, default='',
                                  help_text='Nombre(s) de la fuente — legado, usar source_method para clasificación.')
 
     # ── TRACEABILITY FIELDS (Phase 3) ─────────────────────────────────────────
@@ -252,45 +275,6 @@ class ExchangeRate(models.Model):
                 "La tasa de compra no puede ser mayor que la tasa de venta."
             )
 
-        # Desviación máxima por tipo de mercado:
-        #   official → 10%  (regulación ASFI)
-        #   bcb      → 15%  (tasa referencial puede diferir ligeramente)
-        #   digital  → 60%  (plataformas digitales tienen sus propios spreads)
-        #   parallel → sin límite (mercado libre, el precio lo determina la oferta/demanda)
-        if self.market_type in ('official', 'bcb') and self.official_rate > 0:
-            # Ajustar official_rate al mismo escalado que buy/sell.
-            # official_rate se almacena por UNIDAD (lo que entrega el BCB).
-            # buy_rate/sell_rate se cotizan por scale_factor unidades.
-            # Ej. CLP: official=0.0076 por CLP → adjusted=7.6 por 1000 CLP.
-            try:
-                scale = Decimal(str(self.currency_from.scale_factor))
-            except (AttributeError, Exception):
-                scale = Decimal('1')
-
-            adjusted_official = self.official_rate * scale
-            if adjusted_official > 0:
-                buy_dev  = abs(self.buy_rate  - adjusted_official) / adjusted_official
-                sell_dev = abs(self.sell_rate - adjusted_official) / adjusted_official
-                max_dev  = max(buy_dev, sell_dev)
-
-                limit = Decimal('0.10') if self.market_type == 'official' else Decimal('0.15')
-                if max_dev > limit:
-                    cur_code = getattr(self.currency_from, 'code', '?')
-                    raise ValidationError(
-                        f"Tasa {self.market_type} de {cur_code} se desvía {max_dev*100:.1f}% "
-                        f"de la referencia BCB ajustada "
-                        f"({adjusted_official:.4f} BOB por {int(scale)} unidad(es)). "
-                        f"Máximo permitido: {float(limit)*100:.0f}%. "
-                        f"Use market_type='digital' o market_type='parallel' para tasas de mercado libre."
-                    )
-
-        if self.market_type in ('parallel', 'digital'):
-            log.debug(
-                "FREE_MARKET_RATE_SAVED type=%s currency=%s buy=%s sell=%s official=%s",
-                self.market_type,
-                getattr(self.currency_from, 'code', self.currency_from_id),
-                self.buy_rate, self.sell_rate, self.official_rate,
-            )
 
     def save(self, *args, **kwargs):
         if self.buy_rate and self.sell_rate and not self.avg_rate:
@@ -449,40 +433,6 @@ class ExchangeRateSnapshot(models.Model):
         return f"RateSnapshot {self.date} USD={self.avg_usd_buy}/{self.avg_usd_sell}"
 
 
-class ReferenceRate(models.Model):
-    """
-    Tasas de referencia BCB / BCP.
-    SOLO para display y analytics — NUNCA para operaciones de trading.
-    """
-    SOURCE_CHOICES = [('BCB', 'Banco Central de Bolivia'), ('BCP', 'BCP Bolivia')]
-
-    currency        = models.CharField(max_length=10, db_index=True)
-    reference_buy   = models.DecimalField(max_digits=10, decimal_places=4)
-    reference_sell  = models.DecimalField(max_digits=10, decimal_places=4)
-    source          = models.CharField(max_length=5, choices=SOURCE_CHOICES, db_index=True)
-    raw_response    = models.JSONField(default=dict, blank=True)
-    timestamp       = models.DateTimeField(auto_now_add=True, db_index=True)
-
-    class Meta:
-        verbose_name        = 'Tasa de Referencia'
-        verbose_name_plural = 'Tasas de Referencia'
-        ordering            = ['-timestamp']
-        indexes = [
-            models.Index(fields=['currency', 'source', '-timestamp']),
-        ]
-
-    def __str__(self):
-        return f"[{self.source}] {self.currency} buy={self.reference_buy} sell={self.reference_sell}"
-
-    @classmethod
-    def get_latest(cls, currency: str = 'USD', source: str | None = None):
-        """Retorna la referencia más reciente para una divisa."""
-        qs = cls.objects.filter(currency=currency.upper())
-        if source:
-            qs = qs.filter(source=source)
-        return qs.first()
-
-
 class ExchangeRateDecisionLog(models.Model):
     """
     Auditoría de cada decisión del motor de precios AI.
@@ -503,16 +453,14 @@ class ExchangeRateDecisionLog(models.Model):
     trigger         = models.CharField(max_length=20, choices=TRIGGER_CHOICES, default='scheduled')
 
     # Tasas de cada fuente en el momento de la decisión
-    rate_bcb        = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     rate_binance    = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     rate_historical = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     rate_competition = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
 
     # Pesos usados (deben sumar 1.0)
-    weight_bcb        = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.25'))
-    weight_binance    = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.35'))
-    weight_historical = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.25'))
-    weight_competition = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.15'))
+    weight_binance    = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.45'))
+    weight_historical = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.35'))
+    weight_competition = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.20'))
 
     # TC base (antes de ajustes)
     base_rate_bob   = models.DecimalField(max_digits=12, decimal_places=4)
@@ -570,3 +518,169 @@ class ExchangeRateDecisionLog(models.Model):
             return ((self.suggested_sell - self.actual_sell) / self.actual_sell * 100).quantize(
                 Decimal('0.01'))
         return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Integration layer — datos crudos y consenso
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ExchangeRateRaw(models.Model):
+    """
+    Cada dato crudo recibido de una fuente externa.
+    Inmutable — nunca se modifica, solo se inserta.
+    Activo de ML: conservar indefinidamente (limpiar a S3 tras 90 días).
+    """
+    fuente           = models.ForeignKey(
+        ExchangeRateSource, on_delete=models.PROTECT,
+        related_name='raw_rates', null=True, blank=True,
+        help_text='Fuente que generó este dato (null si fuente eliminada)',
+    )
+    id_fuente_str    = models.CharField(max_length=60, db_index=True,
+                                         help_text='Copia de id_fuente para búsquedas rápidas sin JOIN')
+    moneda_base      = models.CharField(max_length=3, db_index=True)
+    moneda_cotizada  = models.CharField(max_length=3, db_index=True)
+    precio_compra    = models.DecimalField(max_digits=18, decimal_places=8)
+    precio_venta     = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True)
+    precio_promedio  = models.DecimalField(max_digits=18, decimal_places=8, null=True, blank=True)
+    spread_pct       = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    timestamp_fuente = models.DateTimeField(
+        help_text='Momento en que la fuente dice que es el dato (puede ser aproximado)')
+    timestamp_captura = models.DateTimeField(auto_now_add=True, db_index=True)
+    payload_raw      = models.JSONField(default=dict,
+                                         help_text='JSON original completo — activo de ML')
+    es_valido        = models.BooleanField(default=True, db_index=True)
+    notas            = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name        = 'Dato Crudo de Tasa'
+        verbose_name_plural = 'Datos Crudos de Tasas'
+        ordering            = ['-timestamp_captura']
+        indexes             = [
+            models.Index(fields=['moneda_base', 'moneda_cotizada', '-timestamp_captura'],
+                         name='rates_raw_pair_ts_idx'),
+            models.Index(fields=['id_fuente_str', '-timestamp_captura'],
+                         name='rates_raw_fuente_ts_idx'),
+            models.Index(fields=['es_valido', 'moneda_base', '-timestamp_captura'],
+                         name='rates_raw_valid_idx'),
+        ]
+
+    def __str__(self):
+        return (f'{self.moneda_base}/{self.moneda_cotizada} '
+                f'{self.precio_compra} [{self.id_fuente_str}]')
+
+    def save(self, *args, **kwargs):
+        if self.precio_compra and self.precio_venta and not self.precio_promedio:
+            self.precio_promedio = (self.precio_compra + self.precio_venta) / Decimal('2')
+        if self.precio_compra and self.precio_venta and not self.spread_pct:
+            if self.precio_compra > 0:
+                self.spread_pct = (
+                    (self.precio_venta - self.precio_compra) / self.precio_compra * 100
+                ).quantize(Decimal('0.000001'))
+        super().save(*args, **kwargs)
+
+
+class ExchangeRateConsensus(models.Model):
+    """
+    Tasa de consenso calculada periódicamente a partir de múltiples fuentes.
+    Solo uno puede tener vigente=True por par de monedas a la vez.
+    """
+    METODO_CHOICES = [
+        ('MEDIA_PONDERADA',  'Media ponderada por confianza'),
+        ('MEDIANA',          'Mediana simple'),
+        ('WINSORIZED_MEAN',  'Media Winsorizada (sin outliers)'),
+    ]
+
+    par              = models.CharField(max_length=7, db_index=True,
+                                         help_text='ej: USD/BOB')
+    moneda_base      = models.CharField(max_length=3)
+    moneda_cotizada  = models.CharField(max_length=3)
+    precio_consenso  = models.DecimalField(max_digits=18, decimal_places=8)
+    precio_compra    = models.DecimalField(max_digits=18, decimal_places=8,
+                                            null=True, blank=True)
+    precio_venta     = models.DecimalField(max_digits=18, decimal_places=8,
+                                            null=True, blank=True)
+    fuentes_usadas   = models.JSONField(default=list,
+                                         help_text='[{id_fuente, peso, precio_compra, precio_venta}]')
+    fuentes_count    = models.IntegerField(default=0)
+    confianza_pct    = models.IntegerField(default=0,
+                                            help_text='0-100: % de confianza del consenso')
+    timestamp_calculo = models.DateTimeField(auto_now_add=True, db_index=True)
+    metodo_calculo   = models.CharField(max_length=20, choices=METODO_CHOICES,
+                                         default='MEDIA_PONDERADA')
+    vigente          = models.BooleanField(default=False, db_index=True,
+                                            help_text='Solo True para el consenso activo por par')
+    cambio_pct_24h   = models.DecimalField(max_digits=8, decimal_places=4,
+                                            null=True, blank=True,
+                                            help_text='Variación vs consenso de hace 24h (%)')
+    tendencia        = models.CharField(max_length=10, blank=True,
+                                         help_text='ALCISTA | BAJISTA | NEUTRAL')
+
+    class Meta:
+        verbose_name        = 'Consenso de Tasa'
+        verbose_name_plural = 'Consensos de Tasas'
+        ordering            = ['-timestamp_calculo']
+        indexes             = [
+            models.Index(fields=['par', '-timestamp_calculo'], name='rates_cons_par_ts_idx'),
+            models.Index(fields=['vigente', 'par'],             name='rates_cons_vigente_idx'),
+        ]
+
+    def __str__(self):
+        return (f'{self.par} consenso={self.precio_consenso} '
+                f'fuentes={self.fuentes_count} confianza={self.confianza_pct}%'
+                f'{" [VIGENTE]" if self.vigente else ""}')
+
+    def tendencia_display(self) -> str:
+        if self.cambio_pct_24h is None:
+            return 'NEUTRAL'
+        if self.cambio_pct_24h > Decimal('0.1'):
+            return 'ALCISTA'
+        if self.cambio_pct_24h < Decimal('-0.1'):
+            return 'BAJISTA'
+        return 'NEUTRAL'
+
+
+class RawRateSnapshot(models.Model):
+    """
+    Registro inmutable de cada intento de extracción de tasa por fetcher.
+    Alimentado por continuous_fx_extraction; base para métricas de salud del sistema.
+    """
+    SOURCE_CHOICES = [
+        ('binance_p2p',         'Binance P2P'),
+        ('dolar_blue_bolivia',  'DolarBlueBolivia'),
+        ('airtm',               'AirTM'),
+        ('eldorado',            'Eldorado'),
+        ('wallbit',             'Wallbit'),
+        ('saldoar',             'SaldoAR'),
+        ('okx',                 'OKX P2P'),
+        ('p2p_exchanges',       'P2P Exchanges'),
+        ('p2p_multi_fiat',      'P2P Multi-Fiat'),
+        ('digital',             'Digital (Takenos/Airtm)'),
+        ('parallel',            'Parallel Scraper'),
+        ('dolarapi',            'DolarAPI'),
+        ('criptoya',            'Criptoya'),
+        ('other',               'Other'),
+    ]
+
+    source          = models.CharField(max_length=30, choices=SOURCE_CHOICES, db_index=True)
+    currency_pair   = models.CharField(max_length=10, db_index=True,
+                                       help_text='ej: USD/BOB, USDT/ARS')
+    raw_value       = models.DecimalField(max_digits=18, decimal_places=8,
+                                          null=True, blank=True)
+    fetched_at      = models.DateTimeField(auto_now_add=True, db_index=True)
+    response_time_ms = models.IntegerField(default=0, help_text='Tiempo de respuesta en ms')
+    success         = models.BooleanField(default=True, db_index=True)
+    error_message   = models.TextField(blank=True, null=True)
+
+    class Meta:
+        verbose_name        = 'Snapshot Crudo de Tasa'
+        verbose_name_plural = 'Snapshots Crudos de Tasas'
+        ordering            = ['-fetched_at']
+        indexes             = [
+            models.Index(fields=['-fetched_at'],             name='rawsnap_ts_idx'),
+            models.Index(fields=['source', 'currency_pair'], name='rawsnap_src_pair_idx'),
+            models.Index(fields=['success', '-fetched_at'],  name='rawsnap_ok_ts_idx'),
+        ]
+
+    def __str__(self):
+        status = 'OK' if self.success else 'ERR'
+        return f'[{status}] {self.source} {self.currency_pair} {self.fetched_at:%H:%M:%S}'

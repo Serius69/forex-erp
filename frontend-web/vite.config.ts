@@ -20,17 +20,17 @@ export default defineConfig({
     // Proxy para desarrollo local sin Docker
     proxy: {
       '/api': {
-        target:       'http://localhost:8000',
+        target:       'http://localhost:8007',
         changeOrigin: true,
         secure:       false,
       },
       '/ws': {
-        target:       'ws://localhost:8000',
+        target:       'ws://localhost:8007',
         ws:           true,
         changeOrigin: true,
       },
       '/media': {
-        target:       'http://localhost:8000',
+        target:       'http://localhost:8007',
         changeOrigin: true,
       },
     },

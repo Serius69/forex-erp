@@ -88,10 +88,15 @@ class Transaction(models.Model):
     ]
 
     STATUS_CHOICES = [
-        ('PENDING', 'Pendiente'),
-        ('COMPLETED', 'Completada'),
-        ('CANCELLED', 'Cancelada'),
-        ('REVERSED', 'Revertida'),
+        ('DRAFT',          'Borrador'),
+        ('PENDING_RATE',   'Esperando tasa'),
+        ('PENDING',        'Pendiente'),
+        ('APPROVED',       'Aprobada'),
+        ('PROCESSING',     'Procesando'),
+        ('COMPLETED',      'Completada'),
+        ('FAILED',         'Fallida'),
+        ('CANCELLED',      'Cancelada'),
+        ('REVERSED',       'Revertida'),
     ]
 
     # Identificación única
@@ -220,6 +225,53 @@ class Transaction(models.Model):
         related_name='transactions_as_supervisor'
     )
     
+    # ── Tasa paralela y bloqueo de tasa ──────────────────────────────────────
+    parallel_rate_at_creation = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text='Tasa paralela de mercado en el momento de creación (snapshot inmutable).',
+    )
+    rate_lock_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Timestamp hasta el que la tasa de la transacción está bloqueada.',
+    )
+
+    # ── Anti-fraude ──────────────────────────────────────────────────────────
+    fraud_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text='Score de riesgo calculado por FraudDetectionEngine (0.0000–1.0000).',
+    )
+    fraud_flags = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Lista de reglas antifraude disparadas en esta transacción.',
+    )
+    approval_required = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='True si FraudDetectionEngine requirió aprobación manual.',
+    )
+    approved_by = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='transactions_approved',
+        help_text='Usuario que aprobó la transacción tras revisión antifraude.',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    manual_rate_justification = models.TextField(
+        blank=True,
+        help_text='Justificación obligatoria cuando se usa tasa manual (CAN_MANUAL_RATE).',
+    )
+
     # Información adicional
     notes = models.TextField(blank=True)
     receipt_number = models.CharField(max_length=50, blank=True)
@@ -235,13 +287,29 @@ class Transaction(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['-created_at']),
+            models.Index(fields=['status', '-created_at']),
             models.Index(fields=['transaction_number']),
             models.Index(fields=['customer', '-created_at']),
             models.Index(fields=['branch', '-created_at']),
+            # Índices compuestos para consultas multi-tenant frecuentes
+            models.Index(fields=['branch', 'status', '-created_at'],
+                         name='tx_branch_status_ts_idx'),
+            models.Index(fields=['branch', 'transaction_type', '-created_at'],
+                         name='tx_branch_type_ts_idx'),
+            # Índice parcial: solo COMPLETED (el 80% de las consultas de reportes)
+            models.Index(
+                fields=['branch', '-created_at'],
+                name='tx_branch_completed_idx',
+                condition=models.Q(status='COMPLETED'),
+            ),
         ]
         permissions = [
-            ('can_reverse_transaction', 'Puede revertir transacciones'),
-            ('can_view_all_branches', 'Puede ver transacciones de todas las sucursales'),
+            ('can_reverse_transaction',  'Puede revertir transacciones'),
+            ('can_view_all_branches',    'Puede ver transacciones de todas las sucursales'),
+            ('can_approve_high_value',   'Puede aprobar transacciones de alto valor'),
+            ('can_override_fraud_flag',  'Puede anular flags de fraude'),
+            ('can_view_audit_trail',     'Puede ver el trail de auditoría'),
+            ('can_manual_rate',          'Puede aplicar tasa manual (con justificación)'),
         ]
     
     def clean(self):
@@ -438,3 +506,10 @@ class TransactionDocument(models.Model):
     class Meta:
         verbose_name = 'Documento de Transacción'
         verbose_name_plural = 'Documentos de Transacción'
+
+
+# ── Re-exports para que Django ORM descubra estos modelos ─────────────────────
+# Los modelos están definidos en módulos separados para mantener la cohesión,
+# pero Django solo escanea automáticamente models.py.
+from .audit import TransactionAuditLog           # noqa: E402, F401
+from .fraud_detection import FraudRule           # noqa: E402, F401
