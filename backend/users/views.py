@@ -265,6 +265,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response(UserSerializer(request.user).data)
 
     @action(detail=False, methods=['POST'], permission_classes=[AllowAny])
+    @rate_limit(requests=10, window=60, scope='ip')
     def login(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -273,6 +274,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return _token_response(user)
 
     @action(detail=False, methods=['POST'], url_path='verify-pin')
+    @rate_limit(requests=10, window=60, scope='user')
     def verify_pin(self, request):
         pin = request.data.get('pin')
         if not pin:
@@ -291,6 +293,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response({'secret': secret, 'qr_code': qr_code})
 
     @action(detail=False, methods=['POST'], url_path='confirm-two-factor')
+    @rate_limit(requests=10, window=60, scope='user')
     def confirm_two_factor(self, request):
         token = request.data.get('token')
         if not token:

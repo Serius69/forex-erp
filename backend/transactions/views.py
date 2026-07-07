@@ -742,6 +742,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
         serializer.save(company=self.request.user.company)
 
     @action(detail=False, methods=['GET'], url_path='search')
+    @rate_limit(requests=30, window=60, scope='user')
     def search(self, request):
         document = request.query_params.get('document')
         if not document:
@@ -750,7 +751,13 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         try:
-            customer = Customer.objects.get(document_number=document)
+            # Aislamiento multi-tenant: document_number es único POR empresa;
+            # sin este filtro se filtraban clientes de otras empresas (y el
+            # .get() podía romper con MultipleObjectsReturned).
+            customer = Customer.objects.get(
+                document_number=document,
+                company=request.user.company,
+            )
             return Response(CustomerSerializer(customer).data)
         except Customer.DoesNotExist:
             return Response(

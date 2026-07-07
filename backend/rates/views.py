@@ -12,6 +12,7 @@ from django.db.models import Avg, Min, Max
 from django.db.models.functions import TruncDate, TruncHour
 from core.cache_decorators import cache_response
 from .models import Currency, ExchangeRate, ExchangeRateSource, RateConfiguration
+from core.ratelimit import rate_limit
 from .serializers import (
     CurrencySerializer, ExchangeRateSerializer,
     ExchangeRateSourceSerializer, RateConfigurationSerializer,
@@ -421,6 +422,7 @@ class ExchangeRateViewSet(viewsets.ModelViewSet):
         })
     
     @action(detail=False, methods=['POST'])
+    @rate_limit(requests=10, window=60, scope='user')
     def update_rates(self, request):
         """Dispara actualización de tasas del mercado paralelo."""
         if request.user.role != 'ADMIN':
@@ -445,6 +447,7 @@ class ExchangeRateViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=False, methods=['POST'], permission_classes=[AllowAny])
+    @rate_limit(requests=60, window=60, scope='ip')
     def calculate(self, request):
         """Calcula el cambio de divisas"""
         amount = request.data.get('amount')
@@ -726,6 +729,7 @@ class ExchangeRateSourceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     @action(detail=True, methods=['POST'])
+    @rate_limit(requests=10, window=60, scope='user')
     def refresh(self, request, pk=None):
         """POST /api/rates/sources/{id}/refresh/ — fuerza actualización de esta fuente."""
         if request.user.role not in ('ADMIN', 'MANAGER'):

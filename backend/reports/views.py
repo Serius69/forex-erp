@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from users.permissions import IsAdminOrSupervisor
+from core.ratelimit import rate_limit
 from .models import (CashTransactionReport, SuspiciousActivityReport,
                       PEPRegistry, DailyOperationLog, GeneratedReport)
 from .serializers import (RTESerializer, ROUESerializer, PEPSerializer,
@@ -31,6 +32,7 @@ class RTEViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields  = ['status', 'report_date', 'customer_is_pep']
 
     @action(detail=False, methods=['get'])
+    @rate_limit(requests=10, window=60, scope='user')
     def monthly_report(self, request):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -39,6 +41,7 @@ class RTEViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(result)
 
     @action(detail=False, methods=['get'], url_path='download-excel')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_excel(self, request):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -53,6 +56,7 @@ class RTEViewSet(viewsets.ReadOnlyModelViewSet):
             raise Http404
 
     @action(detail=False, methods=['get'], url_path='download-pdf')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_pdf(self, request):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -67,6 +71,7 @@ class RTEViewSet(viewsets.ReadOnlyModelViewSet):
             raise Http404
 
     @action(detail=False, methods=['get'], url_path='download-csv')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_csv(self, request):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -92,6 +97,7 @@ class ROUEViewSet(viewsets.ModelViewSet):
         return ROUESerializer
 
     @action(detail=True, methods=['get'], url_path='download-pdf')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_pdf(self, request, pk=None):
         from .services.asfi_service import ASFIReportService
         path = ASFIReportService.generate_roue_pdf(pk, user=request.user)
@@ -115,6 +121,7 @@ class PEPViewSet(viewsets.ModelViewSet):
         return PEPSerializer
 
     @action(detail=False, methods=['get'], url_path='download-excel')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_excel(self, request):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -129,6 +136,7 @@ class PEPViewSet(viewsets.ModelViewSet):
             raise Http404
 
     @action(detail=False, methods=['get'], url_path='download-pdf')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_pdf(self, request):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -149,6 +157,7 @@ class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes= [IsAdminOrSupervisor]
 
     @action(detail=False, methods=['post'], url_path='generate')
+    @rate_limit(requests=10, window=60, scope='user')
     def generate(self, request):
         date_str  = request.data.get('date', str(dt.today()))
         # Default: sucursal del usuario (antes había un branch_id=1 fijo).
@@ -170,6 +179,7 @@ class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(result)
 
     @action(detail=True, methods=['get'], url_path='download-excel')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_excel(self, request, pk=None):
         log = self.get_object()
         return FileResponse(open(log.excel_file, 'rb'),
@@ -178,6 +188,7 @@ class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
                             filename=f'LIBRO_DIARIO_{log.log_date}.xlsx')
 
     @action(detail=True, methods=['get'], url_path='download-pdf')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_pdf(self, request, pk=None):
         log = self.get_object()
         return FileResponse(open(log.pdf_file, 'rb'),
@@ -186,6 +197,7 @@ class DailyLogViewSet(viewsets.ReadOnlyModelViewSet):
                             filename=f'LIBRO_DIARIO_{log.log_date}.pdf')
 
     @action(detail=True, methods=['get'], url_path='download-csv')
+    @rate_limit(requests=10, window=60, scope='user')
     def download_csv(self, request, pk=None):
         # El CSV se genera al vuelo desde las transacciones del día del log
         # (mismo filtro visible_asfi que Excel/PDF).
@@ -203,6 +215,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminOrSupervisor]
 
     @action(detail=False, methods=['get'], url_path='pnl')
+    @rate_limit(requests=20, window=60, scope='user')
     def pnl(self, request):
         date_from, date_to = parse_date_range(request, default_days=0)
         period = request.query_params.get('period', 'daily')
@@ -221,6 +234,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
         return Response(result)
 
     @action(detail=False, methods=['get'], url_path='profitability')
+    @rate_limit(requests=20, window=60, scope='user')
     def profitability(self, request):
         date_from, date_to = parse_date_range(request, default_days=0)
         fmt = request.query_params.get('format', 'json')
@@ -238,6 +252,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
         return Response(result)
 
     @action(detail=False, methods=['get'], url_path='client-ranking')
+    @rate_limit(requests=20, window=60, scope='user')
     def client_ranking(self, request):
         date_from, date_to = parse_date_range(request, default_days=0)
         top_n = int(request.query_params.get('top_n', 20))
@@ -256,6 +271,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
         return Response(result)
 
     @action(detail=False, methods=['get'], url_path='comparative')
+    @rate_limit(requests=20, window=60, scope='user')
     def comparative(self, request):
         date_from, date_to = parse_date_range(request, default_days=0)
         fmt = request.query_params.get('format', 'json')
@@ -273,6 +289,7 @@ class ManagementReportViewSet(viewsets.ViewSet):
         return Response(result)
 
     @action(detail=False, methods=['get'], url_path='cashflow')
+    @rate_limit(requests=20, window=60, scope='user')
     def cashflow(self, request):
         base_date = dt.fromisoformat(
             request.query_params.get('base_date', str(dt.today())))
@@ -301,6 +318,7 @@ class RTEReportView(APIView):
     """
     permission_classes = [IsAdminOrSupervisor]
 
+    @rate_limit(requests=10, window=60, scope='user')
     def get(self, request, fmt):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))
@@ -357,6 +375,7 @@ class PEPReportView(APIView):
     """
     permission_classes = [IsAdminOrSupervisor]
 
+    @rate_limit(requests=10, window=60, scope='user')
     def get(self, request, fmt):
         year  = int(request.query_params.get('year',  dt.today().year))
         month = int(request.query_params.get('month', dt.today().month))

@@ -24,6 +24,7 @@ from .serializers import (
 from .services import CapitalService, GananciaService, CashBOBService, InsufficientCashError
 from users.permissions import IsAdminOrSupervisor
 from tenants.permissions import IsCompanyMember
+from core.ratelimit import rate_limit
 
 log = logging.getLogger('capital')
 
@@ -186,6 +187,7 @@ class CapitalSnapshotViewSet(viewsets.ModelViewSet):
         return self._crear_snapshot(request)
 
     @action(detail=False, methods=['POST'], url_path='generar')
+    @rate_limit(requests=10, window=60, scope='user')
     def generar(self, request):
         """POST /api/capital/snapshots/generar/ — alias legacy."""
         return self._crear_snapshot(request)
@@ -480,6 +482,7 @@ class CashBOBViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['POST'], url_path='update',
             permission_classes=[IsAdminOrSupervisor])
+    @rate_limit(requests=20, window=60, scope='user')
     def update_cash(self, request):
         """
         POST /api/capital/cash-bob/update/

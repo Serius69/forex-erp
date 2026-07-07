@@ -34,7 +34,7 @@ Estado actual del sistema y plan de evolución hacia un producto SaaS escalable.
 - [x] **Endpoint `/users/me/`**: verificado — `UserViewSet.me` (`url_path='me'`) registrado en el router de `users/urls.py`.
 - [x] **Endpoint `/customers/search/`**: verificado — `@action url_path='search'` responde en `/api/customers/search/?document=` (cubierto por tests de seguridad).
 - [x] **Tests unitarios**: 167 en verde (2026-07-07); `CapitalService`, `GananciaService`, `TarjetaService`, `CashBOBService`, `profit_margin`, branch scope, beat schedules y RTE cubiertos. (Ampliar cobertura de `TransactionService` sigue siendo deseable.)
-- [ ] **Rate limiting en endpoints sensibles**: extender más allá de `/transactions/`.
+- [x] **Rate limiting en endpoints sensibles**: extendido a login/verify-pin/confirm-two-factor (anti fuerza bruta), búsqueda de clientes, ventas/anulación/lotes de tarjetas, escritura de capital, actualización de tasas y generación/descarga de reportes (2026-07-07).
 - [x] **Celery Beat schedules**: data migration `analytics/0007` puebla `django_celery_beat` desde el schedule efectivo de settings.
 
 ### Frontend Web

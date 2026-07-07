@@ -19,6 +19,7 @@ from .serializers import (
 )
 from .services import TarjetaService
 from users.permissions import IsAdminOrSupervisor
+from core.ratelimit import rate_limit
 
 log = logging.getLogger('tarjetas')
 
@@ -37,6 +38,7 @@ class TipoTarjetaViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['POST'], url_path='registrar-lote',
             permission_classes=[IsAdminOrSupervisor])
+    @rate_limit(requests=20, window=60, scope='user')
     def registrar_lote(self, request, pk=None):
         """Registra un lote de compra de tarjetas para este tipo."""
         tipo = self.get_object()
@@ -57,6 +59,7 @@ class TipoTarjetaViewSet(viewsets.ModelViewSet):
         return Response(LoteCompraSerializer(lote).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['POST'], url_path='vender')
+    @rate_limit(requests=30, window=60, scope='user')
     def vender(self, request, pk=None):
         """Registra la venta de tarjetas de este tipo (FIFO)."""
         tipo = self.get_object()
@@ -229,6 +232,7 @@ class VentaTarjetaViewSet(viewsets.GenericViewSet,
 
     @action(detail=True, methods=['POST'], url_path='anular',
             permission_classes=[IsAdminOrSupervisor])
+    @rate_limit(requests=10, window=60, scope='user')
     def anular(self, request, pk=None):
         """POST /api/tarjetas/ventas/{id}/anular/ — anula la venta con motivo."""
         venta = self.get_object()
@@ -271,6 +275,7 @@ class ComprarTarjetaView(GenericAPIView):
     serializer_class   = ComprarTarjetaSerializer
     permission_classes = [IsAdminOrSupervisor]
 
+    @rate_limit(requests=30, window=60, scope='user')
     def post(self, request):
         ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -312,6 +317,7 @@ class VenderTarjetaView(GenericAPIView):
     serializer_class   = VenderTarjetaSerializer
     permission_classes = [IsAuthenticated]
 
+    @rate_limit(requests=30, window=60, scope='user')
     def post(self, request):
         if not getattr(request.user, 'branch', None):
             return Response(

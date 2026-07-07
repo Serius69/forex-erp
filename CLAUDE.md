@@ -140,6 +140,17 @@ npm test                  # jest (verde)
 - ✅ Tests: 167 en verde (15 nuevos: `reports/tests/test_rte_service.py`,
   `capital/tests/test_fixes.py`, `tarjetas/tests/test_numero_venta.py`).
 
+### Backend / Web — cerrados en sesión 2026-07-07 (parte 3)
+- ✅ Rate limiting extendido (último ítem backend de ROADMAP v1.2): `@rate_limit`
+  en login del ViewSet, verify-pin y confirm-two-factor (10/min — anti fuerza
+  bruta de PIN/2FA), customers/search (30/min), tarjetas vender/lote/anular,
+  capital generar/update-cash, rates update/calculate/refresh, y generación y
+  descarga de reportes ASFI/gerenciales (10-20/min; openpyxl/reportlab son caros).
+- ✅ Fix multi-tenant en `/customers/search/`: ahora filtra por la empresa del
+  usuario (antes devolvía clientes de otras empresas y podía dar 500 por
+  MultipleObjectsReturned al existir el mismo documento en dos empresas).
+- ✅ Tests: 172 en verde (5 nuevos en `transactions/tests/test_rate_limits.py`).
+
 ### Backend / Web — pendientes
 - Aplicar en el cluster los deployments con `CHANNEL_REDIS_URL` (kubectl desde Windows)
   y reconstruir imagen backend (nuevo requirement httpx + migración reports/0004).
