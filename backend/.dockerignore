@@ -1,0 +1,42 @@
+# backend/.dockerignore — evita hornear secretos y basura en la imagen
+# (2026-07-07) CRÍTICO: sin este archivo, `COPY . .` copiaba backend/.env
+# (secretos reales) dentro de las capas de la imagen.
+
+# Secretos / entornos — en runtime los inyecta docker compose via env_file
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Datos generados en runtime (van en volúmenes, no en la imagen)
+logs/
+media/
+staticfiles/
+ml-models/
+snapshots/
+
+# Artefactos ML pesados
+*.h5
+*.pkl
+*.joblib
+
+# Misc
+*.log
+*.bak
+*.tmp
+seed_output.txt
+Dockerfile*
+Procfile
+setup.bat

@@ -1,0 +1,167 @@
+---
+fuente: documentos-asfi\manual-pld-ft.pdf
+titulo: manual-pld-ft.pdf
+convertido: 2026-07-01T22:39:21
+sha8_fuente: 1ac19603
+---
+
+| Manual    | de Prevención, |            | Detección, | Control               | y   |
+| --------- | -------------- | ---------- | ---------- | --------------------- | --- |
+|           | Reporte        | de         | LGI/FT/DP  |                       |     |
+| KAPITALYA | SERVICIOS      | INTEGRALES | — Casa     | de Cambio Unipersonal |     |
+2026-07-01
+
+| Tabla |              | de contenidos |     |               |       |     |     |     |     |     |     |
+| ----- | ------------ | ------------- | --- | ------------- | ----- | --- | --- | --- | --- | --- | --- |
+| 1     | Objeto       | y alcance     |     |               |       |     |     |     |     |     | 3   |
+| 2     | Marco        | normativo     |     |               |       |     |     |     |     |     | 3   |
+| 3     | Definiciones |               |     |               |       |     |     |     |     |     | 3   |
+| 4     | Política     | “Conozca      |     | a su Cliente” | (DDC) |     |     |     |     |     | 3   |
+4.1 Identificación del cliente . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3
+4.2 Debida diligencia ampliada . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+4.3 Prohibiciones . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+| 5   | Registro     | de      | operaciones  | y umbrales      |     |       |           |              |            |     | 4   |
+| --- | ------------ | ------- | ------------ | --------------- | --- | ----- | --------- | ------------ | ---------- | --- | --- |
+| 6   | Señales      | de      | alerta       |                 |     |       |           |              |            |     | 4   |
+| 7   | Monitoreo,   |         | detección    | y control       |     |       |           |              |            |     | 4   |
+| 8   | Reporte      | de      | Operaciones  | Sospechosas     |     | (ROS) |           |              |            |     | 5   |
+| 9   | Oficial      | de      | Cumplimiento |                 |     |       |           |              |            |     | 5   |
+| 10  | Capacitación |         |              |                 |     |       |           |              |            |     | 5   |
+| 11  | Conservación |         | de           | registros       |     |       |           |              |            |     | 5   |
+| 12  | Régimen      | interno |              | de cumplimiento |     |       |           |              |            |     | 5   |
+| 13  | Aprobación   |         | y vigencia   |                 |     |       |           |              |            |     | 6   |
+|     | Entidad      |         |              |                 |     |       | KAPITALYA | SERVICIOS    | INTEGRALES |     |     |
+|     |              |         |              |                 |     |       | (Empresa  | Unipersonal) |            |     |     |
+Propietario / Repr. legal Sergio Denis Troche Mayta — C.I. 6754281
+LP
+|     | NIT       | / Matrícula |     |     |     |     | 670400030  |            |                  |           |     |
+| --- | --------- | ----------- | --- | --- | --- | --- | ---------- | ---------- | ---------------- | --------- | --- |
+|     | Domicilio |             |     |     |     |     | Zona Villa | Fátima,    | Av. Las Delicias | N.º       |     |
+|     |           |             |     |     |     |     | 207-C,     | La Paz     |                  |           |     |
+|     | Actividad |             |     |     |     |     | Compra     | y venta de | divisas (Casa    | de Cambio |     |
+Unipersonal)
+|     | Marco   |     |     |     |     |     | RNSF-ASFI | Libro 1°      | Tít. II Cap. | V · Ley |     |
+| --- | ------- | --- | --- | --- | --- | --- | --------- | ------------- | ------------ | ------- | --- |
+|     |         |     |     |     |     |     | 393 ·     | normativa UIF |              |         |     |
+|     | Versión |     |     |     |     |     | 1.0 —     | 1 de julio de | 2026         |         |     |
+Documento en revisión legal. Los campos [ ... ] deben completarse y el manual
+|     | aprobarse |     | formalmente | antes | de su | presentación | a ASFI. |     |     |     |     |
+| --- | --------- | --- | ----------- | ----- | ----- | ------------ | ------- | --- | --- | --- | --- |
+
+1. Objeto y alcance
+Este Manual establece las políticas, procedimientos y controles de KAPITALYA SERVICIOS
+INTEGRALES para prevenir, detectar, controlar y reportar la Legitimación de Ganancias
+Ilícitas (LGI), el Financiamiento del Terrorismo (FT) y el Financiamiento a la Proliferación de
+Armas de Destrucción Masiva (DP), en todas sus operaciones de compra y venta de divisas.
+Es de cumplimiento obligatorio para el propietario, el Oficial de Cumplimiento y todo el personal
+(cajeros y personal administrativo).
+2. Marco normativo
+Ley N° 393 de Servicios Financieros.
+Recopilación de Normas para Servicios Financieros (ASFI) — Libro 1°, Título II,
+Capítulo V (Reglamento para Casas de Cambio).
+Ley N° 170 y normativa de la Unidad de Investigaciones Financieras (UIF) sobre
+prevención de LGI/FT/DP.
+Recomendaciones del GAFI/GAFILAT.
+3. Definiciones
+LGI: dar apariencia de legalidad a fondos de origen ilícito.
+FT / DP: provisión de fondos para actos terroristas o proliferación de armas.
+DDC: Debida Diligencia del Cliente (identificación y conocimiento).
+PEP: Persona Expuesta Políticamente.
+RTE: Registro de Transacciones en Efectivo.
+ROS: Reporte de Operaciones Sospechosas (a la UIF).
+UIF: Unidad de Investigaciones Financieras.
+4. Política “Conozca a su Cliente” (DDC)
+4.1. Identificación del cliente
+En toda operación reportable (ver umbral) se registra:
+Nombres y apellidos completos.
+Tipo y número de documento (C.I. / NIT / Pasaporte).
+Nacionalidad.
+Condición de PEP (sí/no).
+Domicilio y teléfono de contacto.
+Origen/destino de los fondos, cuando corresponda.
+La identidad se verifica contra el documento original vigente.
+3
+
+| 4.2. | Debida | diligencia |     | ampliada |     |     |     |     |     |
+| ---- | ------ | ---------- | --- | -------- | --- | --- | --- | --- | --- |
+Se aplica DDC ampliada (mayor escrutinio y autorización del Oficial de Cumplimiento) cuando:
+|     | El cliente   | es       | PEP     | o su              | allegado. |      |             |                   |     |
+| --- | ------------ | -------- | ------- | ----------------- | --------- | ---- | ----------- | ----------------- | --- |
+|     | La operación |          | iguala  | o                 | supera    | USD  | 10.000      | o su equivalente. |     |
+|     | Se detectan  |          | señales | de                | alerta    | (ver | más abajo). |                   |     |
+|     | El cliente   | proviene |         | de jurisdicciones |           | de   | alto        | riesgo.           |     |
+4.3. Prohibiciones
+No se opera con clientes que se nieguen a identificarse, que aporten datos falsos, o que figuren en
+| listas | de sanciones |     | (ONU,          |     | OFAC, | listas     | nacionales). |     |     |
+| ------ | ------------ | --- | -------------- | --- | ----- | ---------- | ------------ | --- | --- |
+| 5.     | Registro     |     | de operaciones |     |       | y umbrales |              |     |     |
+Toda operación en efectivo se registra con fecha, hora, tipo, divisa, monto, tipo de cambio,
+|     | cajero | y —para | operaciones |     | reportables— |     |     | la identificación | del cliente. |
+| --- | ------ | ------- | ----------- | --- | ------------ | --- | --- | ----------------- | ------------ |
+Umbral de operación de alto valor: USD 10.000 (o equivalente), a partir del cual se
+aplica DDC ampliada y revisión del Oficial de Cumplimiento. (Confirmar el umbral vigente
+|     | según | la normativa |     | aplicable.) |     |     |     |     |     |
+| --- | ----- | ------------ | --- | ----------- | --- | --- | --- | --- | --- |
+El RTE se genera y conserva mensualmente en el formato oficial ASFI (el sistema lo produce
+automáticamente).
+| 6.  | Señales | de  | alerta |     |     |     |     |     |     |
+| --- | ------- | --- | ------ | --- | --- | --- | --- | --- | --- |
+Fraccionamiento de una operación grande en varias menores para evadir el umbral.
+|     | Montos  | que      | no guardan |     | relación | con   | el perfil         | del cliente. |     |
+| --- | ------- | -------- | ---------- | --- | -------- | ----- | ----------------- | ------------ | --- |
+|     | Cliente | evasivo, | nervioso   |     | o que    | evita | ser identificado. |              |     |
+Uso de billetes en mal estado, presuntamente falsos o de origen dudoso.
+|     | Operaciones |           | frecuentes |          | e inusuales    | de        | un mismo | cliente.       |            |
+| --- | ----------- | --------- | ---------- | -------- | -------------- | --------- | -------- | -------------- | ---------- |
+|     | Terceros    | que       | operan     | a nombre |                | de otro   | sin      | justificación. |            |
+|     | Interés     | desmedido |            | en los   | procedimientos |           | de       | control o en   | evitarlos. |
+| 7.  | Monitoreo,  |           | detección  |          |                | y control |          |                |            |
+El Oficial de Cumplimiento revisa periódicamente las operaciones y el RTE para identificar
+|     | operaciones |     | inusuales. |     |     |     |     |     |     |
+| --- | ----------- | --- | ---------- | --- | --- | --- | --- | --- | --- |
+Una operación inusual que, tras análisis, no tenga justificación económica o legal aparente, se
+|     | califica | como | sospechosa. |     |     |     |     |     |     |
+| --- | -------- | ---- | ----------- | --- | --- | --- | --- | --- | --- |
+Se documenta el análisis de cada caso (ficha interna), con independencia de que derive o no en
+|     | un ROS. |     |     |     |     |     |     |     |     |
+| --- | ------- | --- | --- | --- | --- | --- | --- | --- | --- |
+4
+
+8. Reporte de Operaciones Sospechosas (ROS)
+El Oficial de Cumplimiento reporta a la UIF las operaciones sospechosas en los plazos y el
+formato que la UIF establece.
+El ROS es confidencial: está prohibido advertir al cliente (prohibición de tipping-off).
+Se conserva evidencia del envío y del análisis que lo sustenta.
+9. Oficial de Cumplimiento
+Se designa un Oficial de Cumplimiento (ver documento de designación). Sus funciones:
+1. Velar por la aplicación de este Manual.
+2. Ejecutar la DDC y la DDC ampliada.
+3. Monitorear operaciones, detectar inusuales y evaluar sospechosas.
+4. Elaborar y enviar los ROS a la UIF y el RTE a ASFI.
+5. Capacitar al personal.
+6. Conservar los registros y mantener el contacto oficial con ASFI/UIF.
+En una empresa unipersonal, esta función recae en la persona designada, que debe contar con
+independencia funcional para decidir los reportes.
+10. Capacitación
+Todo el personal recibe capacitación al ingresar y al menos una vez al año sobre LGI/FT/DP,
+señales de alerta y sus obligaciones. Se conserva registro de asistencia.
+11. Conservación de registros
+Los registros de operaciones, identificación de clientes, análisis y reportes se conservan por un mínimo
+de diez (10) años, disponibles para ASFI y la UIF.
+12. Régimen interno de cumplimiento
+El incumplimiento de este Manual por parte del personal constituye falta grave. La entidad y
+sus responsables están sujetos a las sanciones que establecen la Ley 393, la normativa ASFI y la
+normativa UIF.
+5
+
+| 13. Aprobación | y vigencia |     |     |
+| -------------- | ---------- | --- | --- |
+Este Manual entra en vigencia desde su aprobación por el propietario y rige hasta su actualización.
+| Se revisa | al menos anualmente | y ante cambios | normativos. |
+| --------- | ------------------- | -------------- | ----------- |
+| Aprobado  | por:                |                |             |
+Sergio Denis Troche Mayta — C.I. 6754281 LP Propietario, KAPITALYA SERVICIOS INTEGRA-
+LES
+| Fecha: 01 | / 07 / 2026 |     |     |
+| --------- | ----------- | --- | --- |
+6

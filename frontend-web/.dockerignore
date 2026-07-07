@@ -1,0 +1,13 @@
+# frontend-web/.dockerignore
+# NOTA: los .env* de Vite NO se excluyen a propósito — el build de producción
+# lee frontend-web/.env.production (VITE_PORTFOLIO_URL, VITE_APP_ENV no vienen
+# como build args) y las vars VITE_ son públicas por diseño (van al bundle).
+
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+*.log
+.DS_Store
+Dockerfile*

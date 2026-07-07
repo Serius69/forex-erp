@@ -1,0 +1,97 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyo
+*.pyd
+
+# ─── Virtual environments ─────────────────────────────────
+venv/
+.venv/
+env/
+.env_/
+ENV/
+
+# ─── Django ───────────────────────────────────────────────
+*.sqlite3
+/backend/media/
+/backend/staticfiles/
+/backend/static_root/
+/backend/logs/
+
+# ─── Environment / secrets ────────────────────────────────
+.env
+.env.*
+!.env.example
+!backend/.env.example
+!frontend-web/.env.example
+!frontend-mobile/.env.example
+
+# ─── Node / Frontend ──────────────────────────────────────
+node_modules/
+.vite/
+frontend-web/dist/
+frontend-web/build/
+frontend-mobile/.expo/
+frontend-mobile/dist/
+frontend-mobile/build/
+
+# ─── Logs ─────────────────────────────────────────────────
+*.log
+*.log.*
+logs/
+
+# ─── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+nul
+
+# ─── IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+
+# ─── Coverage / Test ──────────────────────────────────────
+coverage/
+htmlcov/
+.coverage
+.pytest_cache/
+.mypy_cache/
+
+# ─── Certs / Keys ─────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.p12
+
+# ─── Docker ───────────────────────────────────────────────
+.docker/
+
+# ─── ML artifacts ─────────────────────────────────────────
+*.h5
+*.pkl
+*.joblib
+/backend/snapshots/
+
+# ─── Celery ───────────────────────────────────────────────
+celerybeat-schedule*
+celerybeat.pid
+*.pid
+
+# ─── Linters / caches ─────────────────────────────────────
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ─── Misc ─────────────────────────────────────────────────
+*.bak
+*.tmp
+.qodo/

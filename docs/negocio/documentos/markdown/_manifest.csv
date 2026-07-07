@@ -1,0 +1,25 @@
+fuente,tipo,tamano_kb,chars_extraidos,markdown,estado
+FacturaKapitalya_11-12-25.pdf,pdf,37.5,2499,markdown\FacturaKapitalya_11-12-25.md,convertido
+FacturaKapitalya_16-6-26.pdf,pdf,37.9,2726,markdown\FacturaKapitalya_16-6-26.md,convertido
+FacturaKapitalya_2-2-26.pdf,pdf,37.4,2691,markdown\FacturaKapitalya_2-2-26.md,convertido
+FacturaKapitalya_20-5-26.pdf,pdf,37.3,2732,markdown\FacturaKapitalya_20-5-26.md,convertido
+FacturaKapitalya_4-12-25.pdf,pdf,37.9,2509,markdown\FacturaKapitalya_4-12-25.md,convertido
+FacturaKapitalya_9-1-26.pdf,pdf,37.4,2738,markdown\FacturaKapitalya_9-1-26.md,convertido
+cumplimiento-asfi.html,html,1868.0,5040,markdown\cumplimiento-asfi.md,convertido
+cumplimiento-asfi.pdf,pdf,50.1,5175,markdown\cumplimiento-asfi.md,sin cambios
+documentos-asfi\carta-solicitud-asfi.pdf,pdf,21.9,3360,markdown\documentos-asfi__carta-solicitud-asfi.md,convertido
+documentos-asfi\declaracion-jurada-capital.pdf,pdf,25.3,3157,markdown\documentos-asfi__declaracion-jurada-capital.md,convertido
+documentos-asfi\declaracion-jurada-cumplimiento.pdf,pdf,29.6,2705,markdown\documentos-asfi__declaracion-jurada-cumplimiento.md,convertido
+documentos-asfi\designacion-oficial-cumplimiento.pdf,pdf,29.7,3900,markdown\documentos-asfi__designacion-oficial-cumplimiento.md,convertido
+documentos-asfi\manual-pld-ft.pdf,pdf,43.0,11998,markdown\documentos-asfi__manual-pld-ft.md,convertido
+documentos-asfi\programa-general-funcionamiento.pdf,pdf,36.6,13374,markdown\documentos-asfi__programa-general-funcionamiento.md,convertido
+nitkapitalya.pdf,pdf,280.2,365,markdown\nitkapitalya.md,convertido
+reportes\_historial.csv,csv,0.6,680,markdown\reportes___historial.md,convertido
+reportes\asfi\RTE_2026_07.csv,csv,0.7,782,markdown\reportes__asfi__RTE_2026_07.md,convertido
+reportes\cumplimiento-asfi\cumplimiento-asfi_2026-07-01.pdf,pdf,50.1,10449,markdown\reportes__cumplimiento-asfi__cumplimiento-asfi_2026-07-01.md,convertido
+reportes\diagnostico-rentabilidad\diagnostico-rentabilidad_2026-07-01.pdf,pdf,339.1,16558,markdown\reportes__diagnostico-rentabilidad__diagnostico-rentabilidad_2026-07-01.md,convertido
+reportes\informe-optimizacion\informe-optimizacion_2026-07-01.pdf,pdf,56.2,16626,markdown\reportes__informe-optimizacion__informe-optimizacion_2026-07-01.md,convertido
+reportes\plantillas-operativas\plantillas-operativas_2026-07-01.pdf,pdf,51.1,11998,markdown\reportes__plantillas-operativas__plantillas-operativas_2026-07-01.md,convertido
+reportes\resumen-ejecutivo\resumen-ejecutivo_2026-07-01.pdf,pdf,29.9,4565,markdown\reportes__resumen-ejecutivo__resumen-ejecutivo_2026-07-01.md,convertido
+resumen-ejecutivo.html,html,1859.5,1454,markdown\resumen-ejecutivo.md,convertido
+resumen-ejecutivo.pdf,pdf,29.9,1589,markdown\resumen-ejecutivo.md,sin cambios

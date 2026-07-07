@@ -1,0 +1,810 @@
+E:\data\forex-erp\backend\venv\Lib\site-packages\requests\__init__.py:109: RequestsDependencyWarning: urllib3 (2.1.0) or chardet (7.3.0)/charset_normalizer (3.3.2) doesn't match a supported version!
+  warnings.warn(
+E:\data\forex-erp\backend\venv\Lib\site-packages\rest_framework\fields.py:992: UserWarning: min_value should be a Decimal instance.
+  warnings.warn("min_value should be a Decimal instance.")
+
++==========================================+
+|   Kapitalya ERP - Seed Data              |
+|   Escenario: normal                      |
++==========================================+
+
+??  Limpiando base de datos...
+   Eliminados 5 registros.
+
+[1/10] Divisas...
+  [ ] BOB   Boliviano
+  [ ] USD   Dólar Americano
+  [ ] EUR   Euro
+  [ ] CLP   Peso Chileno
+  [ ] PEN   Sol Peruano
+  [ ] BRL   Real Brasileño
+  [ ] ARS   Peso Argentino
+  [ ] GBP   Libra Esterlina
+
+? Sucursales...
+  [+] CENT - Sucursal Central
+  [+] SUR - Sucursal Sur
+  [+] ALTO - Sucursal El Alto
+
+? Fuentes de tasas...
+  [+] BCB Oficial
+  [+] BCB Referencial
+  [+] Binance P2P
+  [+] Airtm Digital
+  [+] Mercado Paralelo
+
+? Tasas de cambio (30 d?as de historia)...
+20:33:44 DEBUG    kapitalya.rates.signals WS_BROADCAST_SKIP error='Currency' object has no attribute 'name'
+20:33:44 DEBUG    kapitalya.rates.signals WS_BROADCAST_SKIP error='Currency' object has no attribute 'name'
+20:33:44 DEBUG    kapitalya.rates.signals WS_BROADCAST_SKIP error='Currency' object has no attribute 'name'
+20:33:44 DEBUG    kapitalya.rates.signals WS_BROADCAST_SKIP error='Currency' object has no attribute 'name'
+20:33:45 DEBUG    kapitalya.rates.signals WS_BROADCAST_SKIP error='Currency' object has no attribute 'name'
+20:33:45 DEBUG    kapitalya.rates.signals WS_BROADCAST_SKIP error='Currency' object has no attribute 'name'
+20:33:45 DEBUG    kapitalya.rates.signals WS_BROADCAST_SKIP error='Currency' object has no attribute 'name'
+20:33:46 DEBUG    kapitalya.rates.signals WS_BROADCAST_SKIP error='Currency' object has no attribute 'name'
+  [+] 218 tasas creadas para 7 pares de divisas
+
+??  Configuraciones de tasas...
+  [+] USD/BOB  margen_mañana=0.30/0.50%
+  [+] EUR/BOB  margen_mañana=0.35/0.55%
+  [+] CLP/BOB  margen_mañana=0.40/0.60%
+  [+] PEN/BOB  margen_mañana=0.30/0.50%
+  [+] BRL/BOB  margen_mañana=0.35/0.55%
+  [+] GBP/BOB  margen_mañana=0.30/0.50%
+
+? Usuarios del sistema...
+  [+] admin           [ADMIN     ] CENT
+  [+] supervisor1     [SUPERVISOR] CENT
+  [+] supervisor2     [SUPERVISOR] SUR
+  [+] supervisor3     [SUPERVISOR] ALTO
+  [+] cajero1         [CASHIER   ] CENT
+  [+] cajero2         [CASHIER   ] CENT
+  [+] cajero3         [CASHIER   ] SUR
+  [+] cajero4         [CASHIER   ] SUR
+  [+] cajero5         [CASHIER   ] ALTO
+  [+] cajero6         [CASHIER   ] ALTO
+
+? Clientes (50)...
+  [+] 50 clientes creados
+  [ ] Total clientes: 50
+
+? Inventario de divisas...
+  [+] 21 inventarios creados
+
+? Transacciones (150)...
+20:33:48 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210001 type=BUY method=TRANSFER amount_to=500.38
+20:33:49 INFO     transactions CASH_FLOW tx=ALTO202604210001 tipo=OUT campo=qr_transferencias delta=-500.38 saldo_prev=0.00 saldo_new=-500.38
+20:33:49 INFO     analytics PROFIT_LEDGER tx=ALTO202604210001 type=BUY EUR amount=50.0000 profit=Bs.0.00 spread=0.0000
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 INFO     snapshots SNAPSHOT_CREATED id=17 module=capital action=create branch=ALTO capital_total=-500.38 errors=0
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:49 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:49 INFO     snapshots SNAPSHOT_CREATED id=18 module=forex action=transaction branch=ALTO capital_total=-500.38 errors=0
+20:33:49 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210002 type=BUY method=CASH amount_to=4666.95
+20:33:49 INFO     transactions CASH_FLOW tx=ALTO202604210002 tipo=OUT campo=fuertes delta=-4666.95 saldo_prev=0.00 saldo_new=-4666.95
+20:33:49 INFO     analytics PROFIT_LEDGER tx=ALTO202604210002 type=BUY USD amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 CRITICAL kapitalya.health SYSTEM_ALERT severity=CRITICAL component=riesgo msg=Alta volatilidad en USD: 18.05% (std dev 2h, 4 puntos)
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 CRITICAL kapitalya.alerts ALERT src=RIESGO type=RIESGO_USD msg=Alta volatilidad en USD: 18.05% (std dev 2h, 4 puntos)
+20:33:49 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:49 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210003 type=SELL method=TRANSFER amount_to=9515.70
+20:33:49 INFO     transactions CASH_FLOW tx=ALTO202604210003 tipo=IN campo=qr_transferencias delta=+9515.70 saldo_prev=-500.38 saldo_new=9015.32
+20:33:49 INFO     analytics PROFIT_LEDGER tx=ALTO202604210003 type=SELL USD amount=1000.0000 profit=Bs.215.70 spread=0.2157
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:49 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:49 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210002 type=BUY method=CASH amount_to=5019.00
+20:33:49 INFO     transactions CASH_FLOW tx=SUR202604210002 tipo=OUT campo=fuertes delta=-5019.00 saldo_prev=0.00 saldo_new=-5019.00
+20:33:49 INFO     analytics PROFIT_LEDGER tx=SUR202604210002 type=BUY EUR amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 INFO     snapshots SNAPSHOT_CREATED id=19 module=capital action=create branch=SUR capital_total=-5019.00 errors=0
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:49 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:49 INFO     snapshots SNAPSHOT_CREATED id=20 module=forex action=transaction branch=SUR capital_total=-5019.00 errors=0
+20:33:49 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210003 type=SELL method=TRANSFER amount_to=4753.20
+20:33:49 INFO     transactions CASH_FLOW tx=SUR202604210003 tipo=IN campo=qr_transferencias delta=+4753.20 saldo_prev=0.00 saldo_new=4753.20
+20:33:49 INFO     analytics PROFIT_LEDGER tx=SUR202604210003 type=SELL USD amount=500.0000 profit=Bs.103.20 spread=0.2064
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 CRITICAL kapitalya.health SYSTEM_ALERT severity=CRITICAL component=riesgo msg=Alta volatilidad en USD: 16.48% (std dev 2h, 10 puntos)
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 CRITICAL kapitalya.alerts ALERT src=RIESGO type=RIESGO_USD msg=Alta volatilidad en USD: 16.48% (std dev 2h, 10 puntos)
+20:33:49 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:49 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210003 type=BUY method=QR amount_to=2614.95
+20:33:49 INFO     transactions CASH_FLOW tx=CENT202604210003 tipo=OUT campo=qr_transferencias delta=-2614.95 saldo_prev=0.00 saldo_new=-2614.95
+20:33:49 INFO     analytics PROFIT_LEDGER tx=CENT202604210003 type=BUY BRL amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:49 DEBUG    asyncio Using proactor: IocpProactor
+20:33:49 INFO     snapshots SNAPSHOT_CREATED id=21 module=capital action=create branch=CENT capital_total=-2614.95 errors=0
+20:33:49 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:49 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 INFO     snapshots SNAPSHOT_CREATED id=22 module=forex action=transaction branch=CENT capital_total=-2614.95 errors=0
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210004 type=BUY method=TRANSFER amount_to=4611.45
+20:33:50 INFO     transactions CASH_FLOW tx=SUR202604210004 tipo=OUT campo=qr_transferencias delta=-4611.45 saldo_prev=4753.20 saldo_new=141.75
+20:33:50 INFO     analytics PROFIT_LEDGER tx=SUR202604210004 type=BUY USD amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210004 type=SELL method=QR amount_to=2356.32
+20:33:50 INFO     transactions CASH_FLOW tx=ALTO202604210004 tipo=IN campo=qr_transferencias delta=+2356.32 saldo_prev=9015.32 saldo_new=11371.64
+20:33:50 ERROR    transactions PROFIT_LEDGER_FAIL tx=ALTO202604210004 err=numeric field overflow
+DETAIL:  A field with precision 8, scale 4 must round to an absolute value less than 10^4.
+
+20:33:50 WARNING  transactions SPREAD_SNAPSHOT_FAIL tx=ALTO202604210004 err=An error occurred in the current transaction. You can't execute queries until the end of the 'atomic' block.
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210005 type=BUY method=CASH amount_to=2985.63
+20:33:50 INFO     transactions CASH_FLOW tx=ALTO202604210005 tipo=OUT campo=fuertes delta=-2985.63 saldo_prev=-4666.95 saldo_new=-7652.58
+20:33:50 INFO     analytics PROFIT_LEDGER tx=ALTO202604210005 type=BUY EUR amount=300.0000 profit=Bs.0.00 spread=0.0000
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210006 type=SELL method=QR amount_to=389.16
+20:33:50 INFO     transactions CASH_FLOW tx=ALTO202604210006 tipo=IN campo=qr_transferencias delta=+389.16 saldo_prev=9015.32 saldo_new=9404.48
+20:33:50 ERROR    transactions PROFIT_LEDGER_FAIL tx=ALTO202604210006 err=numeric field overflow
+DETAIL:  A field with precision 8, scale 4 must round to an absolute value less than 10^4.
+
+20:33:50 WARNING  transactions SPREAD_SNAPSHOT_FAIL tx=ALTO202604210006 err=An error occurred in the current transaction. You can't execute queries until the end of the 'atomic' block.
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210004 type=SELL method=CASH amount_to=478.58
+20:33:50 INFO     transactions CASH_FLOW tx=CENT202604210004 tipo=IN campo=fuertes delta=+478.58 saldo_prev=0.00 saldo_new=478.58
+20:33:50 INFO     analytics PROFIT_LEDGER tx=CENT202604210004 type=SELL USD amount=50.0000 profit=Bs.13.58 spread=0.2715
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 CRITICAL kapitalya.health SYSTEM_ALERT severity=CRITICAL component=riesgo msg=Alta volatilidad en USD: 16.09% (std dev 2h, 18 puntos)
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 CRITICAL kapitalya.alerts ALERT src=RIESGO type=RIESGO_USD msg=Alta volatilidad en USD: 16.09% (std dev 2h, 18 puntos)
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210006 type=BUY method=TRANSFER amount_to=874.80
+20:33:50 INFO     transactions CASH_FLOW tx=ALTO202604210006 tipo=OUT campo=qr_transferencias delta=-874.80 saldo_prev=9015.32 saldo_new=8140.52
+20:33:50 INFO     analytics PROFIT_LEDGER tx=ALTO202604210006 type=BUY BRL amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210005 type=SELL method=TRANSFER amount_to=922.25
+20:33:50 INFO     transactions CASH_FLOW tx=CENT202604210005 tipo=IN campo=qr_transferencias delta=+922.25 saldo_prev=-2614.95 saldo_new=-1692.70
+20:33:50 INFO     analytics PROFIT_LEDGER tx=CENT202604210005 type=SELL BRL amount=500.0000 profit=Bs.47.25 spread=0.0945
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210007 type=BUY method=QR amount_to=1866.50
+20:33:50 INFO     transactions CASH_FLOW tx=ALTO202604210007 tipo=OUT campo=qr_transferencias delta=-1866.50 saldo_prev=8140.52 saldo_new=6274.02
+20:33:50 INFO     analytics PROFIT_LEDGER tx=ALTO202604210007 type=BUY USD amount=200.0000 profit=Bs.0.00 spread=0.0000
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210005 type=SELL method=QR amount_to=2040.20
+20:33:50 INFO     transactions CASH_FLOW tx=SUR202604210005 tipo=IN campo=qr_transferencias delta=+2040.20 saldo_prev=141.75 saldo_new=2181.95
+20:33:50 INFO     analytics PROFIT_LEDGER tx=SUR202604210005 type=SELL EUR amount=200.0000 profit=Bs.30.20 spread=0.1510
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210008 type=SELL method=TRANSFER amount_to=9551.50
+20:33:50 INFO     transactions CASH_FLOW tx=CENT202604210008 tipo=IN campo=qr_transferencias delta=+9551.50 saldo_prev=-1692.70 saldo_new=7858.80
+20:33:50 INFO     analytics PROFIT_LEDGER tx=CENT202604210008 type=SELL USD amount=1000.0000 profit=Bs.251.50 spread=0.2515
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210006 type=BUY method=TRANSFER amount_to=10071.80
+20:33:50 INFO     transactions CASH_FLOW tx=SUR202604210006 tipo=OUT campo=qr_transferencias delta=-10071.80 saldo_prev=2181.95 saldo_new=-7889.85
+20:33:50 INFO     analytics PROFIT_LEDGER tx=SUR202604210006 type=BUY EUR amount=1000.0000 profit=Bs.0.00 spread=0.0000
+20:33:50 DEBUG    asyncio Using proactor: IocpProactor
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:50 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:50 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:50 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210008 type=BUY method=TRANSFER amount_to=725.18
+20:33:50 INFO     transactions CASH_FLOW tx=ALTO202604210008 tipo=OUT campo=qr_transferencias delta=-725.18 saldo_prev=6274.02 saldo_new=5548.84
+20:33:51 INFO     analytics PROFIT_LEDGER tx=ALTO202604210008 type=BUY CLP amount=100.0000 profit=Bs.0.00 spread=0.0000
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210009 type=SELL method=QR amount_to=14307.15
+20:33:51 INFO     transactions CASH_FLOW tx=ALTO202604210009 tipo=IN campo=qr_transferencias delta=+14307.15 saldo_prev=5548.84 saldo_new=19855.99
+20:33:51 INFO     analytics PROFIT_LEDGER tx=ALTO202604210009 type=SELL USD amount=1500.0000 profit=Bs.357.15 spread=0.2381
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210010 type=SELL method=QR amount_to=9579.10
+20:33:51 INFO     transactions CASH_FLOW tx=ALTO202604210010 tipo=IN campo=qr_transferencias delta=+9579.10 saldo_prev=19855.99 saldo_new=29435.09
+20:33:51 INFO     analytics PROFIT_LEDGER tx=ALTO202604210010 type=SELL USD amount=1000.0000 profit=Bs.279.10 spread=0.2791
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210012 type=BUY method=TRANSFER amount_to=4635.00
+20:33:51 INFO     transactions CASH_FLOW tx=CENT202604210012 tipo=OUT campo=qr_transferencias delta=-4635.00 saldo_prev=7858.80 saldo_new=3223.80
+20:33:51 INFO     analytics PROFIT_LEDGER tx=CENT202604210012 type=BUY USD amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210009 type=SELL method=QR amount_to=2045.06
+20:33:51 INFO     transactions CASH_FLOW tx=SUR202604210009 tipo=IN campo=qr_transferencias delta=+2045.06 saldo_prev=-7889.85 saldo_new=-5844.79
+20:33:51 INFO     analytics PROFIT_LEDGER tx=SUR202604210009 type=SELL EUR amount=200.0000 profit=Bs.35.06 spread=0.1753
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210012 type=BUY method=TRANSFER amount_to=934.06
+20:33:51 INFO     transactions CASH_FLOW tx=ALTO202604210012 tipo=OUT campo=qr_transferencias delta=-934.06 saldo_prev=29435.09 saldo_new=28501.03
+20:33:51 INFO     analytics PROFIT_LEDGER tx=ALTO202604210012 type=BUY USD amount=100.0000 profit=Bs.0.00 spread=0.0000
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210010 type=BUY method=CASH amount_to=15043.50
+20:33:51 INFO     transactions CASH_FLOW tx=SUR202604210010 tipo=OUT campo=fuertes delta=-15043.50 saldo_prev=-5019.00 saldo_new=-20062.50
+20:33:51 INFO     analytics PROFIT_LEDGER tx=SUR202604210010 type=BUY EUR amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210011 type=SELL method=TRANSFER amount_to=9407.50
+20:33:51 INFO     transactions CASH_FLOW tx=SUR202604210011 tipo=IN campo=qr_transferencias delta=+9407.50 saldo_prev=-5844.79 saldo_new=3562.71
+20:33:51 INFO     analytics PROFIT_LEDGER tx=SUR202604210011 type=SELL USD amount=1000.0000 profit=Bs.107.50 spread=0.1075
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210013 type=SELL method=TRANSFER amount_to=14320.95
+20:33:51 INFO     transactions CASH_FLOW tx=CENT202604210013 tipo=IN campo=qr_transferencias delta=+14320.95 saldo_prev=3223.80 saldo_new=17544.75
+20:33:51 INFO     analytics PROFIT_LEDGER tx=CENT202604210013 type=SELL USD amount=1500.0000 profit=Bs.370.95 spread=0.2473
+20:33:51 DEBUG    asyncio Using proactor: IocpProactor
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:51 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:51 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:51 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210014 type=BUY method=TRANSFER amount_to=505.75
+20:33:51 INFO     transactions CASH_FLOW tx=ALTO202604210014 tipo=OUT campo=qr_transferencias delta=-505.75 saldo_prev=28501.03 saldo_new=27995.28
+20:33:52 INFO     analytics PROFIT_LEDGER tx=ALTO202604210014 type=BUY EUR amount=50.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210015 type=SELL method=QR amount_to=474.95
+20:33:52 INFO     transactions CASH_FLOW tx=ALTO202604210015 tipo=IN campo=qr_transferencias delta=+474.95 saldo_prev=27995.28 saldo_new=28470.23
+20:33:52 INFO     analytics PROFIT_LEDGER tx=ALTO202604210015 type=SELL USD amount=50.0000 profit=Bs.9.95 spread=0.1989
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210012 type=BUY method=TRANSFER amount_to=1852.96
+20:33:52 INFO     transactions CASH_FLOW tx=SUR202604210012 tipo=OUT campo=qr_transferencias delta=-1852.96 saldo_prev=3562.71 saldo_new=1709.75
+20:33:52 INFO     analytics PROFIT_LEDGER tx=SUR202604210012 type=BUY USD amount=200.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210014 type=SELL method=TRANSFER amount_to=955.51
+20:33:52 INFO     transactions CASH_FLOW tx=CENT202604210014 tipo=IN campo=qr_transferencias delta=+955.51 saldo_prev=17544.75 saldo_new=18500.26
+20:33:52 INFO     analytics PROFIT_LEDGER tx=CENT202604210014 type=SELL USD amount=100.0000 profit=Bs.25.51 spread=0.2551
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210016 type=BUY method=CASH amount_to=9965.00
+20:33:52 INFO     transactions CASH_FLOW tx=ALTO202604210016 tipo=OUT campo=fuertes delta=-9965.00 saldo_prev=-7652.58 saldo_new=-17617.58
+20:33:52 INFO     analytics PROFIT_LEDGER tx=ALTO202604210016 type=BUY EUR amount=1000.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210017 type=BUY method=TRANSFER amount_to=4680.45
+20:33:52 INFO     transactions CASH_FLOW tx=ALTO202604210017 tipo=OUT campo=qr_transferencias delta=-4680.45 saldo_prev=28470.23 saldo_new=23789.78
+20:33:52 INFO     analytics PROFIT_LEDGER tx=ALTO202604210017 type=BUY USD amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210018 type=SELL method=QR amount_to=3111.93
+20:33:52 INFO     transactions CASH_FLOW tx=ALTO202604210018 tipo=IN campo=qr_transferencias delta=+3111.93 saldo_prev=23789.78 saldo_new=26901.71
+20:33:52 INFO     analytics PROFIT_LEDGER tx=ALTO202604210018 type=SELL EUR amount=300.0000 profit=Bs.96.93 spread=0.3231
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210015 type=BUY method=QR amount_to=9219.70
+20:33:52 INFO     transactions CASH_FLOW tx=CENT202604210015 tipo=OUT campo=qr_transferencias delta=-9219.70 saldo_prev=18500.26 saldo_new=9280.56
+20:33:52 INFO     analytics PROFIT_LEDGER tx=CENT202604210015 type=BUY USD amount=1000.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210013 type=BUY method=TRANSFER amount_to=13901.40
+20:33:52 INFO     transactions CASH_FLOW tx=SUR202604210013 tipo=OUT campo=qr_transferencias delta=-13901.40 saldo_prev=1709.75 saldo_new=-12191.65
+20:33:52 INFO     analytics PROFIT_LEDGER tx=SUR202604210013 type=BUY USD amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210016 type=BUY method=QR amount_to=14963.40
+20:33:52 INFO     transactions CASH_FLOW tx=CENT202604210016 tipo=OUT campo=qr_transferencias delta=-14963.40 saldo_prev=9280.56 saldo_new=-5682.84
+20:33:52 INFO     analytics PROFIT_LEDGER tx=CENT202604210016 type=BUY EUR amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210020 type=SELL method=QR amount_to=9441.20
+20:33:52 INFO     transactions CASH_FLOW tx=ALTO202604210020 tipo=IN campo=qr_transferencias delta=+9441.20 saldo_prev=26901.71 saldo_new=36342.91
+20:33:52 INFO     analytics PROFIT_LEDGER tx=ALTO202604210020 type=SELL USD amount=1000.0000 profit=Bs.141.20 spread=0.1412
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210021 type=SELL method=CASH amount_to=953.70
+20:33:52 INFO     transactions CASH_FLOW tx=ALTO202604210021 tipo=IN campo=fuertes delta=+953.70 saldo_prev=-17617.58 saldo_new=-16663.88
+20:33:52 INFO     analytics PROFIT_LEDGER tx=ALTO202604210021 type=SELL USD amount=100.0000 profit=Bs.23.70 spread=0.2370
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210019 type=BUY method=TRANSFER amount_to=2564.30
+20:33:52 INFO     transactions CASH_FLOW tx=CENT202604210019 tipo=OUT campo=qr_transferencias delta=-2564.30 saldo_prev=-5682.84 saldo_new=-8247.14
+20:33:52 INFO     analytics PROFIT_LEDGER tx=CENT202604210019 type=BUY PEN amount=1000.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210020 type=BUY method=TRANSFER amount_to=15133.05
+20:33:52 INFO     transactions CASH_FLOW tx=CENT202604210020 tipo=OUT campo=qr_transferencias delta=-15133.05 saldo_prev=-8247.14 saldo_new=-23380.19
+20:33:52 INFO     analytics PROFIT_LEDGER tx=CENT202604210020 type=BUY EUR amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:52 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210022 type=SELL method=TRANSFER amount_to=1913.80
+20:33:52 INFO     transactions CASH_FLOW tx=ALTO202604210022 tipo=IN campo=qr_transferencias delta=+1913.80 saldo_prev=36342.91 saldo_new=38256.71
+20:33:52 INFO     analytics PROFIT_LEDGER tx=ALTO202604210022 type=SELL USD amount=200.0000 profit=Bs.53.80 spread=0.2690
+20:33:52 DEBUG    asyncio Using proactor: IocpProactor
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:52 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:52 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210017 type=SELL method=CASH amount_to=4725.35
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210017 tipo=IN campo=fuertes delta=+4725.35 saldo_prev=-20062.50 saldo_new=-15337.15
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210017 type=SELL USD amount=500.0000 profit=Bs.75.35 spread=0.1507
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210023 type=SELL method=TRANSFER amount_to=14383.20
+20:33:53 INFO     transactions CASH_FLOW tx=ALTO202604210023 tipo=IN campo=qr_transferencias delta=+14383.20 saldo_prev=38256.71 saldo_new=52639.91
+20:33:53 INFO     analytics PROFIT_LEDGER tx=ALTO202604210023 type=SELL USD amount=1500.0000 profit=Bs.433.20 spread=0.2888
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210022 type=SELL method=QR amount_to=14192.70
+20:33:53 INFO     transactions CASH_FLOW tx=CENT202604210022 tipo=IN campo=qr_transferencias delta=+14192.70 saldo_prev=-23380.19 saldo_new=-9187.49
+20:33:53 INFO     analytics PROFIT_LEDGER tx=CENT202604210022 type=SELL USD amount=1500.0000 profit=Bs.242.70 spread=0.1618
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210018 type=BUY method=TRANSFER amount_to=10010.60
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210018 tipo=OUT campo=qr_transferencias delta=-10010.60 saldo_prev=-12191.65 saldo_new=-22202.25
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210018 type=BUY EUR amount=1000.0000 profit=Bs.0.00 spread=0.0000
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210019 type=BUY method=TRANSFER amount_to=2635.05
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210019 tipo=OUT campo=qr_transferencias delta=-2635.05 saldo_prev=-22202.25 saldo_new=-24837.30
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210019 type=BUY BRL amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210023 type=BUY method=TRANSFER amount_to=13832.85
+20:33:53 INFO     transactions CASH_FLOW tx=CENT202604210023 tipo=OUT campo=qr_transferencias delta=-13832.85 saldo_prev=-9187.49 saldo_new=-23020.34
+20:33:53 INFO     analytics PROFIT_LEDGER tx=CENT202604210023 type=BUY USD amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210024 type=SELL method=TRANSFER amount_to=10215.10
+20:33:53 INFO     transactions CASH_FLOW tx=ALTO202604210024 tipo=IN campo=qr_transferencias delta=+10215.10 saldo_prev=52639.91 saldo_new=62855.01
+20:33:53 INFO     analytics PROFIT_LEDGER tx=ALTO202604210024 type=SELL EUR amount=1000.0000 profit=Bs.165.10 spread=0.1651
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210021 type=SELL method=CASH amount_to=15555.45
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210021 tipo=IN campo=fuertes delta=+15555.45 saldo_prev=-15337.15 saldo_new=218.30
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210021 type=SELL EUR amount=1500.0000 profit=Bs.480.45 spread=0.3203
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210022 type=SELL method=QR amount_to=476.17
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210022 tipo=IN campo=qr_transferencias delta=+476.17 saldo_prev=-24837.30 saldo_new=-24361.13
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210022 type=SELL USD amount=50.0000 profit=Bs.11.17 spread=0.2234
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210023 type=SELL method=TRANSFER amount_to=5156.35
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210023 tipo=IN campo=qr_transferencias delta=+5156.35 saldo_prev=-24361.13 saldo_new=-19204.78
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210023 type=SELL EUR amount=500.0000 profit=Bs.131.35 spread=0.2627
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210025 type=SELL method=CASH amount_to=10262.10
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210025 tipo=IN campo=fuertes delta=+10262.10 saldo_prev=218.30 saldo_new=10480.40
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210025 type=SELL EUR amount=1000.0000 profit=Bs.212.10 spread=0.2121
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210025 type=SELL method=QR amount_to=1569.56
+20:33:53 INFO     transactions CASH_FLOW tx=ALTO202604210025 tipo=IN campo=qr_transferencias delta=+1569.56 saldo_prev=62855.01 saldo_new=64424.57
+20:33:53 ERROR    transactions PROFIT_LEDGER_FAIL tx=ALTO202604210025 err=numeric field overflow
+DETAIL:  A field with precision 8, scale 4 must round to an absolute value less than 10^4.
+
+20:33:53 WARNING  transactions SPREAD_SNAPSHOT_FAIL tx=ALTO202604210025 err=An error occurred in the current transaction. You can't execute queries until the end of the 'atomic' block.
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210025 type=SELL method=QR amount_to=560.55
+20:33:53 INFO     transactions CASH_FLOW tx=CENT202604210025 tipo=IN campo=qr_transferencias delta=+560.55 saldo_prev=-23020.34 saldo_new=-22459.79
+20:33:53 INFO     analytics PROFIT_LEDGER tx=CENT202604210025 type=SELL BRL amount=300.0000 profit=Bs.35.55 spread=0.1185
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210025 type=BUY method=CASH amount_to=927.76
+20:33:53 INFO     transactions CASH_FLOW tx=ALTO202604210025 tipo=OUT campo=fuertes delta=-927.76 saldo_prev=-16663.88 saldo_new=-17591.64
+20:33:53 INFO     analytics PROFIT_LEDGER tx=ALTO202604210025 type=BUY USD amount=100.0000 profit=Bs.0.00 spread=0.0000
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210026 type=BUY method=TRANSFER amount_to=2319.88
+20:33:53 INFO     transactions CASH_FLOW tx=CENT202604210026 tipo=OUT campo=qr_transferencias delta=-2319.88 saldo_prev=-22459.79 saldo_new=-24779.67
+20:33:53 INFO     analytics PROFIT_LEDGER tx=CENT202604210026 type=BUY GBP amount=200.0000 profit=Bs.0.00 spread=0.0000
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210026 type=SELL method=QR amount_to=10312.90
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210026 tipo=IN campo=qr_transferencias delta=+10312.90 saldo_prev=-19204.78 saldo_new=-8891.88
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210026 type=SELL EUR amount=1000.0000 profit=Bs.262.90 spread=0.2629
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210026 type=SELL method=TRANSFER amount_to=948.58
+20:33:53 INFO     transactions CASH_FLOW tx=ALTO202604210026 tipo=IN campo=qr_transferencias delta=+948.58 saldo_prev=62855.01 saldo_new=63803.59
+20:33:53 INFO     analytics PROFIT_LEDGER tx=ALTO202604210026 type=SELL USD amount=100.0000 profit=Bs.18.58 spread=0.1858
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210027 type=BUY method=TRANSFER amount_to=7224.70
+20:33:53 INFO     transactions CASH_FLOW tx=ALTO202604210027 tipo=OUT campo=qr_transferencias delta=-7224.70 saldo_prev=63803.59 saldo_new=56578.89
+20:33:53 INFO     analytics PROFIT_LEDGER tx=ALTO202604210027 type=BUY CLP amount=1000.0000 profit=Bs.0.00 spread=0.0000
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210027 type=SELL method=QR amount_to=5199.15
+20:33:53 INFO     transactions CASH_FLOW tx=SUR202604210027 tipo=IN campo=qr_transferencias delta=+5199.15 saldo_prev=-8891.88 saldo_new=-3692.73
+20:33:53 INFO     analytics PROFIT_LEDGER tx=SUR202604210027 type=SELL EUR amount=500.0000 profit=Bs.174.15 spread=0.3483
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:53 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:53 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210030 type=SELL method=QR amount_to=2341.47
+20:33:53 INFO     transactions CASH_FLOW tx=ALTO202604210030 tipo=IN campo=qr_transferencias delta=+2341.47 saldo_prev=56578.89 saldo_new=58920.36
+20:33:53 ERROR    transactions PROFIT_LEDGER_FAIL tx=ALTO202604210030 err=numeric field overflow
+DETAIL:  A field with precision 8, scale 4 must round to an absolute value less than 10^4.
+
+20:33:53 WARNING  transactions SPREAD_SNAPSHOT_FAIL tx=ALTO202604210030 err=An error occurred in the current transaction. You can't execute queries until the end of the 'atomic' block.
+20:33:53 DEBUG    asyncio Using proactor: IocpProactor
+20:33:53 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210027 type=BUY method=TRANSFER amount_to=573.61
+20:33:54 INFO     transactions CASH_FLOW tx=CENT202604210027 tipo=OUT campo=qr_transferencias delta=-573.61 saldo_prev=-24779.67 saldo_new=-25353.28
+20:33:54 INFO     analytics PROFIT_LEDGER tx=CENT202604210027 type=BUY GBP amount=50.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210028 type=BUY method=QR amount_to=1274.45
+20:33:54 INFO     transactions CASH_FLOW tx=CENT202604210028 tipo=OUT campo=qr_transferencias delta=-1274.45 saldo_prev=-25353.28 saldo_new=-26627.73
+20:33:54 INFO     analytics PROFIT_LEDGER tx=CENT202604210028 type=BUY PEN amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210030 type=BUY method=TRANSFER amount_to=10021.70
+20:33:54 INFO     transactions CASH_FLOW tx=SUR202604210030 tipo=OUT campo=qr_transferencias delta=-10021.70 saldo_prev=-3692.73 saldo_new=-13714.43
+20:33:54 INFO     analytics PROFIT_LEDGER tx=SUR202604210030 type=BUY EUR amount=1000.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210029 type=BUY method=TRANSFER amount_to=13945.35
+20:33:54 INFO     transactions CASH_FLOW tx=CENT202604210029 tipo=OUT campo=qr_transferencias delta=-13945.35 saldo_prev=-26627.73 saldo_new=-40573.08
+20:33:54 INFO     analytics PROFIT_LEDGER tx=CENT202604210029 type=BUY USD amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210030 type=BUY method=CASH amount_to=9322.40
+20:33:54 INFO     transactions CASH_FLOW tx=CENT202604210030 tipo=OUT campo=fuertes delta=-9322.40 saldo_prev=478.58 saldo_new=-8843.82
+20:33:54 INFO     analytics PROFIT_LEDGER tx=CENT202604210030 type=BUY USD amount=1000.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210031 type=SELL method=TRANSFER amount_to=9517.30
+20:33:54 INFO     transactions CASH_FLOW tx=CENT202604210031 tipo=IN campo=qr_transferencias delta=+9517.30 saldo_prev=-40573.08 saldo_new=-31055.78
+20:33:54 INFO     analytics PROFIT_LEDGER tx=CENT202604210031 type=SELL USD amount=1000.0000 profit=Bs.217.30 spread=0.2173
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210032 type=BUY method=QR amount_to=2764.98
+20:33:54 INFO     transactions CASH_FLOW tx=CENT202604210032 tipo=OUT campo=qr_transferencias delta=-2764.98 saldo_prev=-31055.78 saldo_new=-33820.76
+20:33:54 INFO     analytics PROFIT_LEDGER tx=CENT202604210032 type=BUY USD amount=300.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210033 type=BUY method=CASH amount_to=5044.25
+20:33:54 INFO     transactions CASH_FLOW tx=CENT202604210033 tipo=OUT campo=fuertes delta=-5044.25 saldo_prev=-8843.82 saldo_new=-13888.07
+20:33:54 INFO     analytics PROFIT_LEDGER tx=CENT202604210033 type=BUY EUR amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210031 type=SELL method=TRANSFER amount_to=9440.40
+20:33:54 INFO     transactions CASH_FLOW tx=SUR202604210031 tipo=IN campo=qr_transferencias delta=+9440.40 saldo_prev=-13714.43 saldo_new=-4274.03
+20:33:54 INFO     analytics PROFIT_LEDGER tx=SUR202604210031 type=SELL USD amount=1000.0000 profit=Bs.140.40 spread=0.1404
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210033 type=BUY method=TRANSFER amount_to=469.38
+20:33:54 INFO     transactions CASH_FLOW tx=SUR202604210033 tipo=OUT campo=qr_transferencias delta=-469.38 saldo_prev=-4274.03 saldo_new=-4743.41
+20:33:54 INFO     analytics PROFIT_LEDGER tx=SUR202604210033 type=BUY USD amount=50.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210034 type=SELL method=TRANSFER amount_to=2074.02
+20:33:54 INFO     transactions CASH_FLOW tx=SUR202604210034 tipo=IN campo=qr_transferencias delta=+2074.02 saldo_prev=-4743.41 saldo_new=-2669.39
+20:33:54 INFO     analytics PROFIT_LEDGER tx=SUR202604210034 type=SELL EUR amount=200.0000 profit=Bs.64.02 spread=0.3201
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210030 type=SELL method=QR amount_to=10327.50
+20:33:54 INFO     transactions CASH_FLOW tx=ALTO202604210030 tipo=IN campo=qr_transferencias delta=+10327.50 saldo_prev=56578.89 saldo_new=66906.39
+20:33:54 INFO     analytics PROFIT_LEDGER tx=ALTO202604210030 type=SELL EUR amount=1000.0000 profit=Bs.277.50 spread=0.2775
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210031 type=SELL method=CASH amount_to=1329.45
+20:33:54 INFO     transactions CASH_FLOW tx=ALTO202604210031 tipo=IN campo=fuertes delta=+1329.45 saldo_prev=-17591.64 saldo_new=-16262.19
+20:33:54 INFO     analytics PROFIT_LEDGER tx=ALTO202604210031 type=SELL PEN amount=500.0000 profit=Bs.54.45 spread=0.1089
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210032 type=SELL method=TRANSFER amount_to=788.13
+20:33:54 INFO     transactions CASH_FLOW tx=ALTO202604210032 tipo=IN campo=qr_transferencias delta=+788.13 saldo_prev=66906.39 saldo_new=67694.52
+20:33:54 INFO     analytics PROFIT_LEDGER tx=ALTO202604210032 type=SELL PEN amount=300.0000 profit=Bs.23.13 spread=0.0771
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210033 type=SELL method=CASH amount_to=471.23
+20:33:54 INFO     transactions CASH_FLOW tx=ALTO202604210033 tipo=IN campo=fuertes delta=+471.23 saldo_prev=-16262.19 saldo_new=-15790.96
+20:33:54 INFO     analytics PROFIT_LEDGER tx=ALTO202604210033 type=SELL USD amount=50.0000 profit=Bs.6.23 spread=0.1246
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210034 type=BUY method=CASH amount_to=878.50
+20:33:54 INFO     transactions CASH_FLOW tx=ALTO202604210034 tipo=OUT campo=fuertes delta=-878.50 saldo_prev=-15790.96 saldo_new=-16669.46
+20:33:54 INFO     analytics PROFIT_LEDGER tx=ALTO202604210034 type=BUY BRL amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:54 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:54 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:54 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210038 type=SELL method=TRANSFER amount_to=2373.20
+20:33:54 INFO     transactions CASH_FLOW tx=SUR202604210038 tipo=IN campo=qr_transferencias delta=+2373.20 saldo_prev=-2669.39 saldo_new=-296.19
+20:33:54 INFO     analytics PROFIT_LEDGER tx=SUR202604210038 type=SELL GBP amount=200.0000 profit=Bs.73.20 spread=0.3660
+20:33:54 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210040 type=BUY method=TRANSFER amount_to=4660.15
+20:33:55 INFO     transactions CASH_FLOW tx=SUR202604210040 tipo=OUT campo=qr_transferencias delta=-4660.15 saldo_prev=-296.19 saldo_new=-4956.34
+20:33:55 INFO     analytics PROFIT_LEDGER tx=SUR202604210040 type=BUY USD amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210035 type=SELL method=CASH amount_to=1886.96
+20:33:55 INFO     transactions CASH_FLOW tx=ALTO202604210035 tipo=IN campo=fuertes delta=+1886.96 saldo_prev=-16669.46 saldo_new=-14782.50
+20:33:55 INFO     analytics PROFIT_LEDGER tx=ALTO202604210035 type=SELL USD amount=200.0000 profit=Bs.26.96 spread=0.1348
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210038 type=BUY method=CASH amount_to=2304.44
+20:33:55 INFO     transactions CASH_FLOW tx=CENT202604210038 tipo=OUT campo=fuertes delta=-2304.44 saldo_prev=-13888.07 saldo_new=-16192.51
+20:33:55 INFO     analytics PROFIT_LEDGER tx=CENT202604210038 type=BUY GBP amount=200.0000 profit=Bs.0.00 spread=0.0000
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210039 type=BUY method=CASH amount_to=1003.84
+20:33:55 INFO     transactions CASH_FLOW tx=CENT202604210039 tipo=OUT campo=fuertes delta=-1003.84 saldo_prev=-16192.51 saldo_new=-17196.35
+20:33:55 INFO     analytics PROFIT_LEDGER tx=CENT202604210039 type=BUY EUR amount=100.0000 profit=Bs.0.00 spread=0.0000
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210043 type=SELL method=QR amount_to=3970.05
+20:33:55 INFO     transactions CASH_FLOW tx=SUR202604210043 tipo=IN campo=qr_transferencias delta=+3970.05 saldo_prev=-4956.34 saldo_new=-986.29
+20:33:55 INFO     analytics PROFIT_LEDGER tx=SUR202604210043 type=SELL PEN amount=1500.0000 profit=Bs.145.05 spread=0.0967
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210036 type=BUY method=TRANSFER amount_to=255.99
+20:33:55 INFO     transactions CASH_FLOW tx=ALTO202604210036 tipo=OUT campo=qr_transferencias delta=-255.99 saldo_prev=67694.52 saldo_new=67438.53
+20:33:55 INFO     analytics PROFIT_LEDGER tx=ALTO202604210036 type=BUY PEN amount=100.0000 profit=Bs.0.00 spread=0.0000
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210044 type=SELL method=TRANSFER amount_to=11812.20
+20:33:55 INFO     transactions CASH_FLOW tx=SUR202604210044 tipo=IN campo=qr_transferencias delta=+11812.20 saldo_prev=-986.29 saldo_new=10825.91
+20:33:55 ERROR    transactions PROFIT_LEDGER_FAIL tx=SUR202604210044 err=numeric field overflow
+DETAIL:  A field with precision 8, scale 4 must round to an absolute value less than 10^4.
+
+20:33:55 WARNING  transactions SPREAD_SNAPSHOT_FAIL tx=SUR202604210044 err=An error occurred in the current transaction. You can't execute queries until the end of the 'atomic' block.
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210037 type=BUY method=TRANSFER amount_to=463.39
+20:33:55 INFO     transactions CASH_FLOW tx=ALTO202604210037 tipo=OUT campo=qr_transferencias delta=-463.39 saldo_prev=67438.53 saldo_new=66975.14
+20:33:55 INFO     analytics PROFIT_LEDGER tx=ALTO202604210037 type=BUY USD amount=50.0000 profit=Bs.0.00 spread=0.0000
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210040 type=SELL method=QR amount_to=518.26
+20:33:55 INFO     transactions CASH_FLOW tx=ALTO202604210040 tipo=IN campo=qr_transferencias delta=+518.26 saldo_prev=66975.14 saldo_new=67493.40
+20:33:55 INFO     analytics PROFIT_LEDGER tx=ALTO202604210040 type=SELL EUR amount=50.0000 profit=Bs.15.76 spread=0.3151
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210041 type=BUY method=TRANSFER amount_to=4616.05
+20:33:55 INFO     transactions CASH_FLOW tx=ALTO202604210041 tipo=OUT campo=qr_transferencias delta=-4616.05 saldo_prev=67493.40 saldo_new=62877.35
+20:33:55 INFO     analytics PROFIT_LEDGER tx=ALTO202604210041 type=BUY USD amount=500.0000 profit=Bs.0.00 spread=0.0000
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210041 type=SELL method=TRANSFER amount_to=1899.46
+20:33:55 INFO     transactions CASH_FLOW tx=CENT202604210041 tipo=IN campo=qr_transferencias delta=+1899.46 saldo_prev=-33820.76 saldo_new=-31921.30
+20:33:55 INFO     analytics PROFIT_LEDGER tx=CENT202604210041 type=SELL USD amount=200.0000 profit=Bs.39.46 spread=0.1973
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210042 type=SELL method=QR amount_to=2787.00
+20:33:55 INFO     transactions CASH_FLOW tx=CENT202604210042 tipo=IN campo=qr_transferencias delta=+2787.00 saldo_prev=-31921.30 saldo_new=-29134.30
+20:33:55 INFO     analytics PROFIT_LEDGER tx=CENT202604210042 type=SELL BRL amount=1500.0000 profit=Bs.162.00 spread=0.1080
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210043 type=SELL method=QR amount_to=2039.40
+20:33:55 INFO     transactions CASH_FLOW tx=CENT202604210043 tipo=IN campo=qr_transferencias delta=+2039.40 saldo_prev=-29134.30 saldo_new=-27094.90
+20:33:55 INFO     analytics PROFIT_LEDGER tx=CENT202604210043 type=SELL EUR amount=200.0000 profit=Bs.29.40 spread=0.1470
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210048 type=SELL method=CASH amount_to=9505.90
+20:33:55 INFO     transactions CASH_FLOW tx=SUR202604210048 tipo=IN campo=fuertes delta=+9505.90 saldo_prev=10480.40 saldo_new=19986.30
+20:33:55 INFO     analytics PROFIT_LEDGER tx=SUR202604210048 type=SELL USD amount=1000.0000 profit=Bs.205.90 spread=0.2059
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=ALTO202604210044 type=SELL method=CASH amount_to=15523.80
+20:33:55 INFO     transactions CASH_FLOW tx=ALTO202604210044 tipo=IN campo=fuertes delta=+15523.80 saldo_prev=-14782.50 saldo_new=741.30
+20:33:55 INFO     analytics PROFIT_LEDGER tx=ALTO202604210044 type=SELL EUR amount=1500.0000 profit=Bs.448.80 spread=0.2992
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=ALTO
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=ALTO
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210044 type=BUY method=QR amount_to=14033.85
+20:33:55 INFO     transactions CASH_FLOW tx=CENT202604210044 tipo=OUT campo=qr_transferencias delta=-14033.85 saldo_prev=-27094.90 saldo_new=-41128.75
+20:33:55 INFO     analytics PROFIT_LEDGER tx=CENT202604210044 type=BUY USD amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:55 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210045 type=BUY method=TRANSFER amount_to=2022.86
+20:33:55 INFO     transactions CASH_FLOW tx=CENT202604210045 tipo=OUT campo=qr_transferencias delta=-2022.86 saldo_prev=-41128.75 saldo_new=-43151.61
+20:33:55 INFO     analytics PROFIT_LEDGER tx=CENT202604210045 type=BUY EUR amount=200.0000 profit=Bs.0.00 spread=0.0000
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 ERROR    kapitalya.health SYSTEM_ALERT severity=HIGH component=operativo msg=Volumen inusual de transacciones INTERNA: 8 en la última hora
+20:33:55 DEBUG    asyncio Using proactor: IocpProactor
+20:33:55 ERROR    kapitalya.alerts ALERT src=OPERATIVO type=OPERATIVO msg=Volumen inusual de transacciones INTERNA: 8 en la última hora
+20:33:55 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:55 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+20:33:56 INFO     transactions.signals SIGNAL_APPLY_CASH tx=SUR202604210049 type=BUY method=TRANSFER amount_to=17193.30
+20:33:56 INFO     transactions CASH_FLOW tx=SUR202604210049 tipo=OUT campo=qr_transferencias delta=-17193.30 saldo_prev=-986.29 saldo_new=-18179.59
+20:33:56 INFO     analytics PROFIT_LEDGER tx=SUR202604210049 type=BUY GBP amount=1500.0000 profit=Bs.0.00 spread=0.0000
+20:33:56 DEBUG    asyncio Using proactor: IocpProactor
+20:33:56 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=SUR
+20:33:56 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:56 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=SUR
+20:33:56 INFO     transactions.signals SIGNAL_APPLY_CASH tx=CENT202604210046 type=SELL method=TRANSFER amount_to=9506.80
+20:33:56 INFO     transactions CASH_FLOW tx=CENT202604210046 tipo=IN campo=qr_transferencias delta=+9506.80 saldo_prev=-43151.61 saldo_new=-33644.81
+20:33:56 INFO     analytics PROFIT_LEDGER tx=CENT202604210046 type=SELL USD amount=1000.0000 profit=Bs.206.80 spread=0.2068
+20:33:56 DEBUG    asyncio Using proactor: IocpProactor
+20:33:56 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=capital branch=CENT
+20:33:56 DEBUG    kapitalya.alerts ALERT_OPERATIVO_CAJA err=Cannot resolve keyword 'delta_bob' into field. Choices are: branch, branch_id, campo_afectado, concepto, created_at, fecha, id, monto_bob, saldo_anterior, saldo_resultante, tipo, transaction, transaction_id
+20:33:56 DEBUG    snapshots SNAPSHOT_DEBOUNCED module=forex branch=CENT
+  [+] 146 transacciones creadas
+
+? Alertas de inventario...
+  [+] 2 alertas de inventario
+
+? AlertLog (sistema)...
+  [ ] AlertLogs ya existen.
+
+? Analytics...
+  [+] 12 ExposureSnapshot
+  [+] 4 CapitalAnomalyLog
+  [+] 60 DecisionLog
+
+? Capital y caja...
+  [+] 63 gastos operativos
+  [+] 21 CapitalManualEntry
+  [+] 93 CapitalSnapshot
+  [+] CashBOB para 3 sucursales
+20:33:56 INFO     snapshots SNAPSHOT_CREATED id=23 module=caja_bob action=create branch=ALTO capital_total=63618.65 errors=0
+20:33:56 INFO     snapshots SNAPSHOT_CREATED id=24 module=caja_bob action=create branch=SUR capital_total=1806.71 errors=0
+20:33:56 INFO     snapshots SNAPSHOT_CREATED id=25 module=caja_bob action=create branch=CENT capital_total=-50841.16 errors=0
+
+? Modelos ML y predicciones...
+  [+] 4 modelos ML
+  [+] 7 predicciones (próximos 7 días)
+  [+] 180 datos de entrenamiento (90 días)
+
+? Reportes y registros ASFI...
+  [+] 93 DailyOperationLog
+  [+] 7 GeneratedReport
+  [+] 3 PEPRegistry
+
+[OK]  Seed completo. Sistema listo para pruebas.
+------------------------------------------
+  Admin:      admin / admin1234
+  Supervisor: supervisor1 / super1234
+  Cajero:     cajero1 / cajero1234
+------------------------------------------

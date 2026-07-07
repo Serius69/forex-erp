@@ -1,0 +1,393 @@
+fecha,mes,categoria,clase,monto_bs
+2025-02-01,2025-02,Transferencias Personales,gasto,67.0
+2025-02-03,2025-02,Impuestos - Retención IVA,gasto,0.31
+2025-02-03,2025-02,Ingresos - Intereses,ingreso,2.37
+2025-02-05,2025-02,Impuestos - Varios,gasto,17.0
+2025-02-07,2025-02,Depósitos,deposito,2900.0
+2025-02-07,2025-02,Depósitos,deposito,1800.0
+2025-02-07,2025-02,Educación - Universidad,gasto,5731.6
+2025-02-07,2025-02,Transferencias Personales,gasto,50.0
+2025-02-07,2025-02,Transferencias Personales,gasto,400.0
+2025-02-08,2025-02,Transferencias Personales,gasto,38.0
+2025-02-10,2025-02,Transferencias Personales,gasto,250.0
+2025-02-12,2025-02,Transferencias Personales,gasto,150.0
+2025-02-12,2025-02,Transferencias Personales,gasto,100.0
+2025-02-12,2025-02,Transferencias Personales,gasto,200.0
+2025-02-12,2025-02,Transferencias Personales,gasto,50.0
+2025-02-12,2025-02,Transferencias Personales,gasto,50.0
+2025-02-13,2025-02,Transferencias Personales,gasto,1500.0
+2025-02-14,2025-02,Transferencias Personales,gasto,400.0
+2025-02-25,2025-02,Entretenimiento - Streaming,gasto,69.63
+2025-02-25,2025-02,Depósitos,deposito,700.0
+2025-02-25,2025-02,Educación - Universidad,gasto,420.0
+2025-02-26,2025-02,Impuestos - Retención IVA,gasto,0.02
+2025-02-28,2025-02,Servicios Negocio - Alquiler,gasto,2500.0
+2025-02-28,2025-02,Alimentación - Comida Externa,gasto,1600.0
+2025-02-28,2025-02,Transporte - Pasajes,gasto,240.0
+2025-02-28,2025-02,Servicios Negocio - Seguridad,gasto,190.0
+2025-03-05,2025-03,Ingresos - Intereses,ingreso,1.83
+2025-03-05,2025-03,Impuestos - Retención IVA,gasto,0.24
+2025-03-06,2025-03,Educación - Universidad,gasto,6600.0
+2025-03-06,2025-03,Servicios Negocio - Alquiler,gasto,2500.0
+2025-03-06,2025-03,Alimentación - Comida Externa,gasto,1600.0
+2025-03-06,2025-03,Transporte - Pasajes,gasto,240.0
+2025-03-06,2025-03,Servicios Negocio - Seguridad,gasto,190.0
+2025-03-06,2025-03,Entretenimiento - Streaming,gasto,69.63
+2025-03-06,2025-03,Impuestos - Retención IVA,gasto,0.05
+2025-03-14,2025-03,Compras - Varios,gasto,140.0
+2025-03-20,2025-03,Depósitos,deposito,5950.0
+2025-03-20,2025-03,Transferencias Personales,gasto,500.0
+2025-03-20,2025-03,Educación - Universidad,gasto,97.0
+2025-03-20,2025-03,Educación - Universidad,gasto,4000.0
+2025-03-24,2025-03,Entretenimiento - Eventos,gasto,50.0
+2025-03-26,2025-03,Entretenimiento - Eventos,gasto,160.0
+2025-03-31,2025-03,Transferencias Personales,gasto,13.0
+2025-04-01,2025-04,Impuestos - Retención IVA,gasto,0.15
+2025-04-01,2025-04,Ingresos - Intereses,ingreso,1.19
+2025-04-05,2025-04,Transporte - Combustible,gasto,177.01
+2025-04-06,2025-04,Compras - Varios,gasto,47.0
+2025-04-06,2025-04,Compras - Varios,gasto,32.0
+2025-04-09,2025-04,Transporte - Vehículo,activo_vehiculo,110000.0
+2025-04-09,2025-04,Servicios Negocio - Alquiler,gasto,2500.0
+2025-04-09,2025-04,Transporte - Vehículo,activo_vehiculo,1700.0
+2025-04-09,2025-04,Alimentación - Comida Externa,gasto,1600.0
+2025-04-09,2025-04,Compras - Varios,gasto,412.8
+2025-04-09,2025-04,Transporte - Pasajes,gasto,240.0
+2025-04-09,2025-04,Impuestos - Varios,gasto,225.0
+2025-04-09,2025-04,Impuestos - Varios,gasto,225.0
+2025-04-09,2025-04,Servicios - Varios,gasto,225.0
+2025-04-09,2025-04,Servicios Negocio - Seguridad,gasto,190.0
+2025-04-09,2025-04,Entretenimiento - Streaming,gasto,69.63
+2025-04-09,2025-04,Servicios - Varios,gasto,50.0
+2025-04-09,2025-04,Impuestos - Retención IVA,gasto,0.19
+2025-04-09,2025-04,Compras - Varios,gasto,1000.0
+2025-04-27,2025-04,Transferencias Personales,gasto,100.0
+2025-05-02,2025-05,Ingresos - Intereses,ingreso,0.58
+2025-05-02,2025-05,Impuestos - Retención IVA,gasto,0.08
+2025-05-04,2025-05,Transferencias Personales,gasto,2500.0
+2025-05-04,2025-05,Retiros en Efectivo,retiro,2600.0
+2025-05-08,2025-05,Servicios - Varios,gasto,700.0
+2025-05-08,2025-05,Sueldos,gasto,625.0
+2025-05-08,2025-05,Compras - Varios,gasto,424.0
+2025-05-08,2025-05,Compras - Supermercado,gasto,212.0
+2025-05-08,2025-05,Compras - Varios,gasto,140.06
+2025-05-08,2025-05,Transferencias Personales,gasto,48.0
+2025-05-08,2025-05,Transferencias Personales,gasto,44.0
+2025-05-08,2025-05,Transferencias Personales,gasto,28.0
+2025-05-08,2025-05,Transferencias Personales,gasto,24.0
+2025-05-17,2025-05,Educación - Universidad,gasto,10455.94
+2025-05-17,2025-05,Impuestos - Varios,gasto,229.0
+2025-05-17,2025-05,Impuestos - Varios,gasto,70.0
+2025-05-17,2025-05,Impuestos - Varios,gasto,69.0
+2025-05-17,2025-05,Impuestos - Varios,gasto,65.0
+2025-05-17,2025-05,Impuestos - Varios,gasto,45.0
+2025-05-18,2025-05,Impuestos - Varios,gasto,114.0
+2025-05-18,2025-05,Impuestos - Varios,gasto,102.0
+2025-05-18,2025-05,Impuestos - Varios,gasto,91.0
+2025-05-18,2025-05,Impuestos - Varios,gasto,72.0
+2025-05-18,2025-05,Impuestos - Varios,gasto,69.0
+2025-05-18,2025-05,Impuestos - Varios,gasto,68.0
+2025-05-19,2025-05,Transferencias Personales,gasto,170.0
+2025-05-21,2025-05,Servicios - Varios,gasto,340.0
+2025-05-22,2025-05,Entretenimiento - Cine,gasto,54.0
+2025-05-24,2025-05,Servicios - Suscripciones,gasto,139.4
+2025-05-28,2025-05,Sueldos,gasto,650.0
+2025-05-30,2025-05,Transferencias Personales,gasto,50.0
+2025-05-31,2025-05,Servicios Negocio - Alquiler,gasto,2500.0
+2025-05-31,2025-05,Alimentación - Comida Externa,gasto,1600.0
+2025-05-31,2025-05,Transporte - Pasajes,gasto,240.0
+2025-05-31,2025-05,Servicios Negocio - Seguridad,gasto,190.0
+2025-05-31,2025-05,Impuestos - Retención IVA,gasto,35.88
+2025-06-02,2025-06,Transferencias Personales,gasto,88.0
+2025-06-02,2025-06,Impuestos - Retención IVA,gasto,0.01
+2025-06-02,2025-06,Ingresos - Intereses,ingreso,0.07
+2025-06-03,2025-06,Transferencias Personales,gasto,18.0
+2025-06-08,2025-06,Transferencias Personales,gasto,200.0
+2025-06-08,2025-06,Retiros en Efectivo,retiro,100.0
+2025-06-09,2025-06,Transferencias Personales,gasto,100.0
+2025-06-10,2025-06,Transferencias Personales,gasto,60.0
+2025-06-11,2025-06,Transferencias Personales,gasto,50.0
+2025-06-12,2025-06,Transferencias Personales,gasto,45.0
+2025-06-15,2025-06,Transferencias Personales,gasto,100.0
+2025-06-15,2025-06,Transferencias Personales,gasto,400.0
+2025-06-23,2025-06,Transferencias Personales,gasto,45.0
+2025-06-24,2025-06,Transferencias Personales,gasto,60.0
+2025-06-30,2025-06,Servicios Negocio - Alquiler,gasto,2500.0
+2025-06-30,2025-06,Alimentación - Comida Externa,gasto,1600.0
+2025-06-30,2025-06,Transferencias Personales,gasto,500.0
+2025-06-30,2025-06,Transporte - Pasajes,gasto,240.0
+2025-06-30,2025-06,Servicios Negocio - Seguridad,gasto,190.0
+2025-06-30,2025-06,Impuestos - Retención IVA,gasto,8.19
+2025-07-01,2025-07,Ingresos - Intereses,ingreso,0.53
+2025-07-02,2025-07,Impuestos - Retención IVA,gasto,0.07
+2025-07-03,2025-07,Transferencias Personales,gasto,500.0
+2025-07-12,2025-07,Servicios - Suscripciones,gasto,139.4
+2025-07-12,2025-07,Alimentación - Varios,gasto,57.0
+2025-07-15,2025-07,Transferencias Personales,gasto,48.0
+2025-07-16,2025-07,Compras - Supermercado,gasto,43.0
+2025-07-18,2025-07,Educación - Universidad,gasto,213.0
+2025-07-19,2025-07,Alimentación - Viveres,gasto,56.6
+2025-07-22,2025-07,Compras - Varios,gasto,34000.0
+2025-07-23,2025-07,Transporte - Vehículo,activo_vehiculo,12.0
+2025-07-26,2025-07,Sueldos,gasto,600.0
+2025-07-31,2025-07,Servicios Negocio - Alquiler,gasto,2500.0
+2025-07-31,2025-07,Alimentación - Comida Externa,gasto,1600.0
+2025-07-31,2025-07,Transporte - Pasajes,gasto,240.0
+2025-07-31,2025-07,Servicios Negocio - Seguridad,gasto,190.0
+2025-07-31,2025-07,Transferencias Personales,gasto,140.0
+2025-07-31,2025-07,Impuestos - Retención IVA,gasto,2.48
+2025-08-01,2025-08,Impuestos - Retención IVA,gasto,0.08
+2025-08-01,2025-08,Ingresos - Intereses,ingreso,0.62
+2025-08-06,2025-08,Compras - Supermercado,gasto,150.0
+2025-08-06,2025-08,Compras - Varios,gasto,89.0
+2025-08-07,2025-08,Transferencias Personales,gasto,400.0
+2025-08-07,2025-08,Compras - Varios,gasto,60.0
+2025-08-07,2025-08,Transferencias Personales,gasto,1000.0
+2025-08-07,2025-08,Transporte - Combustible,gasto,142.0
+2025-08-09,2025-08,Compras - Alimentación,gasto,78.0
+2025-08-09,2025-08,Compras - Supermercado,gasto,72.9
+2025-08-17,2025-08,Alimentación - Helados,gasto,66.7
+2025-08-19,2025-08,Transferencias Personales,gasto,60.0
+2025-08-19,2025-08,Compras - Varios,gasto,19.0
+2025-08-21,2025-08,Transferencias Personales,gasto,44.0
+2025-08-21,2025-08,Transferencias Personales,gasto,50.0
+2025-08-22,2025-08,Alimentación - Viveres,gasto,36.9
+2025-08-23,2025-08,Servicios - Varios,gasto,360.0
+2025-08-25,2025-08,Alimentación - Comida Externa,gasto,42.0
+2025-08-29,2025-08,Alimentación - Restaurante,gasto,88.5
+2025-08-31,2025-08,Servicios Negocio - Alquiler,gasto,2500.0
+2025-08-31,2025-08,Alimentación - Comida Externa,gasto,1600.0
+2025-08-31,2025-08,Transporte - Pasajes,gasto,240.0
+2025-08-31,2025-08,Servicios Negocio - Seguridad,gasto,190.0
+2025-08-31,2025-08,Transferencias Personales,gasto,54.0
+2025-08-31,2025-08,Impuestos - Retención IVA,gasto,2.6
+2025-09-01,2025-09,Impuestos - Retención IVA,gasto,0.14
+2025-09-01,2025-09,Ingresos - Intereses,ingreso,1.05
+2025-09-02,2025-09,Alimentación - Restaurante,gasto,44.0
+2025-09-04,2025-09,Transferencias Personales,gasto,200.0
+2025-09-08,2025-09,Compras - Varios,gasto,249.0
+2025-09-08,2025-09,Compras - Varios,gasto,229.0
+2025-09-08,2025-09,Compras - Varios,gasto,159.4
+2025-09-08,2025-09,Transferencias Personales,gasto,100.0
+2025-09-16,2025-09,Compras - Varios,gasto,11000.0
+2025-09-16,2025-09,Compras - Varios,gasto,19.0
+2025-09-24,2025-09,Compras - Varios,gasto,179.2
+2025-09-24,2025-09,Transferencias Personales,gasto,50.0
+2025-09-24,2025-09,Entretenimiento - Streaming,gasto,36.0
+2025-09-24,2025-09,Compras - Varios,gasto,35.8
+2025-09-25,2025-09,Transferencias Personales,gasto,200.0
+2025-09-30,2025-09,Servicios Negocio - Alquiler,gasto,2500.0
+2025-09-30,2025-09,Alimentación - Comida Externa,gasto,1600.0
+2025-09-30,2025-09,Sueldos,gasto,1240.0
+2025-09-30,2025-09,Transporte - Pasajes,gasto,240.0
+2025-09-30,2025-09,Servicios Negocio - Seguridad,gasto,190.0
+2025-09-30,2025-09,Transferencias Personales,gasto,50.0
+2025-09-30,2025-09,Impuestos - Retención IVA,gasto,0.42
+2025-10-01,2025-10,Ingresos - Intereses,ingreso,0.08
+2025-10-02,2025-10,Impuestos - Retención IVA,gasto,0.01
+2025-10-03,2025-10,Alimentación - Comida Externa,gasto,1600.0
+2025-10-04,2025-10,Sueldos,gasto,1240.0
+2025-10-05,2025-10,Servicios Negocio - Seguridad,gasto,190.0
+2025-10-06,2025-10,Servicios Negocio - Alquiler,gasto,2500.0
+2025-10-07,2025-10,Transporte - Pasajes,gasto,240.0
+2025-10-11,2025-10,Transferencias Personales,gasto,20.0
+2025-10-13,2025-10,Compras - Varios,gasto,10.0
+2025-10-14,2025-10,Transferencias Personales,gasto,16.0
+2025-10-15,2025-10,Transferencias Personales,gasto,190.0
+2025-10-16,2025-10,Transferencias Personales,gasto,1220.0
+2025-10-19,2025-10,Compras - Varios,gasto,179.91
+2025-10-20,2025-10,Transferencias Personales,gasto,130.0
+2025-10-22,2025-10,Seguros - Varios,gasto,19.0
+2025-10-25,2025-10,Compras - Internet,gasto,10.01
+2025-10-27,2025-10,Sueldos,gasto,620.0
+2025-10-29,2025-10,Transferencias Personales,gasto,320.0
+2025-10-30,2025-10,Impuestos - Varios,gasto,2705.18
+2025-10-30,2025-10,Sueldos,gasto,620.0
+2025-10-30,2025-10,Entretenimiento - Streaming,gasto,70.0
+2025-10-30,2025-10,Alimentación - Varios,gasto,48.0
+2025-10-30,2025-10,Entretenimiento - Streaming,gasto,36.0
+2025-10-30,2025-10,Transferencias Personales,gasto,22.0
+2025-10-30,2025-10,Servicios - Diseño,gasto,6.97
+2025-10-30,2025-10,Impuestos - Retención IVA,gasto,2.22
+2025-10-31,2025-10,Transferencias Personales,gasto,24.0
+2025-11-03,2025-11,Sueldos,gasto,620.0
+2025-11-04,2025-11,Ingresos - Intereses,ingreso,0.04
+2025-11-04,2025-11,Impuestos - Retención IVA,gasto,0.01
+2025-11-05,2025-11,Impuestos - Varios,gasto,295.5
+2025-11-08,2025-11,Alimentación - Restaurante,gasto,190.0
+2025-11-09,2025-11,Seguros - Varios,gasto,19.0
+2025-11-10,2025-11,Sueldos,gasto,620.0
+2025-11-10,2025-11,Impuestos - Varios,gasto,17.0
+2025-11-10,2025-11,Compras - Negocio,gasto,16.5
+2025-11-11,2025-11,Compras - Varios,gasto,440.0
+2025-11-11,2025-11,Compras - Internet,gasto,10.01
+2025-11-12,2025-11,Servicios - Varios,gasto,546.0
+2025-11-12,2025-11,Compras - Varios,gasto,331.3
+2025-11-12,2025-11,Compras - Varios,gasto,245.33
+2025-11-12,2025-11,Compras - Varios,gasto,225.41
+2025-11-12,2025-11,Compras - Varios,gasto,218.0
+2025-11-12,2025-11,Compras - Varios,gasto,61.9
+2025-11-12,2025-11,Compras - Varios,gasto,28.0
+2025-11-14,2025-11,Compras - Varios,gasto,88.0
+2025-11-15,2025-11,Compras - Varios,gasto,34.0
+2025-11-15,2025-11,Servicios - Varios,gasto,33.0
+2025-11-17,2025-11,Sueldos,gasto,620.0
+2025-11-18,2025-11,Transferencias Personales,gasto,2050.0
+2025-11-19,2025-11,Compras - Varios,gasto,48.0
+2025-11-20,2025-11,Transferencias Personales,gasto,1000.0
+2025-11-20,2025-11,Alimentación - Comida Externa,gasto,111.0
+2025-11-20,2025-11,Alimentación - Comida Externa,gasto,33.0
+2025-11-20,2025-11,Transferencias Personales,gasto,15.0
+2025-11-20,2025-11,Transferencias Personales,gasto,1000.0
+2025-11-20,2025-11,Educación - Universidad,gasto,763.0
+2025-11-22,2025-11,Servicios - Diseño,gasto,45.31
+2025-11-22,2025-11,Entretenimiento - Streaming,gasto,36.0
+2025-11-22,2025-11,Transferencias Personales,gasto,25.0
+2025-11-24,2025-11,Transferencias Personales,gasto,45.0
+2025-11-25,2025-11,Sueldos,gasto,620.0
+2025-11-25,2025-11,Compras - Varios,gasto,250.0
+2025-11-27,2025-11,Alimentación - Viveres,gasto,72.0
+2025-11-28,2025-11,Servicios - Varios,gasto,60.0
+2025-11-28,2025-11,Transferencias Personales,gasto,55.0
+2025-11-29,2025-11,Entretenimiento - Streaming,gasto,70.0
+2025-11-30,2025-11,Compras - Varios,gasto,9000.0
+2025-11-30,2025-11,Servicios Negocio - Alquiler,gasto,2500.0
+2025-11-30,2025-11,Alimentación - Comida Externa,gasto,1600.0
+2025-11-30,2025-11,Sueldos,gasto,240.0
+2025-11-30,2025-11,Servicios Negocio - Seguridad,gasto,190.0
+2025-11-30,2025-11,Impuestos - Retención IVA,gasto,5.27
+2025-12-01,2025-12,Sueldos,gasto,620.0
+2025-12-04,2025-12,Servicios - Varios,gasto,2000.0
+2025-12-05,2025-12,Transferencias Personales,gasto,35.0
+2025-12-06,2025-12,Compras - Varios,gasto,500.0
+2025-12-08,2025-12,Servicios Básicos - Varios,gasto,107.6
+2025-12-09,2025-12,Compras - Varios,gasto,70.0
+2025-12-09,2025-12,Transferencias Personales,gasto,50.0
+2025-12-10,2025-12,Sueldos,gasto,620.0
+2025-12-11,2025-12,Educación - Cursos Online,gasto,167.28
+2025-12-12,2025-12,Compras - Varios,gasto,229.0
+2025-12-12,2025-12,Compras - Varios,gasto,68.0
+2025-12-13,2025-12,Compras - Varios,gasto,249.0
+2025-12-16,2025-12,Sueldos,gasto,620.0
+2025-12-17,2025-12,Transferencias Personales,gasto,300.0
+2025-12-18,2025-12,Alimentación - Viveres,gasto,1000.0
+2025-12-19,2025-12,Servicios - Suscripciones,gasto,139.4
+2025-12-20,2025-12,Servicios Negocio - Alquiler,gasto,2500.0
+2025-12-20,2025-12,Servicios Básicos - Varios,gasto,320.1
+2025-12-20,2025-12,Transporte - Pasajes,gasto,240.0
+2025-12-20,2025-12,Servicios Negocio - Seguridad,gasto,190.0
+2025-12-21,2025-12,Servicios Básicos - Varios,gasto,378.5
+2025-12-22,2025-12,Servicios Básicos - Varios,gasto,65.0
+2025-12-23,2025-12,Entretenimiento - Streaming,gasto,36.0
+2025-12-24,2025-12,Compras - Varios,gasto,30.0
+2025-12-25,2025-12,Compras - Varios,gasto,470.0
+2025-12-26,2025-12,Sueldos,gasto,520.0
+2025-12-29,2025-12,Compras - Varios,gasto,500.0
+2025-12-30,2025-12,Transferencias Personales,gasto,68.0
+2025-12-31,2025-12,Sueldos,gasto,620.0
+2025-12-31,2025-12,Compras - Varios,gasto,500.0
+2025-12-31,2025-12,Compras - Varios,gasto,280.0
+2025-12-31,2025-12,Compras - Varios,gasto,39.0
+2025-12-31,2025-12,Ingresos - Intereses,ingreso,31.16
+2025-12-31,2025-12,Servicios Básicos - Varios,gasto,24.4
+2025-12-31,2025-12,Impuestos - Retención IVA,gasto,4.05
+2026-01-03,2026-01,Servicios,gasto,10.0
+2026-01-05,2026-01,Gastos operativos,gasto,530.0
+2026-01-05,2026-01,Impuestos,gasto,1679.37
+2026-01-06,2026-01,Gastos operativos,gasto,140.0
+2026-01-06,2026-01,Sueldos,gasto,520.0
+2026-01-06,2026-01,Gastos operativos,gasto,160.0
+2026-01-11,2026-01,Alimentación,gasto,92.0
+2026-01-12,2026-01,Sueldos,gasto,620.0
+2026-01-13,2026-01,Mantenimiento,gasto,5436.0
+2026-01-13,2026-01,Suscripciones,gasto,42.9
+2026-01-15,2026-01,Gastos personales,gasto,200.0
+2026-01-16,2026-01,Mantenimiento,gasto,3624.0
+2026-01-19,2026-01,Sueldos,gasto,620.0
+2026-01-20,2026-01,Servicios Negocio - Alquiler,gasto,2000.0
+2026-01-22,2026-01,Compras,gasto,124.56
+2026-01-22,2026-01,Suscripciones,gasto,36.0
+2026-01-23,2026-01,Compras,gasto,540.0
+2026-01-24,2026-01,Transporte - Pasajes,gasto,240.0
+2026-01-24,2026-01,Gastos personales,gasto,20.0
+2026-01-25,2026-01,Servicios Negocio - Seguridad,gasto,190.0
+2026-01-25,2026-01,Sueldos,gasto,620.0
+2026-01-29,2026-01,Gastos personales,gasto,207.0
+2026-01-30,2026-01,Suscripciones,gasto,64.0
+2026-01-31,2026-01,Alimentación,gasto,86.0
+2026-01-31,2026-01,Impuestos,gasto,11.21
+2026-02-02,2026-02,Sueldos/Personal,gasto,620.0
+2026-02-02,2026-02,Gastos operativos,gasto,100.0
+2026-02-02,2026-02,Gastos operativos,gasto,1000.0
+2026-02-05,2026-02,Servicios,gasto,529.95
+2026-02-05,2026-02,Servicios,gasto,498.0
+2026-02-05,2026-02,Gastos operativos,gasto,4000.0
+2026-02-05,2026-02,Sueldos/Personal,gasto,350.0
+2026-02-05,2026-02,Servicios,gasto,42.9
+2026-02-05,2026-02,Sueldos/Personal,gasto,580.0
+2026-02-05,2026-02,Gastos operativos,gasto,30.0
+2026-02-05,2026-02,Gastos operativos,gasto,250.0
+2026-02-05,2026-02,Gastos operativos,gasto,100.0
+2026-02-05,2026-02,Gastos operativos,gasto,100.0
+2026-02-05,2026-02,Otros,gasto,48.9
+2026-02-05,2026-02,Servicios,gasto,36.0
+2026-02-05,2026-02,Sueldos/Personal,gasto,500.0
+2026-02-05,2026-02,Gastos operativos,gasto,1000.0
+2026-02-05,2026-02,Servicios,gasto,139.4
+2026-02-05,2026-02,Impuestos/ITF,gasto,6.34
+2026-02-05,2026-02,Transporte - Pasajes,gasto,240.0
+2026-02-05,2026-02,Servicios Negocio - Seguridad,gasto,190.0
+2026-02-05,2026-02,Servicios Negocio - Alquiler,gasto,2000.0
+2026-03-02,2026-03,Entretenimiento - Streaming,gasto,65.0
+2026-03-02,2026-03,Sueldos,gasto,400.0
+2026-03-02,2026-03,Educación - Universidad,gasto,3750.0
+2026-03-03,2026-03,Compras - Varios,gasto,752.0
+2026-03-06,2026-03,Salud - Gastos Médicos,gasto,200.0
+2026-03-09,2026-03,Sueldos,gasto,600.0
+2026-03-09,2026-03,Tecnología - Equipos PC,gasto,1450.0
+2026-03-10,2026-03,Salud - Gastos Médicos,gasto,1000.0
+2026-03-13,2026-03,Educación - Universidad,gasto,2250.0
+2026-03-13,2026-03,Servicios - Suscripciones,gasto,42.9
+2026-03-14,2026-03,Compras - Supermercado,gasto,37.4
+2026-03-16,2026-03,Compras - Negocio,gasto,1860.0
+2026-03-17,2026-03,Sueldos,gasto,600.0
+2026-03-17,2026-03,Retiros en Efectivo,retiro,20000.0
+2026-03-21,2026-03,Compras - Supermercado,gasto,512.6
+2026-03-22,2026-03,Entretenimiento - Streaming,gasto,36.0
+2026-03-23,2026-03,Sueldos,gasto,700.0
+2026-03-23,2026-03,Transferencias Personales,gasto,60.0
+2026-03-26,2026-03,Impuestos - Varios,gasto,699.0
+2026-03-27,2026-03,Gastos Personales,gasto,20.0
+2026-03-27,2026-03,Compras - Varios,gasto,105.0
+2026-03-27,2026-03,Compras - Varios,gasto,516.2
+2026-03-27,2026-03,Compras - Varios,gasto,231.2
+2026-03-30,2026-03,Sueldos,gasto,500.0
+2026-03-31,2026-03,Impuestos - Retención IVA,gasto,7.2
+2026-04-05,2026-04,Sueldos,gasto,700.0
+2026-04-06,2026-04,Retiros en Efectivo,retiro,35000.0
+2026-04-07,2026-04,Compras - Varios,gasto,320.0
+2026-04-07,2026-04,Compras - Varios,gasto,249.0
+2026-04-07,2026-04,Servicios - Suscripciones,gasto,139.4
+2026-04-11,2026-04,Educación - Universidad,gasto,2251.23
+2026-04-11,2026-04,Compras - Ropa,gasto,1600.0
+2026-04-11,2026-04,Alimentación - Helados,gasto,56.0
+2026-04-11,2026-04,Transferencias Personales,gasto,656.71
+2026-04-12,2026-04,Hogar - Muebles y Decoración,gasto,221.6
+2026-04-13,2026-04,Servicios - Suscripciones,gasto,42.9
+2026-04-13,2026-04,Comisiones Bancarias,gasto,15.23
+2026-04-13,2026-04,Sueldos,gasto,700.0
+2026-04-14,2026-04,Compras - Varios,gasto,2326.16
+2026-04-17,2026-04,Hospedaje y Hoteles,gasto,1500.0
+2026-04-20,2026-04,Sueldos,gasto,600.0
+2026-04-21,2026-04,Compras - Negocio,gasto,230.0
+2026-04-21,2026-04,Compras - Productos,gasto,500.0
+2026-04-22,2026-04,Entretenimiento - Streaming,gasto,50.72
+2026-04-24,2026-04,Impuestos - Varios,gasto,160.81
+2026-04-24,2026-04,Compras - Productos,gasto,1650.0
+2026-04-25,2026-04,Transferencias Personales,gasto,60.0
+2026-04-25,2026-04,Sueldos,gasto,700.0
+2026-04-25,2026-04,Hospedaje y Hoteles,gasto,1870.0
+2026-04-28,2026-04,Compras - QR,gasto,234.05
+2026-04-29,2026-04,Retiros en Efectivo,retiro,15000.0
+2026-04-29,2026-04,Compras - Varios,gasto,56.6
+2026-04-30,2026-04,Impuestos - Retención IVA,gasto,4.64

@@ -1,0 +1,49 @@
+# backend/Dockerfile.prod — Imagen de producción Kapitalya
+FROM python:3.11-slim AS builder
+
+# Dependencias de sistema
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Instalar dependencias Python en una capa separada (cache)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir daphne
+
+# ── Runtime stage ─────────────────────────────────────────────────────────────
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Usuario no-root
+RUN groupadd -r kapitalya && useradd -r -g kapitalya kapitalya
+
+WORKDIR /app
+
+# Copiar paquetes instalados
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copiar código
+COPY --chown=kapitalya:kapitalya . .
+
+# Directorios necesarios
+RUN mkdir -p /app/staticfiles /app/media /app/logs && \
+    chown -R kapitalya:kapitalya /app
+
+USER kapitalya
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DJANGO_SETTINGS_MODULE=core.settings.production
+
+EXPOSE 8007
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8007/health/ || exit 1

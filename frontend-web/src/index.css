@@ -1,0 +1,115 @@
+/* ── Inter font ─────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+/* ── Base reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #F1F5F9;
+  color: #0F172A;
+  line-height: 1.5;
+}
+
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+/* ── Scrollbars ───────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar            { width: 5px; height: 5px; }
+::-webkit-scrollbar-track      { background: transparent; }
+::-webkit-scrollbar-thumb      { background: #CBD5E1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* ── Selection ────────────────────────────────────────────────────────────────── */
+::selection { background-color: rgba(37,99,235,0.15); color: inherit; }
+
+/* ── Focus ring ───────────────────────────────────────────────────────────────── */
+:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; border-radius: 4px; }
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── Tabular numbers for financial data ───────────────────────────────────────── */
+.num, input[type="number"] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* ── Animations ──────────────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Page content animation */
+.MuiBox-root[class*="container"],
+main > div > * {
+  animation: fadeIn 0.18s ease forwards;
+}
+
+/* ── MUI overrides ────────────────────────────────────────────────────────────── */
+.MuiButtonBase-root { -webkit-tap-highlight-color: transparent; }
+
+/* Card hover */
+.MuiCard-root {
+  transition: box-shadow 0.18s ease, transform 0.18s ease !important;
+}
+.MuiCard-root:hover { transform: translateY(-1px); }
+
+/* Table rows */
+.MuiTableBody-root .MuiTableRow-root { transition: background-color 0.1s ease; }
+
+/* Disabled buttons: show not-allowed cursor */
+.MuiButton-root:disabled {
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
+/* ── Notistack toasts ─────────────────────────────────────────────────────────── */
+.notistack-MuiContent {
+  border-radius: 10px !important;
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 0.875rem !important;
+  box-shadow: 0 8px 24px rgba(15,23,42,0.14) !important;
+  min-width: 280px !important;
+}
+.notistack-MuiContent-success { background: #064E3B !important; }
+.notistack-MuiContent-error   { background: #7F1D1D !important; }
+.notistack-MuiContent-warning { background: #78350F !important; }
+.notistack-MuiContent-info    { background: #1E3A8A !important; }
+
+/* ── Recharts ─────────────────────────────────────────────────────────────────── */
+.recharts-default-tooltip {
+  border-radius: 8px !important;
+  border: 1px solid #E2E8F0 !important;
+  box-shadow: 0 4px 12px rgba(15,23,42,0.08) !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 12px !important;
+}
+
+/* ── Print ────────────────────────────────────────────────────────────────────── */
+@media print {
+  .no-print { display: none !important; }
+  body { background: white !important; }
+}

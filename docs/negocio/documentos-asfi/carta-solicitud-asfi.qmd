@@ -1,0 +1,65 @@
+---
+title: "Carta de Solicitud de Autorización — Casa de Cambio Unipersonal"
+lang: es
+format:
+  pdf:
+    documentclass: scrartcl
+    papersize: letter
+    fontsize: 12pt
+    geometry: [margin=3cm]
+    colorlinks: true
+execute:
+  echo: false
+---
+
+```{=latex}
+\pagestyle{empty}
+```
+
+La Paz, 1 de julio de 2026
+
+\vspace{0.5cm}
+
+Señora\
+**Lic. Ivette Espinoza Vázquez**\
+**DIRECTORA GENERAL EJECUTIVA a.i.**\
+AUTORIDAD DE SUPERVISIÓN DEL SISTEMA FINANCIERO (ASFI)\
+Presente.-
+
+\vspace{0.5cm}
+
+De mi consideración:
+
+Yo, **Sergio Denis Troche Mayta**, con Cédula de Identidad N.º **6754281 LP**,
+propietario de la Empresa Unipersonal **KAPITALYA SERVICIOS INTEGRALES**, con
+Matrícula de Comercio / NIT N.º **670400030** y domicilio comercial en Zona Villa
+Fátima, Av. Las Delicias N.º 207-C de la ciudad de La Paz, me dirijo a su
+autoridad para solicitar respetuosamente la **autorización para operar como Casa
+de Cambio Unipersonal**, cumpliendo con los requisitos establecidos en la
+Recopilación de Normas para Servicios Financieros, **Libro 1°, Título II,
+Capítulo V**.
+
+Para tal efecto, adjunto la documentación requerida por la normativa vigente:
+
+1. Programa General de Funcionamiento.
+2. Manual de Prevención, Detección, Control y Reporte de LGI/FT/DP.
+3. Acta de Designación del Oficial de Cumplimiento.
+4. Declaración Jurada de Origen y Licitud del Capital.
+5. Declaración Jurada de Cumplimiento Normativo y No Impedimentos.
+6. Análisis económico–financiero y balance de apertura.
+7. Documentación legal de respaldo (Matrícula de Comercio, NIT, Cédula de
+   Identidad, contrato de arrendamiento del local).
+
+Sin otro particular, y a la espera de una respuesta favorable, saludo a usted con
+las consideraciones más distinguidas.
+
+\vspace{1.5cm}
+
+Atentamente,
+
+\vspace{1.5cm}
+
+______________________________\
+**Sergio Denis Troche Mayta**\
+C.I. 6754281 LP\
+Propietario — KAPITALYA SERVICIOS INTEGRALES

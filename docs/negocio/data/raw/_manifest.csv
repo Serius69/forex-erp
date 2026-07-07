@@ -1,0 +1,14 @@
+year,dataset,kind,tab,gid,sheet_id,file,rows,columns,fetched_at
+2025,transacciones,BUY,compras_jun_jul,229619694,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_compras_jun_jul_229619694.csv,230,8,2026-07-01T22:39:57
+2025,transacciones,SELL,ventas_jun_jul,90191991,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_ventas_jun_jul_90191991.csv,43,8,2026-07-01T22:39:57
+2025,transacciones,BUY,compras_ago,203803298,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_compras_ago_203803298.csv,288,8,2026-07-01T22:39:57
+2025,transacciones,SELL,ventas_ago,1388970614,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_ventas_ago_1388970614.csv,55,8,2026-07-01T22:39:57
+2025,transacciones,BUY,compras_sep,545806606,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_compras_sep_545806606.csv,255,9,2026-07-01T22:39:57
+2025,transacciones,SELL,ventas_sep,614567942,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_ventas_sep_614567942.csv,63,9,2026-07-01T22:39:57
+2025,transacciones,BUY,compras_oct,657374253,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_compras_oct_657374253.csv,273,9,2026-07-01T22:39:57
+2025,transacciones,SELL,ventas_oct,296504743,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_ventas_oct_296504743.csv,49,9,2026-07-01T22:39:57
+2025,transacciones,BUY,compras_nov,129038777,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_compras_nov_129038777.csv,241,9,2026-07-01T22:39:57
+2025,transacciones,SELL,ventas_nov,1010497893,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_ventas_nov_1010497893.csv,71,9,2026-07-01T22:39:57
+2025,transacciones,BUY,compras_dic,246490476,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_compras_dic_246490476.csv,280,9,2026-07-01T22:39:57
+2025,transacciones,SELL,ventas_dic,1655158284,1WglYfVK8yMDBY_EbD3QgF0h5GPgyANxMzlXBKWhKCGA,2025_transacciones_ventas_dic_1655158284.csv,114,9,2026-07-01T22:39:57
+2026,transacciones,MIXTO,transacciones,59929513,1ZAL08c671-3jDAATgOn7MpqngwswKBh4yXIssBTP4xE,2026_transacciones_transacciones_59929513.csv,2633,19,2026-07-01T22:39:57

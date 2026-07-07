@@ -1,0 +1,309 @@
+# docker-compose.yml — desarrollo local
+# Uso: docker compose up -d
+
+services:
+
+  # ─── Base de datos ──────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: kapitalya_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-kapitalya}
+      POSTGRES_USER:     ${DB_USER:-kapitalya}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-kapitalya_dev_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-kapitalya}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kapitalya_net
+
+  # ─── Cache ──────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: kapitalya_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - kapitalya_net
+
+  # ─── Broker de mensajes (Celery) ─────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: kapitalya_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER:     ${RABBITMQ_USER:-kapitalya}
+      RABBITMQ_DEFAULT_PASS:     ${RABBITMQ_PASS:-kapitalya_mq_pass}
+      RABBITMQ_DEFAULT_VHOST:    ${RABBITMQ_VHOST:-kapitalya}
+    expose:
+      - "5672"          # AMQP interno
+      - "15672"         # Management UI (solo interno)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - kapitalya_net
+
+  # ─── Backend Django (HTTP via gunicorn) ──────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kapitalya_backend
+    restart: unless-stopped
+    command: sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn core.wsgi:application --bind 0.0.0.0:8007 --workers 4 --worker-class gthread --threads 2 --timeout 120 --access-logfile - --error-logfile -"
+    env_file: ./backend/.env
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings.development
+      - CHANNEL_REDIS_URL=redis://redis:6379/3
+    volumes:
+      - ./backend:/app
+      - static_files:/app/staticfiles
+      - media_files:/app/media
+      - ml_models:/app/ml-models
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    expose:
+      - "8007"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8007/health/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - kapitalya_net
+
+  # ─── Django Channels (WebSocket via daphne) ─────────────────────
+  channels:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kapitalya_channels
+    restart: unless-stopped
+    command: sh -c "daphne -b 0.0.0.0 -p 8008 --access-log - --proxy-headers core.asgi:application"
+    env_file: ./backend/.env
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings.development
+      - CHANNEL_REDIS_URL=redis://redis:6379/3
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    expose:
+      - "8008"
+    networks:
+      - kapitalya_net
+
+  # ─── Celery Worker: cola critical ────────────────────────────────
+  celery_critical:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kapitalya_celery_critical
+    restart: unless-stopped
+    command: >
+      celery -A core worker
+        --loglevel=info
+        --queues=critical,high
+        --concurrency=4
+        --hostname=critical@%h
+    env_file: ./backend/.env
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings.development
+      - CHANNEL_REDIS_URL=redis://redis:6379/3
+    volumes:
+      - ./backend:/app
+      - ml_models:/app/ml-models
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - kapitalya_net
+
+  # ─── Celery Worker: cola default ─────────────────────────────────
+  celery_default:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kapitalya_celery_default
+    restart: unless-stopped
+    command: >
+      celery -A core worker
+        --loglevel=info
+        --queues=default
+        --concurrency=2
+        --hostname=default@%h
+    env_file: ./backend/.env
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings.development
+      - CHANNEL_REDIS_URL=redis://redis:6379/3
+    volumes:
+      - ./backend:/app
+      - ml_models:/app/ml-models
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - kapitalya_net
+
+  # ─── Celery Worker: cola low ─────────────────────────────────────
+  celery_low:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kapitalya_celery_low
+    restart: unless-stopped
+    command: >
+      celery -A core worker
+        --loglevel=info
+        --queues=low
+        --concurrency=1
+        --hostname=low@%h
+    env_file: ./backend/.env
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings.development
+      - CHANNEL_REDIS_URL=redis://redis:6379/3
+    volumes:
+      - ./backend:/app
+      - ml_models:/app/ml-models
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - kapitalya_net
+
+  # ─── Celery Beat (scheduler) ─────────────────────────────────────
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kapitalya_beat
+    restart: unless-stopped
+    command: >
+      celery -A core beat
+        --loglevel=info
+        --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: ./backend/.env
+    environment:
+      - DJANGO_SETTINGS_MODULE=core.settings.development
+      - CHANNEL_REDIS_URL=redis://redis:6379/3
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - kapitalya_net
+
+  # ─── PgBouncer (connection pooling) ──────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:1.22.1
+    container_name: kapitalya_pgbouncer
+    restart: unless-stopped
+    environment:
+      DB_USER:     ${DB_USER:-kapitalya}
+      DB_PASSWORD: ${DB_PASSWORD:-kapitalya_dev_pass}
+      DB_HOST:     db
+      DB_NAME:     ${DB_NAME:-kapitalya}
+      POOL_MODE:   transaction
+      MAX_CLIENT_CONN: 200
+      DEFAULT_POOL_SIZE: 20
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "5432"
+    networks:
+      - kapitalya_net
+
+  # ─── Frontend React ───────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend-web
+      dockerfile: Dockerfile
+    container_name: kapitalya_frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    networks:
+      - kapitalya_net
+
+  # ─── Nginx (reverse proxy) ────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: kapitalya_nginx
+    restart: unless-stopped
+    ports:
+      - "9091:80"      # frontend + API (via nginx)
+      - "9092:8007"    # backend API directo
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - static_files:/app/staticfiles:ro
+      - media_files:/app/media:ro
+    depends_on:
+      - backend
+      - channels
+      - frontend
+    networks:
+      - kapitalya_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  static_files:
+  media_files:
+  ml_models:
+
+networks:
+  kapitalya_net:
+    external: true
+    name: kapitalya-net

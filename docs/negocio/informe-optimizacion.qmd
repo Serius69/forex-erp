@@ -1,0 +1,230 @@
+---
+title: "Informe Estratégico de Optimización — Kapitalya FX"
+subtitle: "Capital, operación y crecimiento de la casa de cambio en el escenario boliviano"
+author: "Sergio Denis Troche Mayta"
+date: today
+lang: es
+abstract: |
+  Plan de optimización integral para la casa de cambio: cómo manejar el capital
+  (propio y de acreedores) en el contexto de escasez de dólares en Bolivia,
+  recomendaciones por área (finanzas, operaciones, marketing, procesos y
+  personal), análisis de activos y una política de manejo del dinero. Todo
+  anclado a los datos reales del negocio ({{< var fx.periodo >}}).
+format:
+  pdf:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    documentclass: scrartcl
+    papersize: letter
+    fontsize: 11pt
+    linestretch: 1.15
+    colorlinks: true
+    linkcolor: RoyalBlue
+    urlcolor: RoyalBlue
+    fig-pos: "H"
+    geometry: [margin=2.5cm]
+    classoption: [titlepage]
+  html:
+    toc: true
+    toc-depth: 2
+    toc-title: "Contenido"
+    number-sections: true
+    theme: cosmo
+    embed-resources: true
+execute:
+  echo: false
+  warning: false
+---
+
+```{=latex}
+\thispagestyle{empty}
+```
+
+::: {.callout-note appearance="minimal"}
+| | |
+|:--|:--|
+| **Negocio** | Casa de cambio de divisas — La Paz, Bolivia |
+| **Equipo** | Sergio (dueño · cajero supervisor · analista de datos · ing. de sistemas) · Tiffani (asistente administrativa · cajera · psicóloga) |
+| **Capital propio** | Bs {{< var fx.bg_propio >}} ({{< var fx.bg_propio_pct >}}% del total gestionado) |
+| **Resultado operativo anual** | Bs {{< var fx.pn_resultado_op >}} · ROE ≈ {{< var fx.est_roe >}}% |
+:::
+
+# Resumen ejecutivo
+
+El negocio es **sólido y rentable**: genera un margen de trading de
+Bs {{< var fx.realizado >}} al año y un resultado operativo de
+Bs {{< var fx.pn_resultado_op >}}, sobre un capital propio de
+Bs {{< var fx.bg_propio >}}. Eso es un **ROE de ~{{< var fx.est_roe >}}% anual**.
+
+1. **El spread del USD manda.** El dólar genera el {{< var fx.usd_pct >}}% de la
+   ganancia.
+2. **El capital de terceros amplifica el retorno.** Operas con
+   Bs {{< var fx.bg_acreedores >}} de acreedores; mientras el margen supere su
+   costo, conviene — pero hay que medirlo.
+3. **Separar el dinero del negocio del personal.** Hoy se mezclan retiros
+   (Bs {{< var fx.pn_retiros >}}/año) y compras personales con la caja.
+4. **El registro debe capturar hora y cliente** (hoy no lo hace).
+5. **El conocimiento está concentrado en Sergio.** Es el mayor riesgo operativo.
+
+# El escenario boliviano — por qué este negocio es oportuno
+
+- **Tipo de cambio oficial congelado** (~Bs 6,96/USD desde 2011) frente a un
+  **mercado paralelo** mucho más alto. Tu operación vive en el paralelo.
+- **Escasez crónica de dólares** desde 2023: dispara la demanda en el paralelo
+  (importadores, viajeros, ahorristas, remesas).
+- **Doble filo del inventario USD.** Tener dólares es oportunidad y riesgo. La
+  **rotación** importa tanto como el margen.
+- **Marco regulatorio (ASFI) e impuestos** (IT 3%, IUE 25%, RC-IVA).
+- **Alta informalidad y competencia.** La diferenciación está en **confianza,
+  disponibilidad y atención** — donde el perfil de Tiffani (psicología) es una
+  ventaja real.
+
+# Optimización del capital
+
+## La estructura actual
+
+| Concepto | Bs | % |
+|:--|--:|--:|
+| Capital propio | {{< var fx.bg_propio >}} | {{< var fx.bg_propio_pct >}}% |
+| Acreedores (terceros) | {{< var fx.bg_acreedores >}} | {{< var fx.bg_acreed_pct >}}% |
+| **Total gestionado** | **{{< var fx.bg_total >}}** | 100% |
+
+Generas Bs {{< var fx.pn_resultado_op >}} de resultado operativo:
+**~{{< var fx.est_roe >}}% sobre tu capital propio** y ~{{< var fx.est_roe_total >}}%
+sobre el total gestionado.
+
+## Recomendaciones de capital
+
+1. **Mide el costo real de cada acreedor.** Nunca tomar deuda más cara que el
+   retorno marginal.
+2. **Define una reserva de oportunidad en BOB** para comprar cuando el paralelo cae.
+3. **Asignación por divisa con tope** (USD 70–80%, stock mínimo y máximo).
+4. **Rotación sobre tenencia.**
+
+# Recomendaciones por área
+
+## Finanzas
+
+- **Spread dinámico** (subir en picos, bajar para mover inventario).
+- **Contabilidad separada** negocio vs personal vs acreedores.
+- **Reserva de impuestos** mensual (IT/IUE).
+- **Tablero diario de rentabilidad**.
+
+## Operaciones
+
+- **Apertura y cierre de caja formales** con arqueo.
+- **Control de inventario por divisa y denominación** con mínimo/objetivo.
+- **Horarios según demanda** (una vez capturada la hora).
+
+## Marketing (adaptado a Bolivia)
+
+- **Clientes de alto volumen primero** (importadores, comerciantes).
+- **Remesas y viajeros**.
+- **Fidelización con el perfil de Tiffani** (psicología → relación y retención).
+- **Canales de bajo costo**: WhatsApp Business, referidos.
+
+## Procesos y sistemas
+
+- **Capturar HORA y CLIENTE en cada operación** — hoy faltan.
+- **Migrar del Sheet + Apps Script hacia forex-erp** (la planilla tiene errores).
+- **Respaldo y trazabilidad**: cada cierre de caja registrado y conservado.
+- **Línea de recargas sin contabilizar**: el negocio de **recargas/tarjetas**
+  (Tigo, Viva, Entel) mueve Bs {{< var fx.rg_venta >}} en valor facial
+  ({{< var fx.rg_unidades >}} recargas, Bs {{< var fx.rg_inventario >}} de
+  inventario) pero figura con **margen cero** en el resumen mensual. Con el
+  modelo correcto (comisión ~9-10%), aporta **~Bs {{< var fx.rg_margen >}}
+  ({{< var fx.rg_pct >}}%), y todas las operadoras son positivas** —
+  {{< var fx.rg_top_op >}} lidera con Bs {{< var fx.rg_top_op_bs >}}. *Acción:*
+  registrar el costo de compra del crédito y contabilizar esta línea aparte.
+
+## Personal
+
+- **Riesgo de concentración en Sergio** (hace todo). Mitigación: documentar
+  procesos y que Tiffani domine la operación completa.
+- **Roles claros y complementarios** (Sergio: estrategia/tasas/sistemas; Tiffani:
+  operación, atención y retención).
+- **Sueldo fijo para ambos** en lugar de retiros informales.
+
+# Análisis de activos
+
+## Activos productivos — el capital de trabajo
+
+Tu capital propio (Bs {{< var fx.act_total >}}) es el activo que genera el ingreso.
+
+| Componente | Bs | % | Rol |
+|:--|--:|--:|:--|
+| Efectivo en bancos (BOB) | {{< var fx.act_bancos >}} | {{< var fx.act_bancos_pct >}}% | Pólvora seca para comprar divisas |
+| Divisas en efectivo | {{< var fx.act_divisas >}} | {{< var fx.act_divisas_pct >}}% | Inventario para vender |
+| Inventario de recargas | {{< var fx.act_inventario >}} | | Línea secundaria |
+| Inversión (USDC) | {{< var fx.act_usdc >}} | | Reserva en cripto-dólar |
+| **Total capital propio** | **{{< var fx.act_total >}}** | 100% | |
+
+::: {.callout-tip}
+**Observación estratégica:** el {{< var fx.act_bancos_pct >}}% de tu capital está
+en **bolivianos**, y solo el {{< var fx.act_divisas_pct >}}% en divisas. Tienes
+liquidez para comprar barato, pero **poco inventario de USD para vender** en un
+día de alta demanda. Vale la pena definir un rango objetivo de divisas (30–40%).
+:::
+
+## Activos de apoyo y personales
+
+*(Completar con los valores del departamento y los equipos.)*
+
+| Activo | Tipo | ¿Genera ingreso? | Valor (Bs) |
+|:--|:--|:--|--:|
+| Auto (VW Gol) | Apoyo / personal | Indirecto | ~{{< var fx.pn_veh_manual >}} |
+| Departamento | Operativo o personal | Si es local del negocio: sí | _por definir_ |
+| Equipos tecnológicos | Apoyo (sistemas) | Habilitador | _por definir_ |
+
+## Capital humano
+
+| Persona | Roles | Riesgo / oportunidad |
+|:--|:--|:--|
+| **Sergio** | Dueño · supervisor · analista · sistemas | **Concentración**: si falta, el negocio se frena |
+| **Tiffani** | Asistente admin · cajera · psicóloga | **Subutilizada**: su psicología es ideal para retención |
+
+**Criterio de decisión:** todo activo que inmoviliza capital sin generar ingreso
+proporcional compite contra el ~{{< var fx.est_roe >}}% que rinde tu capital.
+
+# Manejo del dinero — política recomendada
+
+1. **Tres cajas separadas** (negocio / personal / acreedores).
+2. **Sueldo fijo mensual** en vez de retiros ad-hoc (hoy Bs {{< var fx.pn_retiros >}}/año).
+3. **Regla de reinversión** (un % de la utilidad al capital de trabajo).
+4. **Dos reservas**: emergencia + oportunidad.
+5. **Apartar impuestos** cada mes.
+6. **Revisar acreedores trimestralmente**.
+
+# Fuentes documentales (ingesta automática)
+
+Este informe se alimenta de dos fuentes que **se actualizan solas** al subir
+documentos a `docs/negocio/` y correr `build.py`:
+
+- **Registros operativos** (Google Sheets, en vivo).
+- **Archivo documental**: **{{< var fx.docs_total >}} documentos** ingeridos con
+  markitdown (contratos, facturas, extractos bancarios, manuales…).
+
+| Fuente | Estado (según lo cargado a la fecha) |
+|:--|:--|
+| Facturas de comisión (ENTEL) | {{< var fx.fac_n >}} facturas · Bs {{< var fx.fac_total >}} |
+| Extractos bancarios (BNB) | {{< var fx.ban_meses >}} meses ({{< var fx.ban_desde >}} → {{< var fx.ban_hasta >}}) · débitos Bs {{< var fx.ban_debitos >}} |
+
+::: {.callout-note appearance="simple"}
+El flujo de caja bancario pasa hoy por la **cuenta personal de Sergio** (BNB) —
+otra razón para separar las cajas del negocio y personal.
+:::
+
+# Próximos pasos
+
+| Prioridad | Acción |
+|:--|:--|
+| 1 | Implementar apertura/cierre de caja con arqueo |
+| 2 | Separar las tres cajas y fijar sueldos |
+| 3 | Capturar hora y cliente; migrar a forex-erp |
+| 4 | Tabular acreedores con su costo |
+| 5 | Completar valores de activos y revisar inmovilizado |
+
+---
+
+*Kapitalya FX · Informe generado sobre datos reales ({{< var fx.periodo >}}) · La Paz, Bolivia*

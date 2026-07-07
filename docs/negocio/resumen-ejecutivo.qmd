@@ -1,0 +1,57 @@
+---
+title: "Resumen Ejecutivo — Kapitalya FX"
+subtitle: "Una página · datos al {{< var fx.fecha_max >}}"
+author: "Kapitalya FX"
+date: today
+lang: es
+format:
+  pdf:
+    documentclass: scrartcl
+    papersize: letter
+    fontsize: 11pt
+    geometry: [margin=2cm]
+    colorlinks: true
+  html:
+    theme: cosmo
+    embed-resources: true
+execute:
+  echo: false
+---
+
+## El negocio en números ({{< var fx.periodo >}})
+
+| Indicador | Valor |
+|:--|--:|
+| **Ganancia de trading** | **Bs {{< var fx.realizado >}}** |
+| **Resultado operativo neto** | **Bs {{< var fx.pn_resultado_op >}}** |
+| Retorno sobre capital propio (ROE) | ~{{< var fx.est_roe >}}% anual |
+| Margen sobre ventas | {{< var fx.margen_pct >}}% |
+| Transacciones | {{< var fx.n_tx >}} · {{< var fx.dias >}} días operados |
+| Ganancia media por día | Bs {{< var fx.media_dia >}} |
+
+## Capital
+
+| | Bs | % |
+|:--|--:|--:|
+| **Capital propio** | {{< var fx.bg_propio >}} | {{< var fx.bg_propio_pct >}}% |
+| Acreedores | {{< var fx.bg_acreedores >}} | {{< var fx.bg_acreed_pct >}}% |
+| **Total gestionado** | **{{< var fx.bg_total >}}** | 100% |
+
+## Lo que hay que saber
+
+- **El dólar es el motor**: aporta el {{< var fx.usd_pct >}}% de la ganancia.
+- **Mejor mes**: {{< var fx.mejor_mes >}} (Bs {{< var fx.mejor_mes_bs >}}).
+- **Dinero recuperable**: {{< var fx.n_neg >}} ventas bajo costo (−Bs {{< var fx.neg_total >}}).
+- **Línea de recargas**: margen ~Bs {{< var fx.rg_margen >}} ({{< var fx.rg_top_op >}} lidera).
+- **Capital de trabajo**: {{< var fx.act_bancos_pct >}}% en bolivianos, {{< var fx.act_divisas_pct >}}% en divisas.
+
+## Acciones prioritarias
+
+1. **Tasa mínima + validación** en caja → recuperar las ventas bajo costo.
+2. **Separar 3 cajas** (negocio / personal / reservas) y fijar sueldos.
+3. **Capturar hora y cliente** por operación (habilita hora pico, retención y cumplimiento ASFI).
+4. **Spread dinámico del USD** en horas pico.
+
+---
+
+*Fuentes: {{< var fx.docs_total >}} documentos + registros operativos en vivo. Detalle en los informes de rentabilidad, optimización y cumplimiento ASFI.*

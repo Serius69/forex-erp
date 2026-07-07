@@ -1,0 +1,10 @@
+# Config de coverage.py — el omit vivía como --cov-omit en pytest.ini,
+# opción que no existe en pytest-cov (rompía la invocación de pytest).
+[run]
+omit =
+    */migrations/*
+    */venv/*
+    manage.py
+    */settings/*
+    */tests/*
+    test_*.py

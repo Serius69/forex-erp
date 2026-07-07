@@ -1,0 +1,164 @@
+---
+title: "Plantillas Operativas — Kapitalya FX"
+subtitle: "Apertura y cierre de caja, gastos, control de capital y controles exhaustivos"
+author: "Kapitalya FX"
+date: today
+lang: es
+abstract: |
+  Formatos listos para usar e imprimir: apertura y cierre de caja con arqueo,
+  planilla de gastos, control de capital y acreedores, y listas de control
+  (diaria, semanal y mensual).
+format:
+  pdf:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    documentclass: scrartcl
+    papersize: letter
+    fontsize: 11pt
+    colorlinks: true
+    geometry: [margin=2cm]
+    classoption: [titlepage]
+  html:
+    toc: true
+    toc-depth: 2
+    toc-title: "Contenido"
+    number-sections: true
+    theme: cosmo
+    embed-resources: true
+execute:
+  echo: false
+---
+
+```{=latex}
+\thispagestyle{empty}
+```
+
+::: {.callout-note}
+**Cómo usar este cuadernillo.** Cada plantilla puede imprimirse y llenarse a mano,
+o copiarse a una hoja digital. Los responsables son **Sergio** y **Tiffani**.
+:::
+
+# Apertura de caja
+
+Se llena al **inicio del día**, antes de la primera operación.
+
+**Fecha:** \_\_\_\_/\_\_\_\_/\_\_\_\_  **Responsable:** \_\_\_\_\_\_\_\_\_\_  **Hora:** \_\_\_:\_\_\_
+
+| Divisa | Billetes grandes | Sueltos | 1 y 2 | Total unidades | TC referencia |
+|:--|--:|--:|--:|--:|--:|
+| USD | | | | | |
+| EUR | | | | | |
+| CLP | | | | | |
+| PEN | | | | | |
+| BRL | | | | | |
+| ARS | | | | | |
+| **BOB (efectivo)** | | | | | — |
+
+**Saldo BOB en bancos/QR (BCP, Yape, Mercantil, BNB):** Bs \_\_\_\_\_\_\_\_\_\_
+
+# Cierre de caja y arqueo
+
+Se llena al **final del día**. El arqueo compara lo que **debería haber** contra
+lo que **físicamente hay**.
+
+**Fecha:** \_\_\_\_/\_\_\_\_/\_\_\_\_  **Responsable:** \_\_\_\_\_\_\_\_\_\_  **Hora:** \_\_\_:\_\_\_
+
+## Resumen del día
+
+| Concepto | USD | EUR | CLP | PEN | BRL | BOB |
+|:--|--:|--:|--:|--:|--:|--:|
+| Saldo inicial (apertura) | | | | | | |
+| (+) Comprado | | | | | | |
+| (−) Vendido | | | | | | |
+| (=) Saldo teórico | | | | | | |
+| Conteo físico (arqueo) | | | | | | |
+| **Diferencia** | | | | | | |
+
+**¿Hubo diferencia?**  ☐ No  ☐ Sí → causa: \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
+
+**Firma(s):** \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_   \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
+
+# Planilla de gastos
+
+**Clasificar bien es lo más importante**: separa gasto del negocio, retiro del
+dueño e inversión en activos.
+
+| Fecha | Categoría | Clase* | Monto (Bs) | Medio de pago | Responsable | Detalle |
+|:--|:--|:--|--:|:--|:--|:--|
+| | | | | | | |
+| | | | | | | |
+| | | | | | | |
+
+\* **Clase:** `GASTO` · `PERSONAL` · `RETIRO` · `ACTIVO` · `ACREEDOR` · `IMPUESTO`.
+
+::: {.callout-tip}
+Regla de oro: si el gasto **no es necesario para que la casa de cambio funcione**,
+es `PERSONAL` o `RETIRO`, no `GASTO`.
+:::
+
+# Control de capital y acreedores
+
+## Capital propio vs terceros
+
+| Concepto | Monto (Bs) | Fecha de corte |
+|:--|--:|:--|
+| Capital propio (activos del negocio) | | |
+| (+) Acreedores (deuda) | | |
+| (=) Total gestionado | | |
+
+## Detalle de acreedores
+
+| Acreedor | Monto (Bs) | Costo (% mensual) | Vence | ¿Conviene? |
+|:--|--:|--:|:--|:--|
+| | | | | |
+| | | | | |
+
+## Las tres cajas (separación obligatoria)
+
+| Caja | Saldo actual (Bs) | Regla |
+|:--|--:|:--|
+| Negocio (capital de trabajo) | | Solo opera con divisas |
+| Personal (sueldos + hogar) | | Sueldo fijo mensual |
+| Reservas | | Emergencia + oportunidad |
+
+# Controles exhaustivos
+
+## Control diario
+
+- ☐ Apertura de caja registrada (con conteo inicial)
+- ☐ Tasa del día fijada (compra/venta por divisa)
+- ☐ Cada operación anotada con **fecha, hora, divisa, monto, TC, medio de pago, responsable**
+- ☐ Inventario de USD por encima del mínimo
+- ☐ Cierre de caja con arqueo; diferencias investigadas
+- ☐ Ganancia del día revisada en el tablero
+- ☐ Respaldo del cierre guardado
+
+## Control semanal
+
+- ☐ Conciliar saldos de bancos/QR con lo registrado
+- ☐ Revisar inventario por divisa vs niveles objetivo
+- ☐ Actualizar control de capital y acreedores
+- ☐ Clasificar todos los gastos de la semana
+- ☐ Registrar contacto de clientes grandes
+
+## Control mensual
+
+- ☐ Cierre mensual: ingresos − gastos = resultado
+- ☐ Apartar impuestos (IT/IUE) del mes
+- ☐ Pagar sueldos fijos de Sergio y Tiffani
+- ☐ Revisar acreedores: costo vs retorno
+- ☐ Reinvertir el % definido de la utilidad
+- ☐ Actualizar el informe de rentabilidad (`build.py`)
+- ☐ Generar y entregar el **RTE** a ASFI
+
+## Control trimestral / anual
+
+- ☐ Revisar estructura de capital (propio vs acreedores) y ROE
+- ☐ Actualizar valores de activos
+- ☐ Evaluar migración a forex-erp
+- ☐ Plan de contingencia de personal
+
+---
+
+*Kapitalya FX · Plantillas operativas · La Paz, Bolivia*
