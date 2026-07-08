@@ -21,11 +21,12 @@ venv/
 htmlcov/
 
 # Datos generados en runtime (van en volúmenes, no en la imagen)
+# OJO: NO excluir snapshots/ — es una app Django (INSTALLED_APPS), no datos;
+# excluirla dejaba la imagen en crashloop (ModuleNotFoundError: snapshots).
 logs/
 media/
 staticfiles/
 ml-models/
-snapshots/
 
 # Artefactos ML pesados
 *.h5

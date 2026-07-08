@@ -154,6 +154,18 @@ npm test                  # jest (verde)
 ### Backend / Web — pendientes
 - Aplicar en el cluster los deployments con `CHANNEL_REDIS_URL` (kubectl desde Windows)
   y reconstruir imagen backend (nuevo requirement httpx + migración reports/0004).
+- **Builds verificados 2026-07-08 (Linux)**: `Dockerfile` y `Dockerfile.prod` backend,
+  `Dockerfile.prod` web (77 MB) y bundle JS release de la mobile compilan en verde.
+  torch+cu128 se sacó de `requirements.txt` (nada lo importa; inflaba la imagen de
+  5.5 a 15.7 GB) → ahora vive en `requirements-gpu.txt` para experimentos locales
+  GPU. Imagen prod resultante: **4.64 GB**, smoke test `manage.py check` sin issues.
+- **Fix crítico pre-rebuild**: el `.dockerignore` del 2026-07-07 excluía `snapshots/`
+  creyéndola datos de runtime, pero es una app Django de INSTALLED_APPS — toda imagen
+  construida con él entraba en crashloop (`ModuleNotFoundError: snapshots`). Corregido;
+  detectado por smoke test dentro de la imagen, no por pytest (que corre sobre el
+  código montado, no sobre la imagen).
+- Gotcha build web en Linux: si `node_modules` vino de Windows, falta el binario
+  nativo de rollup → `npm install @rollup/rollup-linux-x64-gnu --no-save`.
 
 ### Mobile (ver `docs/MOBILE.md`)
 - **Hecho**: modo offline con cola + sincronización (`offlineQueue` + `useOfflineSync`);

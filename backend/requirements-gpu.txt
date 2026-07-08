@@ -1,0 +1,9 @@
+# Requirements para experimentos ML locales con GPU (RTX 5070 Ti, CUDA 12.8).
+# NO usar en imágenes Docker: torch+cu128 agrega ~6.5 GB y ningún módulo del
+# backend lo importa (predictions/ usa TensorFlow/Prophet/XGBoost).
+#
+#   pip install -r requirements-gpu.txt
+-r requirements.txt
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128

@@ -68,7 +68,7 @@ boto3==1.35.36
 # ── Servidor producción ────────────────────────────────────────────────────────
 gunicorn==22.0.0
 daphne==4.1.2
-# --- PyTorch GPU (CUDA 12.8 / RTX 5070 Ti) ---
-# pip install torch --index-url https://download.pytorch.org/whl/cu128
---extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.11.0+cu128
+
+# PyTorch GPU: NO va aquí — nada en el backend lo importa y agregaba ~6.5 GB
+# (nvidia/triton/torch cu128) a la imagen Docker. Para experimentos locales con
+# GPU usar:  pip install -r requirements-gpu.txt
