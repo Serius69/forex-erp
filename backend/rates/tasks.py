@@ -590,26 +590,46 @@ def _notify_ws_if_needed(aggregated) -> None:
         log.debug("WS_NOTIFY_SKIP error=%s", exc)
 
 
-def _run_alert_generator_for_branches(currencies: list[str]) -> None:
+# Debounce del fan-out de alertas (auditoría #27).
+#   Las ~7 tasks de tasas de abajo se disparan casi simultáneamente (cada 5-60 min) y
+#   antes cada una barría, síncrona y con un subconjunto DISTINTO de divisas, todo el
+#   motor de alertas (O(sucursales × divisas)). Ahora, en vez de ejecutar ese doble
+#   bucle inline, encolan UNA sola `alerts.evaluate_all` (que cubre la UNIÓN de todas
+#   las divisas activas) a lo sumo una vez por ventana de _ALERT_DEBOUNCE_TTL segundos.
+#
+#   Elección de N=45 s: coalesce la ráfaga de tasks casi-simultáneas en una sola
+#   evaluación completa sin sacrificar frescura relevante — el propio motor deduplica
+#   cada alerta 30 min (AlertGenerator.DEDUP_MINUTES), así que re-evaluar más seguido
+#   que ~cada minuto casi nunca produce alertas nuevas; y como la tarea consolidada
+#   cubre TODAS las divisas, el debounce NO pierde ninguna (a diferencia de un debounce
+#   por-task, donde saltarse binance perdería USDT). Trade-off: en el peor caso una
+#   alerta se retrasa <45 s respecto al modelo síncrono anterior.
+_ALERT_DEBOUNCE_KEY = 'alerts_eval_debounce'
+_ALERT_DEBOUNCE_TTL = 45   # segundos
+
+
+def _run_alert_generator_for_branches(currencies: list[str] | None = None) -> None:
     """
-    Ejecuta AlertGenerator.generar_alertas() para todas las sucursales activas
-    y cada moneda recién actualizada.  Fire-and-forget: errores no interrumpen
-    el flujo principal de actualización de tasas.
+    Encola (con debounce) el barrido consolidado del motor de alertas.
+
+    Antes ejecutaba, síncrono e inline, `AlertGenerator.generar_alertas()` para cada
+    sucursal activa × cada `currency` recién actualizada. Ahora delega en la tarea
+    Celery única `alerts.evaluate_all`, que cubre la UNIÓN de TODAS las divisas activas
+    (no el subconjunto `currencies` de esta task) — por eso el parámetro `currencies`
+    ya no se usa y solo se conserva por compatibilidad con los call-sites existentes.
+
+    Debounce: `cache.add()` deja pasar solo la PRIMERA de las ~7 tasks casi-simultáneas
+    dentro de la ventana; el resto son no-ops. Fire-and-forget: cualquier fallo aquí no
+    interrumpe el flujo de actualización de tasas.
     """
     try:
-        from alerts.services import AlertGenerator
-        from users.models import Branch
-        branches = Branch.objects.filter(is_active=True)
-        for branch in branches:
-            for code in currencies:
-                if code == 'BOB':
-                    continue
-                try:
-                    AlertGenerator.generar_alertas(branch, currency=code)
-                except Exception as exc:
-                    log.debug('ALERT_GEN_SKIP branch=%s currency=%s err=%s', branch, code, exc)
+        from django.core.cache import cache
+        from alerts.tasks import evaluate_all_alerts
+        # Solo la primera task de la ventana consigue el lock → encola el barrido único.
+        if cache.add(_ALERT_DEBOUNCE_KEY, 1, _ALERT_DEBOUNCE_TTL):
+            evaluate_all_alerts.delay()
     except Exception as exc:
-        log.debug('ALERT_GEN_FOR_BRANCHES_FAIL err=%s', exc)
+        log.debug('ALERT_GEN_DEBOUNCE_FAIL err=%s', exc)
 
 
 def _check_significant_changes(aggregated) -> None:
@@ -1151,31 +1171,32 @@ def fetch_all_rates_task(self):
         from .models import ExchangeRateRaw, ExchangeRateSource
 
         fetchers = get_active_fetchers()
-        saved    = 0
         all_rates = []
+
+        # Prefetch de fuentes UNA vez (evita el N+1: antes se hacía un
+        # ExchangeRateSource.objects.get() por cada tasa).
+        source_map = {s.id_fuente: s for s in ExchangeRateSource.objects.all()}
 
         # Ejecutar fetchers secuencialmente (group() requiere que las tareas
         # sean compartidas — aquí las ejecutamos inline para simplicidad)
+        raw_objs = []
         for fetcher in fetchers:
             rates = fetcher.fetch_safe()
             for nr in rates:
                 try:
-                    # Resolver FK de fuente si existe
-                    fuente_obj = None
-                    try:
-                        fuente_obj = ExchangeRateSource.objects.get(id_fuente=nr.fuente)
-                    except ExchangeRateSource.DoesNotExist:
-                        pass
-
-                    ExchangeRateRaw.objects.create(
-                        fuente       = fuente_obj,
+                    raw_objs.append(ExchangeRateRaw(
+                        fuente = source_map.get(nr.fuente),
                         **nr.to_db(),
-                    )
-                    saved += 1
+                    ))
                     if nr.es_valido:
                         all_rates.append(nr)
                 except Exception as exc:
                     log.warning('FETCH_ALL_SAVE_ERROR fuente=%s error=%s', nr.fuente, exc)
+
+        # Una sola inserción por lote (antes: un create() por tasa).
+        if raw_objs:
+            ExchangeRateRaw.objects.bulk_create(raw_objs, batch_size=500, ignore_conflicts=True)
+        saved = len(raw_objs)
 
         # Calcular consenso a partir de los datos recién guardados
         consensus = calculate_consensus()
@@ -1224,7 +1245,7 @@ def calculate_consensus_task(self, pairs: list | None = None):
 )
 def cleanup_old_rates_task(self):
     """
-    Archiva en S3 los ExchangeRateRaw con más de 90 días.
+    Archiva en S3 los ExchangeRateRaw y RawRateSnapshot con más de 90 días.
     NO borra — comprime y mueve. Los datos históricos son activo de ML.
     Programar diariamente a las 3am.
     """
@@ -1232,47 +1253,67 @@ def cleanup_old_rates_task(self):
     from django.conf import settings as _settings
     log.info('TASK_START rates.cleanup_old_rates')
     try:
-        from .models import ExchangeRateRaw
+        from .models import ExchangeRateRaw, RawRateSnapshot
         cutoff = __import__('django.utils', fromlist=['timezone']).timezone.now() - \
                  datetime.timedelta(days=90)
 
-        old_qs = ExchangeRateRaw.objects.filter(timestamp_captura__lt=cutoff)
-        count  = old_qs.count()
+        # (queryset, campo de fecha, prefijo de key en S3) por modelo a archivar.
+        # RawRateSnapshot (~20k filas/día, poblado por continuous_fx_extraction)
+        # antes no se podaba y crecía sin límite.
+        targets = [
+            (ExchangeRateRaw.objects.filter(timestamp_captura__lt=cutoff), 'raw'),
+            (RawRateSnapshot.objects.filter(fetched_at__lt=cutoff),        'snapshots'),
+        ]
 
-        if count == 0:
-            log.info('TASK_DONE rates.cleanup_old_rates — nothing to archive')
-            return {'archived': 0}
+        total    = 0
+        archived  = 0
 
-        # Intentar subir a S3 si boto3 disponible
-        archived = 0
+        s3     = None
+        bucket = None
         try:
             import boto3
-            from io import BytesIO
-
             s3     = boto3.client('s3')
             bucket = getattr(_settings, 'AWS_STORAGE_BUCKET_NAME', None)
-            if bucket:
-                batch_size = 500
-                offset     = 0
-                while offset < count:
-                    batch = list(old_qs.values()[offset:offset + batch_size])
-                    key   = (f"rates_archive/"
-                             f"{cutoff.strftime('%Y-%m')}/"
-                             f"raw_{offset}_{offset + len(batch)}.json.gz")
-                    buf = BytesIO()
-                    with gzip.GzipFile(fileobj=buf, mode='wb') as gz:
-                        gz.write(json.dumps(batch, default=str).encode())
-                    buf.seek(0)
-                    s3.put_object(Bucket=bucket, Key=key, Body=buf.read(),
-                                  ContentType='application/gzip')
-                    archived += len(batch)
-                    offset   += batch_size
-                    log.info('CLEANUP_ARCHIVED batch=%d key=%s', len(batch), key)
         except Exception as s3_exc:
             log.warning('CLEANUP_S3_SKIP error=%s — datos NO eliminados', s3_exc)
 
-        log.info('TASK_DONE rates.cleanup_old_rates total=%d archived=%d', count, archived)
-        return {'total': count, 'archived': archived}
+        from io import BytesIO
+        for old_qs, prefix in targets:
+            count  = old_qs.count()
+            total += count
+            if count == 0:
+                continue
+
+            # Intentar subir a S3 si boto3 y bucket disponibles
+            if s3 is not None and bucket:
+                try:
+                    batch_size = 500
+                    offset     = 0
+                    while offset < count:
+                        batch = list(old_qs.values()[offset:offset + batch_size])
+                        key   = (f"rates_archive/"
+                                 f"{cutoff.strftime('%Y-%m')}/"
+                                 f"{prefix}_{offset}_{offset + len(batch)}.json.gz")
+                        buf = BytesIO()
+                        with gzip.GzipFile(fileobj=buf, mode='wb') as gz:
+                            gz.write(json.dumps(batch, default=str).encode())
+                        buf.seek(0)
+                        s3.put_object(Bucket=bucket, Key=key, Body=buf.read(),
+                                      ContentType='application/gzip')
+                        archived += len(batch)
+                        offset   += batch_size
+                        log.info('CLEANUP_ARCHIVED model=%s batch=%d key=%s',
+                                 prefix, len(batch), key)
+                except Exception as s3_exc:
+                    log.warning('CLEANUP_S3_SKIP model=%s error=%s — datos NO eliminados',
+                                prefix, s3_exc)
+
+        if total == 0:
+            log.info('TASK_DONE rates.cleanup_old_rates — nothing to archive')
+            return {'archived': 0}
+
+        log.info('TASK_DONE rates.cleanup_old_rates total=%d archived=%d', total, archived)
+        return {'total': total, 'archived': archived}
 
     except Exception as exc:
         log.error('TASK_ERROR rates.cleanup_old_rates error=%s', exc)
