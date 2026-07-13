@@ -172,45 +172,47 @@ class PredictionViewSet(viewsets.ModelViewSet):
             prediction_date__lte=timezone.now() + timedelta(hours=24)
         ).order_by('prediction_date')
         
-        # Si no hay predicciones, intentar generarlas
+        # Arranque en frío (sin predicciones cacheadas en BD): NO computar el
+        # forecast síncronamente aquí — el build de features (3 años) + inferencia
+        # de 4 modelos bloquea el worker gunicorn varios segundos y agota el pool
+        # bajo carga. Se encola el pre-warm en background (con debounce por cache)
+        # y se devuelve el fallback naive de inmediato. La tarea horaria
+        # normalmente ya dejó las predicciones reales en BD, así que este camino
+        # solo se toma tras un deploy / flush de caché.
         if not predictions.exists():
-            try:
-                from .ml_service import ForexPredictionService
-                service = ForexPredictionService()
-                service.predict_rates(currency_pair, horizon=24)
-
-                predictions = self.get_queryset().filter(
-                    currency_pair=currency_pair,
-                    prediction_date__gte=timezone.now(),
-                    prediction_date__lte=timezone.now() + timedelta(hours=24)
-                ).order_by('prediction_date')
-            except Exception as exc:
-                import logging as _log
-                _log.getLogger('predictions').warning(
-                    'predict_rates failed for %s: %s — returning naive fallback', currency_pair, exc
-                )
-                from .ml_service import ForexPredictionService
-                service = ForexPredictionService()
-                naive = service._predict_naive_fallback(24)
-                return Response({
-                    'currency_pair': currency_pair,
-                    'model_status':  'FALLBACK',
-                    'predictions': {
-                        'NAIVE_FALLBACK': [
-                            {
-                                'date':             p['prediction_date'],
-                                'rate':             str(round(p['rate'], 4)),
-                                'buy_rate':         str(round(p['lower'], 4)),
-                                'sell_rate':        str(round(p['upper'], 4)),
-                                'confidence_lower': str(round(p['lower'], 4)),
-                                'confidence_upper': str(round(p['upper'], 4)),
-                                'confidence_score': p['confidence'],
-                            }
-                            for p in naive
-                        ]
-                    },
-                    'generated_at': timezone.now(),
-                })
+            from django.core.cache import cache as _cache
+            from .ml_service import ForexPredictionService
+            if not _cache.get('forecast_prewarm_enqueued'):
+                try:
+                    from .tasks import cache_forecast_hourly
+                    cache_forecast_hourly.delay()
+                    _cache.set('forecast_prewarm_enqueued', 1, 120)  # debounce 2 min
+                except Exception as exc:
+                    import logging as _log
+                    _log.getLogger('predictions').warning(
+                        'forecast prewarm enqueue failed for %s: %s', currency_pair, exc
+                    )
+            service = ForexPredictionService()
+            naive = service._predict_naive_fallback(24)
+            return Response({
+                'currency_pair': currency_pair,
+                'model_status':  'FALLBACK',
+                'predictions': {
+                    'NAIVE_FALLBACK': [
+                        {
+                            'date':             p['prediction_date'],
+                            'rate':             str(round(p['rate'], 4)),
+                            'buy_rate':         str(round(p['lower'], 4)),
+                            'sell_rate':        str(round(p['upper'], 4)),
+                            'confidence_lower': str(round(p['lower'], 4)),
+                            'confidence_upper': str(round(p['upper'], 4)),
+                            'confidence_score': p['confidence'],
+                        }
+                        for p in naive
+                    ]
+                },
+                'generated_at': timezone.now(),
+            })
         
         # Agrupar por modelo
         predictions_by_model = {}
@@ -426,8 +428,43 @@ class ForecastView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        from predictions.market_keys import VALID_MARKETS
+        market = request.query_params.get('market', 'web').lower()
+        if market not in VALID_MARKETS:
+            return Response(
+                {'error': f'market debe ser uno de: {", ".join(VALID_MARKETS)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         use_cache = request.query_params.get('refresh', 'false').lower() != 'true'
         show_ci   = request.query_params.get('ci', 'true').lower() != 'false'
+
+        # Arranque en frio: si la cache esta vacia, NO computar el forecast pesado
+        # (build de features de 3 anios + inferencia de 4 modelos + backtesting)
+        # dentro del request -> bloquea el worker gunicorn (la web llama con timeout
+        # de 90 s). Se encola el pre-warm en background (mismo debounce que /current/)
+        # y se sirve el fallback naive de inmediato. La clave de cache es identica a la
+        # de ForexMLEngine.predict (ml_engine.py). refresh=true (use_cache False) respeta
+        # la regeneracion sincrona explicita (opt-in).
+        pair_norm = currency_pair.replace('-', '/')
+        if use_cache:
+            from django.core.cache import cache as _cache
+            _forecast_key = f'ml_forecast:{pair_norm}:{market}:{horizon}'
+            if _cache.get(_forecast_key) is None:
+                fallback = _forecast_fallback(currency_pair, horizon)
+                if fallback:
+                    if not _cache.get('forecast_prewarm_enqueued'):
+                        try:
+                            from predictions.tasks import cache_forecast_hourly
+                            cache_forecast_hourly.delay()
+                            _cache.set('forecast_prewarm_enqueued', 1, 120)  # debounce 2 min
+                        except Exception as exc:
+                            import logging as _log
+                            _log.getLogger('predictions').warning(
+                                'forecast prewarm enqueue failed for %s: %s', currency_pair, exc
+                            )
+                    return Response(fallback)
+                # Sin fallback disponible (sin tasa actual): cae al camino normal.
 
         try:
             from predictions.ml_engine import ForexMLEngine
@@ -436,6 +473,7 @@ class ForecastView(APIView):
                 currency_pair=currency_pair.replace('-', '/'),
                 horizon_key=horizon,
                 use_cache=use_cache,
+                market=market,
             )
         except ValueError as exc:
             # No trained model — try to return inference fallback from current rate
