@@ -75,4 +75,4 @@ daphne==4.1.2
 
 # Riesgo de revisión ML + explicabilidad (transactions/ml_risk.py) — labs maestría
 catboost==1.2.10
-shap==0.51.0
+shap==0.46.0
