@@ -706,6 +706,51 @@ class TransactionViewSet(viewsets.ModelViewSet):
         from .serializers import TransactionSerializer
         return Response(TransactionSerializer(tx, context={'request': request}).data)
 
+    @action(detail=True, methods=['GET'], url_path='risk-explanation')
+    def risk_explanation(self, request, pk=None):
+        """Explicabilidad SHAP del riesgo de revisión de una transacción.
+
+        Complementa al motor de reglas (`fraud_detection`) con un modelo CatBoost que
+        aprende del historial y devuelve *por qué* una operación se marcaría para revisión
+        (factores SHAP). Requiere el artefacto entrenado (`manage.py train_risk_model`) y
+        las dependencias `catboost`/`shap`; si faltan, responde 503.
+        """
+        tx = self.get_object()
+        try:
+            from .ml_risk import RiskReviewModel, features_from_transaction
+        except ImportError as exc:  # catboost/shap no instalados
+            return Response(
+                {'detail': f'Explicabilidad ML no disponible: {exc}'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        try:
+            feats = features_from_transaction(tx)
+            explanation = RiskReviewModel().explain(feats)
+        except FileNotFoundError as exc:
+            return Response(
+                {'detail': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception as exc:  # fail-safe: nunca romper el flujo por el modelo
+            return Response(
+                {'detail': f'No se pudo generar la explicación: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response({
+            'transaction': tx.transaction_number,
+            'probability': explanation.probability,
+            'decision': explanation.decision,
+            'base_value': explanation.base_value,
+            'rule_engine': {
+                'fraud_score': float(tx.fraud_score) if tx.fraud_score is not None else None,
+                'approval_required': tx.approval_required,
+                'fraud_flags': tx.fraud_flags,
+            },
+            'top_factors': explanation.top_factors,
+            'features': feats,
+        })
+
+
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
