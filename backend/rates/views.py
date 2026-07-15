@@ -954,7 +954,7 @@ class AIPricingView(APIView):
                 'trigger':         d.trigger,
                 'created_at':      d.created_at.isoformat(),
                 'rates_used': {
-                    'bcb':         float(d.rate_bcb) if d.rate_bcb else None,
+                    # 'bcb' eliminado: el campo ya no existe en el modelo
                     'binance':     float(d.rate_binance) if d.rate_binance else None,
                     'historical':  float(d.rate_historical) if d.rate_historical else None,
                     'competition': float(d.rate_competition) if d.rate_competition else None,

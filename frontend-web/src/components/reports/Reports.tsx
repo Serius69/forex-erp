@@ -2,15 +2,13 @@
 import React from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Box, Typography, Paper, Tabs, Tab } from '@mui/material';
-import { Assessment, History, Schedule } from '@mui/icons-material';
+import { Assessment, History } from '@mui/icons-material';
 import ReportsMain      from './ReportsMain';
 import ReportsHistory   from './ReportsHistory';
-import ReportsScheduled from './ReportsScheduled';
 
 const TABS = [
-  { label: 'Generar',     path: '/reports',           icon: <Assessment /> },
-  { label: 'Historial',   path: '/reports/history',   icon: <History /> },
-  { label: 'Programados', path: '/reports/scheduled', icon: <Schedule /> },
+  { label: 'Generar',   path: '/reports',         icon: <Assessment /> },
+  { label: 'Historial', path: '/reports/history', icon: <History /> },
 ];
 
 const Reports: React.FC = () => {
@@ -31,6 +29,7 @@ const Reports: React.FC = () => {
         <Tabs
           value={currentTab === -1 ? 0 : currentTab}
           onChange={(_, v) => navigate(TABS[v].path)}
+          variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile
         >
           {TABS.map(t => (
             <Tab key={t.path} icon={t.icon} iconPosition="start" label={t.label} />
@@ -39,9 +38,8 @@ const Reports: React.FC = () => {
       </Paper>
 
       <Routes>
-        <Route index            element={<ReportsMain />} />
-        <Route path="history"   element={<ReportsHistory />} />
-        <Route path="scheduled" element={<ReportsScheduled />} />
+        <Route index          element={<ReportsMain />} />
+        <Route path="history" element={<ReportsHistory />} />
       </Routes>
     </Box>
   );

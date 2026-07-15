@@ -33,6 +33,12 @@ class TipoTarjeta(models.Model):
         ('OTRA',   'Otra'),
     ]
 
+    # Aislamiento multi-tenant: el catálogo (y por FK, lotes/ventas/movimientos)
+    # pertenece a una empresa. null solo para datos legados pre-migración.
+    company         = models.ForeignKey(
+        'tenants.Company', on_delete=models.PROTECT,
+        related_name='tipos_tarjeta', null=True, blank=True,
+    )
     operadora       = models.CharField(max_length=10, choices=OPERADORAS)
     nombre          = models.CharField(max_length=100, help_text="Ej: Tigo 5 BOB")
     denominacion    = models.DecimalField(
@@ -48,11 +54,12 @@ class TipoTarjeta(models.Model):
     class Meta:
         db_table            = 'tarjetas_tipo'
         ordering            = ['operadora', 'denominacion']
-        unique_together     = ['operadora', 'denominacion']
+        unique_together     = ['company', 'operadora', 'denominacion']
         verbose_name        = 'Tipo de Tarjeta'
         verbose_name_plural = 'Tipos de Tarjeta'
         indexes             = [
             models.Index(fields=['operadora', 'is_active']),
+            models.Index(fields=['company', 'is_active']),
         ]
 
     def __str__(self):

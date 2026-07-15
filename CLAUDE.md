@@ -38,8 +38,8 @@ Emulador Android usa `10.0.2.2` como `localhost` del host:
 ```
 forex-erp/
 ├── backend/                     # Django: users, rates, transactions, inventory,
-│                                #   predictions, reports, capital, tarjetas,
-│                                #   alerts, analytics, tenants
+│                                #   predictions, reports, capital, tarjetas, alerts,
+│                                #   analytics, snapshots, data_migration, tenants
 ├── frontend-web/                # React + Vite + Redux (SPA)
 ├── frontend/                    # (variante/legacy)
 ├── frontend-mobile/ForexERPMobile/   # App React Native (submódulo git anidado)
@@ -152,8 +152,100 @@ npm test                  # jest (verde)
 - ✅ Tests: 172 en verde (5 nuevos en `transactions/tests/test_rate_limits.py`).
 
 ### Backend / Web — pendientes
-- Aplicar en el cluster los deployments con `CHANNEL_REDIS_URL` (kubectl desde Windows)
-  y reconstruir imagen backend (nuevo requirement httpx + migración reports/0004).
+- **Deploy local hecho (2026-07-08)**: imágenes dev reconstruidas (httpx horneado),
+  stack compose recreado, migraciones aplicadas (`tarjetas/0006-0007`,
+  `inventory/0006`), smoke tests verdes (health/frontend/401/signup-pending/WS-403).
+  Imágenes PROD construidas y tagueadas: `kapitalya/forex-erp-backend:v20260708`
+  (4.64 GB, `manage.py check` OK) y `kapitalya/forex-erp-frontend:v20260708`
+  (77 MB, non-root UID 101, nginx -t OK).
+- **Pendiente SOLO Windows (sin acceso al cluster desde Linux)**:
+  `docker save kapitalya/forex-erp-backend:v20260708 | ctr import` en workers 4/5
+  (frontend: **v20260710**, en worker5), actualizar tag en deployment-backend/celery
+  si aún apuntan a v20260605, y `kubectl apply -f infra/k8s/private/forex-erp/`
+  (channels v20260708, frontend v20260710 + securityContext + CHANNEL_REDIS_URL).
+  Las migraciones nuevas corren solas al arrancar el pod.
+- **Incongruencias de datos en pantallas arregladas (2026-07-10/11)**: el usuario
+  reportó datos faltantes/incongruentes en la web. Causas y fixes:
+  1. `GananciaService.ganancia_por_divisa` esperaba SELL como BOB→divisa, pero el
+     form web y TODOS los datos reales registran divisa→BOB (BUY y SELL) → Ganancias
+     mostraba 0 ventas y pérdidas gigantes. Ahora agrega ambas orientaciones.
+  2. `TransactionProfitLedger` tenía 0 filas (cargas históricas via bulk_create no
+     pasan por `transactions/services.py` → ProfitEngine) → Analytics P&L vacío.
+     Nuevo cmd `manage.py backfill_profit_ledger [--purge]`: simula WAC cronológico
+     por (branch,divisa) y reconstruye `PnLDailySnapshot` (3779 filas, 327 días).
+  3. `analytics_pnl` devolvía vacío para ADMIN sin branch → `PnLService.series_pnl/
+     resumen_periodo` aceptan branch=None (agregado de todas las sucursales).
+  4. `daily_summary.by_payment_method`: ordering default contaminaba el GROUP BY
+     (1 grupo por fila) → `.order_by('payment_method')`.
+  5. Latente: `currency_code` varchar(5) en 3 modelos de analytics no admitía
+     USD_SMALL_BILLS/USD_CASH_LOOSE/PEN_COINS (el ProfitEngine vivo fallaba
+     silencioso — fire-and-forget) → max_length=20 (migración `analytics/0008`)
+     + clamp de `profit_pct` (DecimalField(8,4) desbordaba con costo ~0).
+  Además: cuadratura día-a-día hoja↔BD → 11 tx faltantes insertadas (1 del 07-09
+  con timestamp duplicado 12:00:00 que el loader dedupeó mal + 10 del 07-10
+  posteriores a la carga); serie `paralelo_fisico_empresa` re-derivada y
+  TrainingData refrescado. Total: 3779 tx hasta 2026-07-10.
+  Barrido posterior ("¿falta algo más?"):
+  6. `core/executive_dashboard.py::_get_capital` sumaba TODO el histórico de
+     `CapitalComposicion` (56 días → Bs 14M fantasma, "56 branches") → ahora
+     solo la composición más reciente por sucursal (distinct on branch).
+  7. El mismo ordering-leak del GROUP BY estaba en `reports/generators.py`
+     (by_type/by_currency/by_payment de los reportes gerenciales),
+     `rates/ai_pricing.py` (contaba 1 BUY/1 SELL siempre) y
+     `analytics/views.py` por_decision → `.order_by(<campo>)` explícito.
+  NO-bugs verificados: caja/composición de hoy en 0 (la última caja manual del
+  usuario es 2026-05-17 — dato que no existe en la fuente), Customers 0
+  (histórico es INTERNA sin clientes), by_hour en hora local ✓ (TZ La_Paz).
+- **Carga de pestañas secundarias de Google Sheets (2026-07-11)**: el export CSV
+  solo trae la 1ª pestaña; el libro `KapitalyaRegistro2026` tiene 26 (bajar como
+  XLSX con `exportMimeType=...spreadsheetml.sheet` + openpyxl en el contenedor).
+  Cargado con marca `CARGA_GS_2026` (idempotente, en notas/descripcion):
+  · "CATEGORIZACIÓN DE GASTOS" → `capital.Gasto`: +377 (feb2025→abr2026, mapeo
+    de categorías libres→choices y medios→EFECTIVO/QR/TRANSFER/TARJETA; se
+    saltaron 15 filas Ingresos/Depósitos que no son gastos). OJO: incluye
+    transferencias personales/retiros (así lo lleva el dueño — negocio
+    unipersonal); la ganancia neta baja en meses con gasto personal alto.
+  · "Composicion Capital" → `CapitalSnapshot`: +52 balances totales
+    (2026-01-02→07-10, tipo MANUAL, solo total_bob — sin desglose) → puebla
+    Capital Timeline.
+  · "Tarjetas" + "InventarioTarjetasAjustes" → 16 `TipoTarjeta` (Entel/Tigo/Viva,
+    cortes 10-100 Bs, costo dist. real) + 16 `LoteCompra` iniciales con el stock
+    del conteo físico 2026-05-01 (2.043 unidades, Bs 26.603 a costo).
+  · `backfill_profit_ledger` ahora reconstruye snapshots para (fecha,branch) de
+    ledger ∪ gastos (días con gasto sin tx) — re-corrido: 387 snapshots.
+  · NO cargado (decisión): "Efectivo_BOB" (1.400 movs — diario de caja derivado;
+    la app lleva el suyo propio), pestañas de resumen/dashboard (derivadas).
+    Libro 2025: Control/TotalesDivisa ya cargados en sesiones previas
+    (19 capital + 9 inventarios).
+- **Módulo Ingresos Extra (2026-07-11)**: nuevo `capital.IngresoExtra` (migración
+  `capital/0012`) + `IngresoExtraViewSet` en `/api/capital/ingresos/` (CRUD +
+  `resumen/` por tipo) + pestaña "Ingresos" en la pantalla Capital (tabs ahora
+  con `value` explícito 0-5; Snapshots=4, Caja=5) + IngresoDialog. Cargados los
+  ingresos de la hoja: solo **5 reales** (Bs 1.250, mar-abr 2026) — las otras
+  ~109 filas de "Ingresos extras" son plantilla vacía (solo defaults
+  Efectivo/Sin observaciones). Fixes de paso: `CrearGastoSerializer` usaba
+  `request.user.branch` (None para ADMIN → 500) → `_branch_para_registro()` con
+  fallback a la sucursal principal de la empresa (aplicado a gasto e ingreso);
+  el GastoDialog web enviaba `medio_pago: CASH/CHECK` y categorías
+  SALARIOS/TECNOLOGIA/etc. que el backend rechaza con 400 → alineados a los
+  choices reales (EFECTIVO/QR/TRANSFER/TARJETA; SUELDOS/BANCO/COMISIONES/…).
+  Imagen frontend `v20260711` (manifest K8s actualizado).
+- **UX móvil arreglada (2026-07-10)**: el usuario reportó fallas desde navegador de
+  celular. 12 fixes en frontend-web: Tabs `scrollable` en 9 pantallas (Capital/
+  Settings/Inventory/Reports/Tarjetas/UserAdmin/ReportsMain/Transactions/Analytics —
+  antes las pestañas que no cabían quedaban inaccesibles), NotificationPanel
+  `width: {xs:'100vw'}` (desbordaba 420px), TableContainer en BranchAnalytics y
+  CompanyManagement (scroll horizontal de página), inputs ≥16px vía
+  `@media (pointer: coarse)` en theme (zoom automático iOS), Dialogs con margen 10px
+  y paddings compactos en xs (global en theme), PinDialog `inputMode: numeric`,
+  SpeedDial con `safe-area-inset-bottom` + `pb` extra en contenido, SystemStatusBar
+  visible en xs (solo dot), título AppBar `noWrap`, `100dvh` en spinners,
+  manifest.json real ("Kapitalya ERP", theme #2563EB; era el placeholder CRA
+  "React App") + borrado `public/index.html` muerto de CRA, Inter un solo `<link>`
+  con preconnect en index.html (antes @import duplicado en index.css y theme.ts,
+  bloqueado por la CSP de prod) + CSP de nginx.prod.conf permite
+  fonts.googleapis.com/fonts.gstatic.com. Imagen frontend nueva:
+  `kapitalya/forex-erp-frontend:v20260710` (manifest K8s ya actualizado).
 - **Builds verificados 2026-07-08 (Linux)**: `Dockerfile` y `Dockerfile.prod` backend,
   `Dockerfile.prod` web (77 MB) y bundle JS release de la mobile compilan en verde.
   torch+cu128 se sacó de `requirements.txt` (nada lo importa; inflaba la imagen de
@@ -242,10 +334,110 @@ antes `django_migrations` y sus tablas en la DB de producción (posibles datos h
   añadió HEALTHCHECK porque los workers celery comparten esa imagen y marcarían unhealthy.
 - `.gitignore`: añadidos `celerybeat-schedule*`, `*.pid`, `.ruff_cache/`, `.ipynb_checkpoints/`.
 
+## Sesión 2026-07-08 (production-ready)
+
+Auditoría 3-frentes (backend/web/infra) + fixes aplicados. 172 tests backend,
+tsc+build web y 18 tests mobile en verde post-cambios.
+
+### Seguridad/multi-tenant (backend)
+- **Signup público endurecido**: ya NO auto-une como CASHIER activo a la primera
+  empresa; la cuenta queda `is_active=False` sin empresa hasta aprobación de un
+  ADMIN (email y Google). El signup ya no emite tokens (`pending_approval`).
+- **Tarjetas multi-tenant**: `TipoTarjeta.company` (FK, migración `tarjetas/0006`
+  con backfill a la 1.ª empresa activa; unique ahora por company+operadora+denominación).
+  Todo el módulo escopado: viewsets, profit, inventario, posición (caché por
+  empresa+sucursal), KPIs, servicios (`company_id=`) y WS por grupo
+  `tarjetas_inventario_<company_id>` (consumer y publisher).
+- **`InventoryCard.company`** (migración `inventory/0006` + backfill): el viewset
+  `/inventory/cards/` filtraba nada — cualquier usuario veía todas las empresas.
+- **`_resolve_customer` escopado por empresa** (transactions): por `id` filtraba
+  PII de clientes de otras empresas; `get_or_create` ahora por (company, documento).
+- **`SECRET_KEY` fail-fast en production.py** (sin default; rechaza placeholders).
+- **Consistencia `amount_to`**: el serializer valida `amount_to ≈ amount_from ×
+  exchange_rate` (±1 BOB, solo flujo →BOB) — antes aceptaba cualquier total del cliente.
+- **Guard anti-sobreventa FIFO** (`registrar_venta`): `restante > 0` post-bucle
+  lanza dentro del atomic (dos ventas concurrentes de las últimas unidades).
+- Apps huérfanas eliminadas del disco (10 cascarones sin `.py`, solo bytecode).
+
+### Web
+- WS tarjetas: token desde `getAccessToken()` (leía claves de storage que nadie
+  escribía) + URL absoluta sin `/ws/ws/` duplicado — en prod nunca conectaba.
+- Refresh al recargar usa `BASE_URL` (antes hardcodeaba `/api` e ignoraba
+  `VITE_API_BASE_URL` → logout en cada F5 en deploy Tailscale).
+- Signup/Login manejan `pending_approval` (Alert success/info).
+- BranchAnalytics e InventoryMovements ya no disfrazan errores de red como
+  "datos en cero".
+- Pendiente (decisión de diseño): refresh token sigue en localStorage; moverlo a
+  cookie httpOnly requiere cambio backend coordinado con la app móvil.
+
+### Infra
+- `docker-compose.prod.yml`: healthcheck redis autenticado (sin `-a` nunca llegaba
+  a healthy y el stack no arrancaba), `REDIS_PASSWORD`/`FLOWER_PASSWORD` ahora
+  requeridos `:?` (también en tailscale), flower con `--url_prefix`, `mem_limit`
+  por servicio, y el frontend pasó a "publicador": copia el build al volumen en
+  cada arranque (antes el volumen enmascaraba rebuilds para siempre).
+- `nginx.prod.conf`: headers con `always` + repetidos en locations anidados (el
+  de assets descartaba hasta el HSTS), `server_tokens off`, COOP/Permissions-Policy,
+  TLS endurecido + ruta ACME, `/flower/` restringido a redes privadas,
+  `server_name` unificado a `forex.kapitalya.com.bo` (tb. en `.env.production.example`).
+- `start_prod.bat`: `--port 8007 --workers 2` (faltaba espacio), `serve -s dist`
+  (no `build/`), y guard anti-placeholders; nuevo `scripts/preflight_prod.sh`.
+- `frontend-web/Dockerfile` (K8s): `nginxinc/nginx-unprivileged:1.27-alpine` +
+  security headers; `Dockerfile.prod` queda root a propósito (publicador de volumen).
+- K8s: tags versionados `v20260708` en channels/frontend (`:latest` +
+  `IfNotPresent` + `ctr import` nunca hace rollout), securityContext estándar en
+  deployment-frontend, nota de backup para media hostPath (evidencia ASFI).
+
+## Tasas para pronóstico — 3 series independientes (2026-07-10)
+
+El forecasting ya no entrena una sola serie mezclada por par: hay **3 series reales
+independientes** por par, distinguidas por `TrainingData.market`
+(`web` | `competencia` | `empresa`) y por `ExchangeRate.market_type`:
+
+| Serie | `market_type` (ExchangeRate) | Fuente real | Cobertura |
+|-------|------------------------------|-------------|-----------|
+| **web** | `paralelo_digital` | Dólar blue digital (dolarbluebolivia) | **solo USD/BOB** profundo (719 días 2024→2026); el resto de divisas no tiene historia digital |
+| **competencia** | `paralelo_fisico_competencia` | CSV físico de mercado `tipos de cambio fisico mercado.csv` | 6 pares, ~1.2k–2k días 2023→2026 |
+| **empresa** | `paralelo_fisico_empresa` | **Derivada de las transacciones reales** (mediana diaria buy/sell) | 6 pares, USD 326 días 2025→2026 |
+
+Comandos (idempotentes, reproducibles):
+```bash
+python manage.py load_competition_rates --csv <ruta>   # competencia (reetiqueta + CSV)
+python manage.py derive_empresa_rates --purge          # empresa desde transacciones
+# TrainingData (las 3 series, agregación DIARIA — NO usar el slice crudo [:N]):
+python manage.py shell -c "from predictions.tasks import update_training_data; \
+  [update_training_data(p) for p in ['USD/BOB','EUR/BOB','BRL/BOB','ARS/BOB','PEN/BOB','CLP/BOB']]"
+```
+
+- `update_training_data(pair, market=None)` puebla las 3 series (agrega ExchangeRate a
+  **1 punto/día** con `TruncDate`+`Avg` — evita que el ruido intradía del fx_engine/beat
+  entierre la historia). La tarea diaria `train_all_prediction_models` ya la llama → las 3
+  series se mantienen frescas solas.
+- Pipeline/engine son market-aware: `ForexDataPipeline.build(pair, market=...)`,
+  `ForexMLEngine.train_all(pair, market=...)` y `.predict(pair, market=...)` (default `web`
+  = comportamiento previo). Verificado XGBoost OK en las 3 (USD/BOB MAPE web 0.35% /
+  competencia 0.09% / empresa 0.15%).
+- **Serving de los 3 pronósticos por API — HECHO (2026-07-10):** los artefactos ahora se
+  keyean por market. `PredictionModel`/`EnsembleWeightHistory` tienen campo `market`
+  (unique `(model_type, currency_pair, market)`, migración `predictions/0006`); los archivos
+  de modelo llevan sufijo `__<market>` para ≠web (web sin sufijo → retrocompatible byte a
+  byte). Helper `predictions/market_keys.py`. Enhebrado en los 4 forecasters
+  (xgboost/arima/bilstm + prophet/lstm/ensemble legacy), engine (`_collect_base_predictions`,
+  `_get_feature_importance`, `_backtesting_metrics`, `_invalidate_cache`, `cache_all_horizons`),
+  ensemble (`compute_weights`/`_fallback_weight`/`conformalize`/meta-learner, filtran por
+  `model__market`) y todas las tareas Celery (train/refresh/cache iteran las 3 series).
+  **API:** `GET /api/predictions/forecast/<par>/?market=web|competencia|empresa` (default web;
+  market inválido → 400). Verificado HTTP 200: USD/BOB web 10.38 / competencia 9.43 /
+  empresa 11.41 — 3 pronósticos distintos, cada uno de su propio modelo.
+  (ARIMA cae por `pmdarima` ausente — preexistente, degrada limpio; el ensemble combina
+  los modelos disponibles.)
+
 ## Convenciones
 
 - Idioma es-BO; zona `America/La_Paz`; moneda base BOB; regulador ASFI.
 - Secretos siempre en `.env` / Secrets, nunca hardcodeados.
-- JWT: access en memoria (TTL 15 min), refresh en httpOnly cookie.
+- JWT: access en memoria (TTL 15 min); refresh hoy en **localStorage** en la web
+  (rotado + limpiado en logout) — migrarlo a cookie httpOnly sigue pendiente y
+  requiere cambio backend coordinado con la app móvil (verificado 2026-07-08).
 - Mobile: estilo de código propio con alineación multi-espacio (Prettier del preset
   `@react-native` marca esos archivos preexistentes; no reformatear en masa).

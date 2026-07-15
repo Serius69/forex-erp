@@ -74,6 +74,7 @@ const Transactions: React.FC = () => {
         <Tabs
           value={currentTab === -1 ? 0 : currentTab}
           onChange={(_, v) => navigate(TABS[v].path)}
+          variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile
           sx={{ minHeight: 44, '& .MuiTabs-indicator': { height: 2 } }}
         >
           {TABS.map(t => (

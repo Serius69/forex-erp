@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
   Box, Grid, Typography, Card, CardContent, Divider,
-  CircularProgress, Chip, Table, TableHead, TableRow,
-  TableCell, TableBody, Select, MenuItem, FormControl,
+  CircularProgress, Chip, Table, TableHead, TableRow, TableContainer,
+  TableCell, TableBody, Select, MenuItem, FormControl, Alert,
 } from '@mui/material';
 import { Store, TrendingUp, SwapHoriz, AccountBalance } from '@mui/icons-material';
 import { api } from '../../services/api';
@@ -27,22 +27,29 @@ export default function BranchAnalytics() {
   const [stats,       setStats]       = useState<BranchStat[]>([]);
   const [selectedBr,  setSelectedBr]  = useState<number | 'all'>('all');
   const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState('');
   const [period,      setPeriod]      = useState<'today' | 'week' | 'month'>('today');
 
   useEffect(() => {
     api.get('/users/branches/')
       .then(r => setBranches(r.data?.results ?? r.data ?? []))
-      .catch(() => {});
+      .catch(() => setError('No se pudo cargar la lista de sucursales.'));
   }, []);
 
   useEffect(() => {
     setLoading(true);
+    setError('');
     const params: Record<string, string> = { period };
     if (selectedBr !== 'all') params.branch = String(selectedBr);
 
     api.get('/analytics/branch-stats/', { params })
       .then(r => setStats(r.data?.results ?? r.data ?? []))
-      .catch(() => setStats([]))
+      .catch(() => {
+        // Sin este estado, una API caída se veía como "0 transacciones /
+        // 0 ganancia" — datos falsos en una pantalla de decisión.
+        setStats([]);
+        setError('No se pudieron cargar las estadísticas. Verifica tu conexión y reintenta.');
+      })
       .finally(() => setLoading(false));
   }, [period, selectedBr]);
 
@@ -53,6 +60,12 @@ export default function BranchAnalytics() {
 
   return (
     <Box>
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
+          {error}
+        </Alert>
+      )}
+
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -130,6 +143,7 @@ export default function BranchAnalytics() {
               Sin datos para el período seleccionado
             </Typography>
           ) : (
+            <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
@@ -181,6 +195,7 @@ export default function BranchAnalytics() {
                 ))}
               </TableBody>
             </Table>
+            </TableContainer>
           )}
         </CardContent>
       </Card>

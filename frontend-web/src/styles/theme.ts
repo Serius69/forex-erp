@@ -232,6 +232,10 @@ export const theme = createTheme({
         },
         input: {
           fontWeight: 500,
+          // ≥16px en táctiles: evita el zoom automático de iOS Safari al enfocar
+          '@media (pointer: coarse)': {
+            fontSize: '1rem',
+          },
         },
       },
     },
@@ -383,6 +387,14 @@ export const theme = createTheme({
           borderRadius: 16,
           boxShadow: '0 24px 48px rgba(15,23,42,0.18)',
           border: `1px solid ${TOKENS.border}`,
+          // Móvil: el margen default de 32px por lado deja ~230px útiles en 360px;
+          // se reduce para que formularios (transacciones, clientes) sean usables
+          '@media (max-width:599.95px)': {
+            margin: 10,
+            width: 'calc(100% - 20px)',
+            maxWidth: 'calc(100% - 20px)',
+            maxHeight: 'calc(100% - 20px)',
+          },
         },
       },
     },
@@ -393,17 +405,25 @@ export const theme = createTheme({
           fontWeight: 700,
           fontSize: '1.0625rem',
           color: TOKENS.text,
+          '@media (max-width:599.95px)': { padding: '16px 16px 10px' },
         },
       },
     },
     MuiDialogContent: {
       styleOverrides: {
-        root: { padding: '12px 24px' },
+        root: {
+          padding: '12px 24px',
+          '@media (max-width:599.95px)': { padding: '10px 16px' },
+        },
       },
     },
     MuiDialogActions: {
       styleOverrides: {
-        root: { padding: '16px 24px 20px', gap: 8 },
+        root: {
+          padding: '16px 24px 20px',
+          gap: 8,
+          '@media (max-width:599.95px)': { padding: '12px 16px 16px' },
+        },
       },
     },
 
@@ -461,8 +481,6 @@ export const theme = createTheme({
     // ── CssBaseline: global resets ────────────────────────────────────────────
     MuiCssBaseline: {
       styleOverrides: `
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
-
         *, *::before, *::after {
           box-sizing: border-box;
         }

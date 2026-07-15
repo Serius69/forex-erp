@@ -4,7 +4,7 @@ import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosError } from 'ax
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 const WS_URL   = import.meta.env.VITE_WS_BASE_URL  || '/ws';
 
-export { WS_URL };
+export { BASE_URL, WS_URL };
 
 // ── Token storage ─────────────────────────────────────────────────────────────
 // Access token: JS memory only (cleared on page reload; re-hydrated via refresh on mount)
@@ -142,13 +142,31 @@ export const downloadFile = (blob: Blob, filename: string): void => {
 
 export default api;
 
+// Prioridad de mercado al elegir LA tasa a mostrar por divisa.
+// El endpoint current devuelve TODAS las series (digital, físico, legacy…);
+// antes ganaba "la última del array" — que solía ser paralelo_fisico_competencia
+// con datos LOCF viejos (p.ej. ARS 5.13/8.21, spread 60%) en vez de la primaria.
+const MARKET_DISPLAY_PRIORITY: Record<string, number> = {
+  paralelo_digital:            5,
+  parallel:                    4,
+  digital:                     3,
+  paralelo_fisico_empresa:     2,
+  paralelo_fisico_competencia: 1,
+  official:                    0,
+};
+
 export function parseRates(data: unknown): Record<string, unknown> {
   if (!data) return {};
   const map: Record<string, unknown> = {};
+  const prio: Record<string, number> = {};
   if (Array.isArray(data)) {
     data.forEach((r: any) => {
       const code = r.currency_from?.code ?? r.currency_from;
       if (code && code !== 'BOB') {
+        const marketPrio = (MARKET_DISPLAY_PRIORITY[r.market_type] ?? 0)
+                         + (r.is_primary ? 10 : 0);
+        if (marketPrio < (prio[code] ?? -1)) return;   // ya tenemos una mejor
+        prio[code] = marketPrio;
         map[code] = {
           buy:          parseFloat(r.buy_rate  ?? r.buy  ?? 0),
           sell:         parseFloat(r.sell_rate ?? r.sell ?? 0),

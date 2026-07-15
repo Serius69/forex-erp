@@ -65,6 +65,7 @@ const Inventory: React.FC = () => {
         <Tabs
           value={tabIndex}
           onChange={(_, v) => navigate(TABS[v].path)}
+          variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile
           sx={{
             minHeight: 44,
             '& .MuiTabs-indicator': { height: 2, borderRadius: 0 },

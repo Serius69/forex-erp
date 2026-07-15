@@ -73,16 +73,18 @@ class ReportGenerator:
             'total_volume_bob': transactions.aggregate(
                 total=Sum('amount_to')
             )['total'] or 0,
-            'by_type': transactions.values('transaction_type').annotate(
+            # order_by() explícito: el ordering default (-created_at) contamina
+            # el GROUP BY y produce un grupo por fila
+            'by_type': transactions.values('transaction_type').order_by('transaction_type').annotate(
                 count=Count('id'),
                 volume=Sum('amount_to')
             ),
-            'by_currency': transactions.values('currency_from__code').annotate(
+            'by_currency': transactions.values('currency_from__code').order_by('currency_from__code').annotate(
                 count=Count('id'),
                 volume=Sum('amount_from'),
                 volume_bob=Sum('amount_to')
             ),
-            'by_payment': transactions.values('payment_method').annotate(
+            'by_payment': transactions.values('payment_method').order_by('payment_method').annotate(
                 count=Count('id'),
                 volume=Sum('amount_to')
             ),

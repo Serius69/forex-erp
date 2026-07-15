@@ -15,6 +15,12 @@ class RateService:
     
     def __init__(self):
         self.sources = {
+            # API JSON estable con la tasa oficial BCB — fuente primaria
+            'DOLARAPI_OFICIAL': {
+                'url': 'https://bo.dolarapi.com/v1/dolares/oficial',
+                'parser': self._parse_dolarapi_oficial,
+            },
+            # Scrape del HTML del BCB — respaldo multi-divisa
             'BCB': {
                 'url': 'https://www.bcb.gob.bo/',
                 'parser': self._parse_bcb_rates
@@ -24,42 +30,76 @@ class RateService:
                 'parser': self._parse_bcp_rates
             }
         }
-    
-    def fetch_official_rates(self, source='BCB'):
-        """Obtiene tasas oficiales de la fuente especificada"""
-        try:
-            source_config = self.sources.get(source)
-            if not source_config:
-                raise ValueError(f"Fuente {source} no configurada")
-            
-            response = requests.get(
-                source_config['url'],
-                timeout=10,
-                headers={'User-Agent': 'Mozilla/5.0'}
-            )
-            response.raise_for_status()
-            
-            rates = source_config['parser'](response.content)
-            
-            # Guardar en base de datos
-            for currency_code, rate_value in rates.items():
-                self._save_rate(currency_code, rate_value, source)
-            
-            return rates
-            
-        except Exception as e:
-            logger.error("RATE_FETCH_FAILED source=%s error=%s", source, e)
+
+    def fetch_official_rates(self, source=None):
+        """
+        Obtiene y persiste tasas oficiales (market_type='official').
+
+        Sin `source` explícito prueba la cadena DOLARAPI_OFICIAL → BCB y se
+        queda con la primera que devuelva datos. Con `source` usa solo esa.
+        """
+        chain = [source] if source else ['DOLARAPI_OFICIAL', 'BCB']
+        last_error = None
+        for src in chain:
             try:
-                from core.alerts import SystemAlert
-                SystemAlert.create(
-                    component='rates',
-                    message=f'Fallo al obtener tasas de {source}: {type(e).__name__}',
-                    severity='HIGH',
-                    details={'source': source, 'error': str(e)},
+                source_config = self.sources.get(src)
+                if not source_config:
+                    raise ValueError(f"Fuente {src} no configurada")
+
+                response = requests.get(
+                    source_config['url'],
+                    timeout=10,
+                    headers={'User-Agent': 'Mozilla/5.0'}
                 )
-            except Exception:
-                pass
-            return self._get_fallback_rates()
+                response.raise_for_status()
+
+                rates = source_config['parser'](response.content)
+                if not rates:
+                    logger.warning("OFFICIAL_RATES_EMPTY source=%s — probando siguiente", src)
+                    continue
+
+                # Guardar en base de datos
+                for currency_code, rate_value in rates.items():
+                    self._save_rate(currency_code, rate_value, src,
+                                    source_method='API' if src == 'DOLARAPI_OFICIAL' else 'SCRAP',
+                                    source_url=source_config['url'])
+                return rates
+
+            except Exception as e:
+                last_error = e
+                logger.error("RATE_FETCH_FAILED source=%s error=%s", src, e)
+
+        # Toda la cadena falló → alertar y devolver lo último conocido
+        try:
+            from core.alerts import SystemAlert
+            SystemAlert.create(
+                component='rates',
+                message=f'Fallo al obtener tasas oficiales ({chain}): '
+                        f'{type(last_error).__name__ if last_error else "sin datos"}',
+                severity='HIGH',
+                details={'sources': chain, 'error': str(last_error)},
+            )
+        except Exception:
+            pass
+        return self._get_fallback_rates()
+
+    def _parse_dolarapi_oficial(self, content):
+        """
+        Parser del JSON de bo.dolarapi.com/v1/dolares/oficial:
+        {"moneda":"USD","casa":"oficial","compra":10.4,"venta":10.4,...}
+        Solo USD (es la única serie oficial que expone).
+        """
+        import json
+        try:
+            data = json.loads(content)
+        except Exception:
+            return {}
+        compra = data.get('compra')
+        venta  = data.get('venta')
+        val    = venta or compra
+        if not val or float(val) <= 0:
+            return {}
+        return {'USD': Decimal(str(val))}
     
     def _parse_bcb_rates(self, content):
         """
@@ -67,8 +107,9 @@ class RateService:
 
         COMPLIANCE: Si la tabla no se encuentra o no contiene datos válidos,
         retorna un diccionario vacío y registra el evento.
-        NO se usan valores hardcodeados como fallback aquí.
-        El fallback con INFERENCE está en BCBOfficialFetcher._hardcoded_fallback().
+        NO se usan valores hardcodeados como fallback aquí: la cadena de
+        fetch_official_rates pasa a la siguiente fuente y, si todas fallan,
+        _get_fallback_rates devuelve lo último conocido en BD.
         """
         soup  = BeautifulSoup(content, 'html.parser')
         rates = {}

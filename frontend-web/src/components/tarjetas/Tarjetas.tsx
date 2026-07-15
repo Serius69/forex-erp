@@ -14,7 +14,7 @@ import {
   WifiOff, Wifi,
 } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
-import { api } from '../../services/api';
+import { api, getAccessToken } from '../../services/api';
 import { formatCurrency, formatNumber } from '../../utils/formatters';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -112,10 +112,21 @@ function useTarjetasWS(onUpdate: (data: { items: PosicionItem[] }) => void) {
 
   const connect = useCallback(() => {
     if (!user) return;
-    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || '';
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const base  = import.meta.env.VITE_WS_BASE_URL || `${proto}://${window.location.host}`;
-    const url   = `${base}/ws/tarjetas/inventario/?token=${token}`;
+    // El access token vive solo en memoria (services/api); si aún no está
+    // hidratado tras una recarga, reintenta en breve.
+    const token = getAccessToken();
+    if (!token) {
+      retryRef.current = setTimeout(connect, 500);
+      return;
+    }
+    // URL absoluta, mismo esquema que WebSocketContext: una VITE_WS_BASE_URL
+    // relativa ('/ws') se resuelve contra el host actual. Antes quedaba
+    // '/ws/ws/…' (path duplicado) y relativa — el WS nunca conectaba en prod.
+    const WS_BASE = import.meta.env.VITE_WS_BASE_URL || '/ws';
+    const wsBase  = WS_BASE.startsWith('ws')
+      ? WS_BASE
+      : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${WS_BASE}`;
+    const url = `${wsBase}/tarjetas/inventario/?token=${token}`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
@@ -680,7 +691,8 @@ const Tarjetas: React.FC = () => {
         ))}
       </Grid>
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}>
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}
+        variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile>
         <Tab icon={<CreditCard />} iconPosition="start" label="Inventario en Vivo" />
         <Tab icon={<ShoppingCart />} iconPosition="start" label="Lotes de Compra" />
         <Tab icon={<Sell />} iconPosition="start"

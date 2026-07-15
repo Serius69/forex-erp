@@ -1,5 +1,4 @@
-/* ── Inter font ─────────────────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+/* ── Inter font: se carga vía <link> en index.html (preconnect + stylesheet) ── */
 
 /* ── Base reset ──────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }

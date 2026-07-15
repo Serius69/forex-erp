@@ -136,6 +136,8 @@ class Currency(models.Model):
 
 class ExchangeRate(models.Model):
     MARKET_TYPE_CHOICES = [
+        # ── Oficial (BCB vía dolarapi/scrape; base de la brecha oficial↔paralelo)
+        ('official',                    'Oficial (BCB)'),
         # ── Paralelo digital ──────────────────────────────────────────────────
         ('paralelo_digital',            'Paralelo Digital (Binance/Takenos/Airtm)'),
         # ── Paralelo físico ───────────────────────────────────────────────────
@@ -653,6 +655,8 @@ class RawRateSnapshot(models.Model):
         ('saldoar',             'SaldoAR'),
         ('okx',                 'OKX P2P'),
         ('p2p_exchanges',       'P2P Exchanges'),
+        ('bitget_p2p',          'Bitget P2P'),
+        ('bybit_p2p',           'Bybit P2P'),
         ('p2p_multi_fiat',      'P2P Multi-Fiat'),
         ('digital',             'Digital (Takenos/Airtm)'),
         ('parallel',            'Parallel Scraper'),

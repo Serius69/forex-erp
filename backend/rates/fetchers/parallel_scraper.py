@@ -20,9 +20,10 @@ from .base import BaseFetcher, FetchResult, DEFAULT_TIMEOUT
 
 log = logging.getLogger('kapitalya.rates.fetcher.parallel')
 
-# Tasas base del mercado paralelo boliviano (estimaciones conservadoras)
-# Usadas SOLO cuando todas las fuentes en tiempo real fallan.
-# Actualizar manualmente si el mercado cambia sustancialmente.
+# Valores de referencia usados SOLO como límites de plausibilidad para el
+# parsing de scraping (rango amplio 0.5×–5×) y como whitelist de divisas.
+# Las ESTIMACIONES de fallback ya NO usan estas constantes: derivan de la
+# última tasa real en BD (rates.fetchers.reference.real_reference_rates).
 PARALLEL_BASE = {
     'USD': Decimal('9.60'),
     'EUR': Decimal('10.40'),
@@ -334,16 +335,20 @@ class ParallelMarketFetcher(BaseFetcher):
         Se marcan para que el frontend muestre advertencia y requiera confirmación.
         """
         from django.utils import timezone as tz
+
+        from .reference import real_reference_rates
+
         results    = []
         fetched_at = tz.now()
 
-        for code, ref in PARALLEL_REFERENCE.items():
+        for code, ref in real_reference_rates().items():
             spread  = PARALLEL_SPREAD_ESTIMATE.get(code, {
                 'buy_discount': Decimal('0.015'),
                 'sell_premium': Decimal('0.015'),
             })
-            scale     = SCALE_FACTORS.get(code, 1)
-            # base es la tasa paralela estimada; buy ligeramente menor, sell ligeramente mayor
+            scale = SCALE_FACTORS.get(code, 1)
+            # ref = última tasa real en BD (BOB por scale_factor unidades);
+            # buy ligeramente menor, sell ligeramente mayor
             buy_scaled  = (ref * (1 - spread['buy_discount']))
             sell_scaled = (ref * (1 + spread['sell_premium']))
 
@@ -357,7 +362,7 @@ class ParallelMarketFetcher(BaseFetcher):
                 scale_factor  = scale,
                 confidence    = 0.50,
                 raw_data      = {
-                    'method':    'estimated_parallel_base',
+                    'method':    'estimated_from_last_real',
                     'base_rate': float(ref),
                     'warning':   'NOT_REAL_TIME',
                 },
@@ -369,8 +374,8 @@ class ParallelMarketFetcher(BaseFetcher):
                 results.append(result)
 
         log.warning(
-            "PARALLEL_RATES_ESTIMATED — all scraping failed, "
-            "using INFERENCE fallback with hardcoded spreads"
+            "PARALLEL_RATES_ESTIMATED currencies=%d — all scraping failed, "
+            "derived from last real rates (INFERENCE)", len(results),
         )
         return results
 

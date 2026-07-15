@@ -1,9 +1,19 @@
 # capital/serializers.py
 from rest_framework import serializers
-from .models import (Gasto, CapitalSnapshot, CapitalManualEntry,
+from .models import (Gasto, IngresoExtra, CapitalSnapshot, CapitalManualEntry,
                      CapitalEntryHistory, CapitalComposicion,
                      CapitalComposicionHistory, CashBOB)
 from users.serializers import BranchSerializer, UserSerializer
+
+
+def _branch_para_registro(user):
+    """Sucursal del usuario, o la principal activa de su empresa (ADMIN sin branch)."""
+    if user.branch_id:
+        return user.branch
+    from users.models import Branch
+    return (Branch.objects
+            .filter(company_id=user.company_id, is_active=True)
+            .order_by('-is_main', 'id').first())
 
 
 class GastoSerializer(serializers.ModelSerializer):
@@ -33,7 +43,35 @@ class CrearGastoSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context['request']
-        validated_data['branch']         = request.user.branch
+        validated_data['branch']         = _branch_para_registro(request.user)
+        validated_data['registrado_por'] = request.user
+        return super().create(validated_data)
+
+
+class IngresoExtraSerializer(serializers.ModelSerializer):
+    registrado_por_nombre = serializers.CharField(
+        source='registrado_por.get_full_name', read_only=True
+    )
+    branch_nombre = serializers.CharField(source='branch.name', read_only=True)
+
+    class Meta:
+        model  = IngresoExtra
+        fields = [
+            'id', 'fecha', 'tipo', 'monto_bob', 'medio_pago',
+            'notas', 'branch', 'branch_nombre',
+            'registrado_por_nombre', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class CrearIngresoExtraSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = IngresoExtra
+        fields = ['fecha', 'tipo', 'monto_bob', 'medio_pago', 'notas']
+
+    def create(self, validated_data):
+        request = self.context['request']
+        validated_data['branch']         = _branch_para_registro(request.user)
         validated_data['registrado_por'] = request.user
         return super().create(validated_data)
 

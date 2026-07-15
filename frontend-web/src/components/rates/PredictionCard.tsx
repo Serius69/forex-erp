@@ -340,13 +340,20 @@ const PredictionCard: React.FC<PredictionCardProps> = ({
           </Box>
         )}
 
-        {/* Timestamp */}
+        {/* Timestamp + serie de mercado usada */}
         <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.58rem', display: 'block', mt: 0.75 }}>
           {(() => { const d = parseISO(data.generated_at); return isValid(d) ? `Generado: ${format(d, 'dd/MM HH:mm', { locale: es })}` : ''; })()}
           {' · '}Datos hasta:{' '}
           {data.data_freshness && data.data_freshness !== 'INFERENCE'
             ? (() => { const d = parseISO(data.data_freshness); return isValid(d) ? format(d, 'dd/MM HH:mm', { locale: es }) : '—'; })()
             : data.data_freshness === 'INFERENCE' ? 'Inferida' : '—'}
+          {data.market && (
+            <>
+              {' · '}Serie:{' '}
+              {({ web: 'paralelo digital', competencia: 'físico competencia',
+                  empresa: 'empresa' } as Record<string, string>)[data.market] ?? data.market}
+            </>
+          )}
         </Typography>
       </CardContent>
     </Card>

@@ -3,7 +3,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import {
-  api,
+  api, BASE_URL,
   setAccessToken, clearAccessToken,
   setRefreshToken, getRefreshToken, clearRefreshToken,
   clearAllTokens,
@@ -32,8 +32,10 @@ interface AuthContextType {
   user:        User | null;
   loading:     boolean;
   login:       (usernameOrEmail: string, password: string) => Promise<void>;
-  signup:      (data: SignupData) => Promise<void>;
-  loginGoogle: (credential: string) => Promise<void>;
+  /** Devuelve un mensaje si la cuenta quedó pendiente de aprobación (sin sesión); null si inició sesión. */
+  signup:      (data: SignupData) => Promise<string | null>;
+  /** Igual que signup: mensaje de "pendiente de aprobación" para cuentas nuevas, null si inició sesión. */
+  loginGoogle: (credential: string) => Promise<string | null>;
   logout:      () => Promise<void>;
   verifyPin:   (pin: string) => Promise<boolean>;
 }
@@ -67,8 +69,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     (async () => {
       try {
-        // Exchange refresh token for new access token
-        const { data } = await axios.post('/api/auth/refresh/', { refresh });
+        // Exchange refresh token for new access token.
+        // BASE_URL (no '/api' fijo): con VITE_API_BASE_URL absoluta (Tailscale)
+        // el refresh al recargar debe ir al mismo origen que el resto del API.
+        const { data } = await axios.post(`${BASE_URL}/auth/refresh/`, { refresh });
         const newAccess = data.access;
         if (data.refresh) setRefreshToken(data.refresh); // rotation
 
@@ -112,17 +116,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [_applySession, _redirectForRole]);
 
   // ── Signup ────────────────────────────────────────────────────────────────
-  const signup = useCallback(async (formData: SignupData): Promise<void> => {
+  // El backend ya no emite tokens al registrarse: la cuenta queda inactiva
+  // hasta que un ADMIN la apruebe y le asigne empresa.
+  const signup = useCallback(async (formData: SignupData): Promise<string | null> => {
     const { data } = await api.post('/auth/signup/', formData);
+    if (data.pending_approval) {
+      return data.detail ?? 'Cuenta creada. Un administrador debe aprobarla antes de que puedas ingresar.';
+    }
     _applySession(data.access, data.refresh, data.user);
     _redirectForRole(data.user.role);
+    return null;
   }, [_applySession, _redirectForRole]);
 
   // ── Google OAuth ──────────────────────────────────────────────────────────
-  const loginGoogle = useCallback(async (credential: string): Promise<void> => {
+  const loginGoogle = useCallback(async (credential: string): Promise<string | null> => {
     const { data } = await api.post('/auth/google/', { credential });
+    if (data.pending_approval) {
+      return data.detail ?? 'Cuenta creada. Un administrador debe aprobarla antes de que puedas ingresar.';
+    }
     _applySession(data.access, data.refresh, data.user);
     _redirectForRole(data.user.role);
+    return null;
   }, [_applySession, _redirectForRole]);
 
   // ── Logout ────────────────────────────────────────────────────────────────

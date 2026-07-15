@@ -22,7 +22,12 @@ const HOST_ANDROID_EMULATOR = '10.0.2.2';
 // Cambiar a 9092 si levantas todo con `docker compose up` (mapeo 9092:8007).
 const API_PORT = 8007;
 
-export const API_BASE_URL = `http://${HOST_ANDROID_EMULATOR}:${API_PORT}/api`;
+// URL de desarrollo (emulador Android → localhost del host). Se deja como referencia.
+export const API_BASE_URL_DEV = `http://${HOST_ANDROID_EMULATOR}:${API_PORT}/api`;
+
+// PRODUCCIÓN: el sistema real publicado vía Cloudflare (HTTPS, accesible desde
+// cualquier celular con datos/WiFi). Los APK de prueba/release apuntan aquí.
+export const API_BASE_URL = 'https://forex.kapitalya.com.bo/api';
 
 // Puerto del bundler Metro (informativo; se fija con `react-native start --port`).
 export const METRO_PORT = 8081;

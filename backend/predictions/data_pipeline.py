@@ -32,12 +32,14 @@ class ForexDataPipeline:
 
     # ── Entrada pública ────────────────────────────────────────────────────────
 
-    def build(self, currency_pair: str, start_date=None) -> pd.DataFrame:
+    def build(self, currency_pair: str, start_date=None, market: str = 'web') -> pd.DataFrame:
         """
         Retorna DataFrame con índice DatetimeIndex UTC, frecuencia horaria.
         Columnas incluyen 'rate' + todos los features técnicos/calendario/macro.
+
+        `market` selecciona la serie ('web' | 'competencia' | 'empresa').
         """
-        df = self._load(currency_pair, start_date)
+        df = self._load(currency_pair, start_date, market)
         df = self._normalize_timestamps(df)
         df = self._resample_hourly(df)
         df = self._cap_outliers(df)
@@ -53,13 +55,13 @@ class ForexDataPipeline:
 
     # ── Carga ──────────────────────────────────────────────────────────────────
 
-    def _load(self, currency_pair: str, start_date=None) -> pd.DataFrame:
+    def _load(self, currency_pair: str, start_date=None, market: str = 'web') -> pd.DataFrame:
         from predictions.models import TrainingData
 
         cutoff = start_date or (timezone.now() - timedelta(days=365 * self.LOOKBACK_YEARS))
         qs = (
             TrainingData.objects
-            .filter(currency_pair=currency_pair, date__gte=cutoff)
+            .filter(currency_pair=currency_pair, market=market, date__gte=cutoff)
             .order_by('date')
             .values('date', 'rate', 'volume',
                     'international_rate', 'interest_rate',
@@ -72,6 +74,11 @@ class ForexDataPipeline:
                 f"necesita {self.MIN_ROWS}, tiene {len(df)}"
             )
         df['rate'] = pd.to_numeric(df['rate'], errors='coerce')
+        # Las columnas macro vienen como Decimal desde el ORM → convertir a float
+        for col in ('volume', 'international_rate', 'interest_rate',
+                    'inflation_rate', 'oil_price'):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
         return df
 
     # ── Normalización temporal ─────────────────────────────────────────────────
@@ -86,10 +93,11 @@ class ForexDataPipeline:
         """Resample a frecuencia 1H; forward-fill rate, interpolar columnas dispersas."""
         df = df.resample('1h').last()
         df['rate'] = df['rate'].ffill()
+        # Solo ffill (causal) — bfill propagaría datos del futuro hacia atrás
         sparse_cols = ['international_rate', 'oil_price', 'interest_rate', 'inflation_rate']
         for col in sparse_cols:
             if col in df.columns:
-                df[col] = df[col].ffill().bfill()
+                df[col] = df[col].ffill()
         if 'volume' in df.columns:
             df['volume'] = df['volume'].fillna(0)
         return df
@@ -97,7 +105,11 @@ class ForexDataPipeline:
     # ── Outliers ───────────────────────────────────────────────────────────────
 
     def _cap_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
-        q1, q3 = df['rate'].quantile(0.25), df['rate'].quantile(0.75)
+        # Los cuantiles se calculan SOLO sobre el tramo de entrenamiento (el
+        # primer 80% cronológico, mismo split que usan los forecasters) para no
+        # filtrar estadísticos del futuro/test hacia el pasado (data leakage).
+        train = df['rate'].iloc[:max(int(len(df) * 0.8), 1)]
+        q1, q3 = train.quantile(0.25), train.quantile(0.75)
         iqr = q3 - q1
         df['rate'] = df['rate'].clip(
             lower=q1 - self.OUTLIER_IQR_MULT * iqr,
@@ -189,9 +201,11 @@ class ForexDataPipeline:
     # ── Features macroeconómicos ──────────────────────────────────────────────
 
     def _add_macro(self, df: pd.DataFrame) -> pd.DataFrame:
+        # Solo forward-fill (causal): bfill propagaría valores del futuro hacia
+        # atrás. La pre-historia sin dato queda en 0 (constante, inocua).
         for col in ('international_rate', 'interest_rate', 'inflation_rate', 'oil_price'):
             if col in df.columns:
-                df[col] = df[col].ffill().bfill().fillna(0)
+                df[col] = df[col].ffill().fillna(0)
             else:
                 df[col] = 0.0
         return df

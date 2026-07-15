@@ -40,6 +40,16 @@ export interface ResumenGastos {
   por_categoria: { categoria: string; total: string; count: number }[];
 }
 
+export interface IngresoExtra {
+  id: number; fecha: string; tipo: string;
+  monto_bob: string; medio_pago: string; notas: string; branch_nombre: string;
+}
+
+export interface ResumenIngresos {
+  total_bob: string; total_ingresos: number;
+  por_tipo: { tipo: string; total: string; count: number }[];
+}
+
 export interface CapitalSnapshot {
   id: number; fecha: string; branch_name: string;
   efectivo_bob: string; qr_bob: string; divisas_bob: string;
@@ -53,6 +63,8 @@ interface UseDashboardReturn {
   capital: CapitalActual | null;
   gastos: Gasto[];
   resumenGastos: ResumenGastos | null;
+  ingresos: IngresoExtra[];
+  resumenIngresos: ResumenIngresos | null;
   snapshots: CapitalSnapshot[];
   loading: boolean;
   canSnapshot: boolean;
@@ -63,6 +75,8 @@ export function useDashboard(dateFrom: string, dateTo: string): UseDashboardRetu
   const [capital, setCapital]             = useState<CapitalActual | null>(null);
   const [gastos, setGastos]               = useState<Gasto[]>([]);
   const [resumenGastos, setResumenGastos] = useState<ResumenGastos | null>(null);
+  const [ingresos, setIngresos]           = useState<IngresoExtra[]>([]);
+  const [resumenIngresos, setResumenIngresos] = useState<ResumenIngresos | null>(null);
   const [snapshots, setSnapshots]         = useState<CapitalSnapshot[]>([]);
   const [loading, setLoading]             = useState(true);
   const { user }                          = useAuth();
@@ -75,10 +89,12 @@ export function useDashboard(dateFrom: string, dateTo: string): UseDashboardRetu
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [capitalRes, gastosRes, resumenRes, snapshotsRes] = await Promise.all([
+      const [capitalRes, gastosRes, resumenRes, ingresosRes, resumenIngRes, snapshotsRes] = await Promise.all([
         api.get('/capital/actual/', { params: branchParams }),
         api.get('/capital/gastos/', { params: { date_from: dateFrom, date_to: dateTo } }),
         api.get('/capital/gastos/resumen/', { params: { date_from: dateFrom, date_to: dateTo } }),
+        api.get('/capital/ingresos/', { params: { date_from: dateFrom, date_to: dateTo } }),
+        api.get('/capital/ingresos/resumen/', { params: { date_from: dateFrom, date_to: dateTo } }),
         canSnapshot
           ? api.get('/capital/snapshots/', { params: { date_from: dateFrom, date_to: dateTo } })
           : Promise.resolve({ data: { results: [] } }),
@@ -86,6 +102,8 @@ export function useDashboard(dateFrom: string, dateTo: string): UseDashboardRetu
       setCapital(capitalRes.data);
       setGastos(gastosRes.data?.results ?? gastosRes.data ?? []);
       setResumenGastos(resumenRes.data);
+      setIngresos(ingresosRes.data?.results ?? ingresosRes.data ?? []);
+      setResumenIngresos(resumenIngRes.data);
       setSnapshots(snapshotsRes.data?.results ?? snapshotsRes.data ?? []);
     } catch {
       enqueueSnackbar('Error al cargar datos de capital', { variant: 'error' });
@@ -102,5 +120,5 @@ export function useDashboard(dateFrom: string, dateTo: string): UseDashboardRetu
     refresh();
   }, [lastSheetsSync, refresh]);
 
-  return { capital, gastos, resumenGastos, snapshots, loading, canSnapshot, refresh };
+  return { capital, gastos, resumenGastos, ingresos, resumenIngresos, snapshots, loading, canSnapshot, refresh };
 }

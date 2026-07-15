@@ -26,7 +26,7 @@ class ARIMAForecaster:
 
     # ── Entrenamiento ──────────────────────────────────────────────────────────
 
-    def train(self, currency_pair: str, df: pd.DataFrame) -> dict:
+    def train(self, currency_pair: str, df: pd.DataFrame, market: str = 'web') -> dict:
         """
         Ajusta Auto-ARIMA sobre la serie diaria derivada de df (horario → diario).
         Retorna métricas y registra en PredictionModel.
@@ -74,7 +74,8 @@ class ARIMAForecaster:
         metrics['arima_seasonal_order'] = str(model.seasonal_order)
         metrics['aic']                  = round(float(model.aic()), 2)
 
-        pair_safe  = currency_pair.replace('/', '_')
+        from predictions.market_keys import fname_suffix
+        pair_safe  = currency_pair.replace('/', '_') + fname_suffix(market)
         model_path = os.path.join(self.models_path, f'arima_{pair_safe}.pkl')
         joblib.dump({
             'model':     model,
@@ -84,7 +85,7 @@ class ARIMAForecaster:
         self._register(currency_pair, model_path, metrics, {
             'order':          str(model.order),
             'seasonal_order': str(model.seasonal_order),
-        })
+        }, market)
         logger.info(
             "ARIMA entrenado pair=%s order=%s mape=%.4f%%",
             currency_pair, model.order, metrics['mape'],
@@ -93,12 +94,13 @@ class ARIMAForecaster:
 
     # ── Predicción ─────────────────────────────────────────────────────────────
 
-    def predict(self, currency_pair: str, horizon: int) -> list:
+    def predict(self, currency_pair: str, horizon: int, market: str = 'web') -> list:
         """
         Retorna lista de dicts con predicciones horarias.
         ARIMA predice en días; interpolamos linealmente a horas.
         """
-        pair_safe  = currency_pair.replace('/', '_')
+        from predictions.market_keys import fname_suffix
+        pair_safe  = currency_pair.replace('/', '_') + fname_suffix(market)
         model_path = os.path.join(self.models_path, f'arima_{pair_safe}.pkl')
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"ARIMA no entrenado para {currency_pair}")
@@ -133,14 +135,15 @@ class ARIMAForecaster:
 
     # ── Registro en BD ─────────────────────────────────────────────────────────
 
-    def _register(self, currency_pair, model_path, metrics, params):
+    def _register(self, currency_pair, model_path, metrics, params, market='web'):
         from predictions.models import PredictionModel
 
         PredictionModel.objects.update_or_create(
             model_type='ARIMA',
             currency_pair=currency_pair,
+            market=market,
             defaults={
-                'name':         f'Auto-ARIMA {currency_pair}',
+                'name':         f'Auto-ARIMA {currency_pair} [{market}]',
                 'parameters':   params,
                 'metrics':      metrics,
                 'model_file':   model_path,

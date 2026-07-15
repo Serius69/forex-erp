@@ -65,6 +65,9 @@ urlpatterns = [
     # Predictions
     path('api/predictions/',   include('predictions.urls')),
 
+    # Indicadores macroeconómicos Bolivia
+    path('api/macro/',         include('macro.urls')),
+
     # Reports
     path('api/reports/',       include('reports.urls')),
 

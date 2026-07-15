@@ -29,18 +29,21 @@ class ForexPredictionService:
         self.models = {}
         self.scalers = {}
     
-    def prepare_training_data(self, currency_pair, start_date=None):
-        """Prepara datos para entrenamiento"""
+    def prepare_training_data(self, currency_pair, start_date=None, market='web'):
+        """Prepara datos para entrenamiento (serie `market`: web/competencia/empresa)"""
         from .models import TrainingData
-        
+
         # Obtener datos históricos
-        query = TrainingData.objects.filter(currency_pair=currency_pair)
+        query = TrainingData.objects.filter(currency_pair=currency_pair, market=market)
         
         if start_date:
             query = query.filter(date__gte=start_date)
         
-        data = query.order_by('date').values()
-        
+        # Solo date + rate: el resto de columnas de TrainingData (volatility, ma_*,
+        # campos macro) las deja NULL `update_training_data`, y como no todas se
+        # recalculan en _engineer_features, el dropna posterior vaciaba el DataFrame.
+        data = list(query.order_by('date').values('date', 'rate'))
+
         if len(data) < 100:
             raise ValueError("Datos insuficientes para entrenamiento")
         
@@ -48,7 +51,12 @@ class ForexPredictionService:
         df = pd.DataFrame(data)
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
-        
+
+        # `rate` viene como Decimal (dtype object) desde el ORM: los rolling/pct_change
+        # sobre object producen NaN y el dropna posterior vacía el DataFrame (Prophet
+        # fallaba con "less than 2 non-NaN rows"). Forzar float.
+        df['rate'] = pd.to_numeric(df['rate'], errors='coerce').astype('float64')
+
         # Calcular características adicionales
         df = self._engineer_features(df)
         
@@ -108,16 +116,19 @@ class ForexPredictionService:
         
         return upper_band, rolling_mean, lower_band
     
-    def train_prophet_model(self, currency_pair):
-        """Entrena modelo Prophet"""
-        logger.info(f"Entrenando Prophet para {currency_pair}")
-        
+    def train_prophet_model(self, currency_pair, market='web'):
+        """Entrena modelo Prophet para la serie `market`"""
+        logger.info(f"Entrenando Prophet para {currency_pair} [{market}]")
+
         # Preparar datos
-        df = self.prepare_training_data(currency_pair)
+        df = self.prepare_training_data(currency_pair, market=market)
         
-        # Formato Prophet
+        # Formato Prophet — `ds` debe ser tz-naive (TrainingData.date es tz-aware)
+        ds = pd.to_datetime(df.index)
+        if getattr(ds, 'tz', None) is not None:
+            ds = ds.tz_localize(None)
         prophet_df = pd.DataFrame({
-            'ds': df.index,
+            'ds': ds,
             'y': df['rate']
         })
         
@@ -146,21 +157,24 @@ class ForexPredictionService:
         # Entrenar
         model.fit(prophet_df)
         
-        # Guardar modelo
-        model_path = os.path.join(self.models_path, f'prophet_{currency_pair}.pkl')
+        # Guardar modelo (sanitizar '/' del par + sufijo de market)
+        from .market_keys import fname_suffix
+        pair_safe = currency_pair.replace('/', '_') + fname_suffix(market)
+        model_path = os.path.join(self.models_path, f'prophet_{pair_safe}.pkl')
         joblib.dump(model, model_path)
-        
+
         # Evaluar modelo
         metrics = self._evaluate_prophet(model, prophet_df)
-        
+
         # Registrar en base de datos
         from .models import PredictionModel
-        
+
         model_record, created = PredictionModel.objects.update_or_create(
             model_type='PROPHET',
             currency_pair=currency_pair,
+            market=market,
             defaults={
-                'name': f'Prophet {currency_pair}',
+                'name': f'Prophet {currency_pair} [{market}]',
                 'parameters': {
                     'changepoint_prior_scale': 0.05,
                     'seasonality_prior_scale': 10.0,
@@ -209,12 +223,14 @@ class ForexPredictionService:
             'mape': float(mape)
         }
     
-    def train_lstm_model(self, currency_pair, sequence_length=60):
-        """Entrena modelo LSTM"""
-        logger.info(f"Entrenando LSTM para {currency_pair}")
-        
+    def train_lstm_model(self, currency_pair, sequence_length=60, market='web'):
+        """Entrena modelo LSTM para la serie `market`"""
+        logger.info(f"Entrenando LSTM para {currency_pair} [{market}]")
+        from .market_keys import fname_suffix
+        msuffix = fname_suffix(market)
+
         # Preparar datos
-        df = self.prepare_training_data(currency_pair)
+        df = self.prepare_training_data(currency_pair, market=market)
         
         # Características para LSTM
         features = ['rate', 'ma_7', 'ma_30', 'volatility_7', 'rsi']
@@ -225,8 +241,9 @@ class ForexPredictionService:
         scaler = MinMaxScaler()
         scaled_data = scaler.fit_transform(feature_data)
         
-        # Guardar scaler
-        scaler_path = os.path.join(self.models_path, f'scaler_lstm_{currency_pair}.pkl')
+        # Guardar scaler (sanitizar '/' del par + sufijo market)
+        pair_safe = currency_pair.replace('/', '_') + msuffix
+        scaler_path = os.path.join(self.models_path, f'scaler_lstm_{pair_safe}.pkl')
         joblib.dump(scaler, scaler_path)
         self.scalers[f'lstm_{currency_pair}'] = scaler
         
@@ -270,21 +287,23 @@ class ForexPredictionService:
             ]
         )
         
-        # Guardar modelo
-        model_path = os.path.join(self.models_path, f'lstm_{currency_pair}.h5')
+        # Guardar modelo (sanitizar '/' del par + sufijo market)
+        pair_safe = currency_pair.replace('/', '_') + msuffix
+        model_path = os.path.join(self.models_path, f'lstm_{pair_safe}.h5')
         model.save(model_path)
-        
+
         # Evaluar
         metrics = self._evaluate_lstm(model, X_test, y_test, scaler)
-        
+
         # Registrar en base de datos
         from .models import PredictionModel
-        
+
         model_record, created = PredictionModel.objects.update_or_create(
             model_type='LSTM',
             currency_pair=currency_pair,
+            market=market,
             defaults={
-                'name': f'LSTM {currency_pair}',
+                'name': f'LSTM {currency_pair} [{market}]',
                 'parameters': {
                     'sequence_length': sequence_length,
                     'features': features,
@@ -337,13 +356,13 @@ class ForexPredictionService:
            'mape': float(mape)
        }
    
-    def train_ensemble_model(self, currency_pair):
-       """Entrena modelo ensemble combinando Prophet y LSTM"""
-       logger.info(f"Entrenando modelo Ensemble para {currency_pair}")
-       
+    def train_ensemble_model(self, currency_pair, market='web'):
+       """Entrena modelo ensemble combinando Prophet y LSTM (serie `market`)"""
+       logger.info(f"Entrenando modelo Ensemble para {currency_pair} [{market}]")
+
        # Entrenar modelos individuales si no existen
-       prophet_model, prophet_metrics = self.train_prophet_model(currency_pair)
-       lstm_model, lstm_metrics = self.train_lstm_model(currency_pair)
+       prophet_model, prophet_metrics = self.train_prophet_model(currency_pair, market=market)
+       lstm_model, lstm_metrics = self.train_lstm_model(currency_pair, market=market)
        
        # Calcular pesos basados en métricas
        prophet_weight = 1 / (prophet_metrics['mape'] + 1)
@@ -360,8 +379,9 @@ class ForexPredictionService:
        model_record, created = PredictionModel.objects.update_or_create(
            model_type='ENSEMBLE',
            currency_pair=currency_pair,
+           market=market,
            defaults={
-               'name': f'Ensemble {currency_pair}',
+               'name': f'Ensemble {currency_pair} [{market}]',
                'parameters': {
                    'prophet_weight': float(prophet_weight),
                    'lstm_weight': float(lstm_weight),
@@ -381,8 +401,8 @@ class ForexPredictionService:
        
        return model_record
    
-    def predict_rates(self, currency_pair, horizon=24):
-       """Genera predicciones para las próximas 'horizon' horas"""
+    def predict_rates(self, currency_pair, horizon=24, market='web'):
+       """Genera predicciones para las próximas 'horizon' horas (serie `market`)"""
        from .models import PredictionModel, Prediction
        from rates.models import RateConfiguration
        
@@ -395,12 +415,13 @@ class ForexPredictionService:
            is_active=True
        ).first()
        
-       # Obtener modelos activos
+       # Obtener modelos activos de la serie solicitada
        models = PredictionModel.objects.filter(
            currency_pair=currency_pair,
+           market=market,
            is_active=True
        )
-       
+
        for model in models:
            if model.model_type == 'PROPHET':
                model_predictions = self._predict_prophet(model, horizon)
@@ -460,7 +481,7 @@ class ForexPredictionService:
        from rates.models import ExchangeRate
        from decimal import Decimal
 
-       rate = Decimal('9.80')
+       rate = None
        try:
            latest = (
                ExchangeRate.objects
@@ -476,6 +497,12 @@ class ForexPredictionService:
                rate = (latest.buy_rate + latest.sell_rate) / 2
        except Exception as exc:
            logger.warning('naive_fallback could not get latest rate: %s', exc)
+
+       if rate is None:
+           # Sin NINGUNA tasa real en BD: mejor no predecir que inventar un
+           # número (antes devolvía 9.80 hardcodeado como si fuera dato).
+           logger.error('naive_fallback sin tasa real en BD — no se emite predicción')
+           return []
 
        margin = rate * Decimal('0.005')
        predictions = []
@@ -592,7 +619,8 @@ class ForexPredictionService:
 
            sequence_length = model_record.parameters['sequence_length']
            recent_data = TrainingData.objects.filter(
-               currency_pair=model_record.currency_pair
+               currency_pair=model_record.currency_pair,
+               market='web',
            ).order_by('-date')[:sequence_length]
 
            df = pd.DataFrame(list(recent_data.values()))
@@ -636,14 +664,16 @@ class ForexPredictionService:
     def _predict_ensemble(self, model_record, horizon):
        """Predicciones con modelo ensemble"""
        from .models import PredictionModel
-       # Obtener predicciones de modelos individuales
+       # Obtener predicciones de modelos individuales (misma serie de mercado)
        prophet_model = PredictionModel.objects.get(
            model_type='PROPHET',
-           currency_pair=model_record.currency_pair
+           currency_pair=model_record.currency_pair,
+           market=model_record.market,
        )
        lstm_model = PredictionModel.objects.get(
            model_type='LSTM',
-           currency_pair=model_record.currency_pair
+           currency_pair=model_record.currency_pair,
+           market=model_record.market,
        )
        
        prophet_predictions = self._predict_prophet(prophet_model, horizon)

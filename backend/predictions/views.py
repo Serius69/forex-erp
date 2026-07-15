@@ -447,40 +447,72 @@ class ForecastView(APIView):
         # de ForexMLEngine.predict (ml_engine.py). refresh=true (use_cache False) respeta
         # la regeneracion sincrona explicita (opt-in).
         pair_norm = currency_pair.replace('-', '/')
-        if use_cache:
-            from django.core.cache import cache as _cache
-            _forecast_key = f'ml_forecast:{pair_norm}:{market}:{horizon}'
-            if _cache.get(_forecast_key) is None:
-                fallback = _forecast_fallback(currency_pair, horizon)
-                if fallback:
-                    if not _cache.get('forecast_prewarm_enqueued'):
-                        try:
-                            from predictions.tasks import cache_forecast_hourly
-                            cache_forecast_hourly.delay()
-                            _cache.set('forecast_prewarm_enqueued', 1, 120)  # debounce 2 min
-                        except Exception as exc:
-                            import logging as _log
-                            _log.getLogger('predictions').warning(
-                                'forecast prewarm enqueue failed for %s: %s', currency_pair, exc
-                            )
-                    return Response(fallback)
-                # Sin fallback disponible (sin tasa actual): cae al camino normal.
 
+        # ── Cadena de mercados a intentar ────────────────────────────────────
+        # La serie 'web' (paralelo digital) solo tiene historia profunda para
+        # USD; para el resto de divisas la historia real vive en 'competencia'
+        # (~1.300 días) y 'empresa'. Antes la vista solo probaba el mercado
+        # pedido → todos los pares ≠USD servían SIEMPRE el fallback plano
+        # ('inference'). Ahora se sirve el primer mercado con forecast real y
+        # se anota cuál se usó (market / market_fallback).
+        market_chain = [market] + [m for m in ('web', 'competencia', 'empresa')
+                                   if m != market]
+
+        from django.core.cache import cache as _cache
+
+        def _finish(res: dict) -> Response:
+            if not show_ci:
+                res.pop('confidence_interval', None)
+                for p in res.get('predictions', []):
+                    p.pop('lower', None)
+                    p.pop('upper', None)
+            return Response(res)
+
+        if use_cache:
+            # 1) Servir desde caché el primer mercado que tenga forecast real
+            for mkt in market_chain:
+                cached = _cache.get(f'ml_forecast:{pair_norm}:{mkt}:{horizon}')
+                if isinstance(cached, dict):
+                    cached.setdefault('market', mkt)
+                    cached['market_fallback'] = (mkt != market)
+                    return _finish(cached)
+
+            # 2) Caché frío en TODOS los mercados: encolar prewarm y servir
+            #    fallback plano (inference) sin bloquear el worker.
+            fallback = _forecast_fallback(currency_pair, horizon)
+            if fallback:
+                if not _cache.get('forecast_prewarm_enqueued'):
+                    try:
+                        from predictions.tasks import cache_forecast_hourly
+                        cache_forecast_hourly.delay()
+                        _cache.set('forecast_prewarm_enqueued', 1, 120)  # debounce 2 min
+                    except Exception as exc:
+                        import logging as _log
+                        _log.getLogger('predictions').warning(
+                            'forecast prewarm enqueue failed for %s: %s', currency_pair, exc
+                        )
+                return Response(fallback)
+            # Sin fallback disponible (sin tasa actual): cae al camino normal.
+
+        result = None
+        last_value_error = None
         try:
             from predictions.ml_engine import ForexMLEngine
             engine = ForexMLEngine()
-            result = engine.predict(
-                currency_pair=currency_pair.replace('-', '/'),
-                horizon_key=horizon,
-                use_cache=use_cache,
-                market=market,
-            )
-        except ValueError as exc:
-            # No trained model — try to return inference fallback from current rate
-            fallback = _forecast_fallback(currency_pair, horizon)
-            if fallback:
-                return Response(fallback)
-            return Response({'error': str(exc)}, status=status.HTTP_404_NOT_FOUND)
+            for mkt in market_chain:
+                try:
+                    result = engine.predict(
+                        currency_pair=pair_norm,
+                        horizon_key=horizon,
+                        use_cache=use_cache,
+                        market=mkt,
+                    )
+                    result['market'] = mkt
+                    result['market_fallback'] = (mkt != market)
+                    break
+                except ValueError as exc:   # sin modelo/datos en este mercado
+                    last_value_error = exc
+                    continue
         except RuntimeError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:
@@ -488,6 +520,14 @@ class ForecastView(APIView):
                 {'error': 'Error generando pronóstico', 'detail': str(exc)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+        if result is None:
+            # Ningún mercado tiene modelo — fallback plano de la tasa actual
+            fallback = _forecast_fallback(currency_pair, horizon)
+            if fallback:
+                return Response(fallback)
+            return Response({'error': str(last_value_error or 'sin modelo entrenado')},
+                            status=status.HTTP_404_NOT_FOUND)
 
         if not show_ci:
             result.pop('confidence_interval', None)
@@ -515,5 +555,114 @@ class ModelHealthView(APIView):
         except Exception as exc:
             return Response(
                 {'error': 'No se pudo obtener estado de salud', 'detail': str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class SimulationView(APIView):
+    """
+    GET /api/predictions/simulate/{currency_pair}/
+
+    Monte Carlo calibrado con la serie diaria REAL (TrainingData) del par/mercado.
+
+    Query params:
+      market       — web (default) | competencia | empresa
+      horizon_days — 1..365 (default 30)
+      n_paths      — 100..10000 (default 2000)
+      method       — bootstrap (default, re-muestrea retornos reales) | gbm
+      shock_pct    — estrés inicial ±% (default 0; ej. 15 = devaluación 15%)
+      var          — true para incluir VaR/ES de la posición real de inventario
+      confidence   — nivel VaR (default 0.95)
+      seed         — reproducibilidad (opcional)
+
+    Response: bands (percentiles por día), final_distribution, calibration,
+    y position_risk si var=true.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, currency_pair):
+        from predictions.market_keys import VALID_MARKETS
+        from predictions.simulation import (
+            SimulationError, inventory_position, load_series,
+            position_var, simulate_paths,
+        )
+
+        pair = currency_pair.replace('-', '/')
+        market = request.query_params.get('market', 'web').lower()
+        if market not in VALID_MARKETS:
+            return Response(
+                {'error': f'market debe ser uno de: {", ".join(VALID_MARKETS)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            horizon = int(request.query_params.get('horizon_days', 30))
+            n_paths = int(request.query_params.get('n_paths', 2000))
+            shock   = float(request.query_params.get('shock_pct', 0))
+            conf    = float(request.query_params.get('confidence', 0.95))
+            seed_q  = request.query_params.get('seed')
+            seed    = int(seed_q) if seed_q else None
+        except (TypeError, ValueError):
+            return Response({'error': 'parámetros numéricos inválidos'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        method = request.query_params.get('method', 'bootstrap').lower()
+        if not (0.5 <= conf <= 0.999):
+            return Response({'error': 'confidence fuera de rango [0.5, 0.999]'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            series = load_series(pair, market=market)
+            result = simulate_paths(series, horizon_days=horizon,
+                                    n_paths=n_paths, method=method,
+                                    shock_pct=shock, seed=seed)
+        except SimulationError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'error': 'simulación fallida', 'detail': str(exc)},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # VaR de la posición REAL de inventario (opcional)
+        if request.query_params.get('var', 'false').lower() == 'true':
+            try:
+                code = pair.split('/')[0]
+                amount = inventory_position(code)
+                result['position_risk'] = (
+                    position_var(result, amount, confidence=conf)
+                    if amount > 0 else
+                    {'position_amount': 0,
+                     'note': f'sin posición de {code} en inventario'}
+                )
+            except Exception as exc:
+                result['position_risk'] = {'error': str(exc)}
+
+        result.pop('_finals', None)   # distribución cruda: solo uso interno
+        return Response(result)
+
+
+class AdvisorChatView(APIView):
+    """
+    POST /api/predictions/advisor/   {"message": "¿compro dólares hoy?"}
+
+    Asesor de compra/venta de divisas: compone el pronóstico ML, la brecha
+    oficial BCB↔paralelo, el sentimiento de noticias (RSS), Monte Carlo sobre
+    retornos reales, la posición de inventario y el motor AI de pricing en una
+    recomendación COMPRAR/ESPERAR/VENDER con razones (determinista, sin LLM).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        message = (request.data.get('message') or '').strip()
+        if not message:
+            return Response({'error': 'message requerido'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if len(message) > 500:
+            return Response({'error': 'message demasiado largo (máx 500)'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            from predictions.advisor import advise
+            return Response(advise(message))
+        except Exception as exc:
+            return Response(
+                {'error': 'asesor no disponible', 'detail': str(exc)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

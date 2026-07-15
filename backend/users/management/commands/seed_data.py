@@ -77,6 +77,8 @@ CURRENT_RATES = {
 # Usuarios del sistema por rol y sucursal
 USERS_SPEC = [
     # username, first, last, role, branch_code, email, password
+    # Usuario maestro del ecosistema (mismo que en el Hub SSO — un solo login en todos los sistemas)
+    ('sergio',    'Sergio',        'Troche',     'ADMIN',      'CENT', 'kapitalyabolivia@gmail.com','Kapitalya2026!', True,  True),
     ('admin',     'Administrador', 'Kapitalya',  'ADMIN',      'CENT', 'admin@kapitalya.bo',        'admin1234',      True,  True),
     ('supervisor1','Carlos',       'Mendoza',    'SUPERVISOR', 'CENT', 'cmendoza@kapitalya.bo',     'super1234',      True,  False),
     ('supervisor2','Patricia',     'Vargas',     'SUPERVISOR', 'SUR',  'pvargas@kapitalya.bo',      'super1234',      True,  False),
@@ -274,6 +276,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             '\n[OK]  Seed completo. Sistema listo para pruebas.\n'
             '------------------------------------------\n'
+            '  Maestro:    sergio / Kapitalya2026!  (SSO ecosistema)\n'
             '  Admin:      admin / admin1234\n'
             '  Supervisor: supervisor1 / super1234\n'
             '  Cajero:     cajero1 / cajero1234\n'

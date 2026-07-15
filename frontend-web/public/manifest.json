@@ -1,6 +1,8 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "Kapitalya ERP",
+  "name": "Kapitalya ERP — Gestión Forex",
+  "description": "Sistema de gestión para casas de cambio: transacciones, inventario, tarjetas y reportes.",
+  "lang": "es",
   "icons": [
     {
       "src": "favicon.ico",
@@ -18,8 +20,8 @@
       "sizes": "512x512"
     }
   ],
-  "start_url": ".",
+  "start_url": "/",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "theme_color": "#2563EB",
+  "background_color": "#F8FAFC"
 }

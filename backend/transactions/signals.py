@@ -105,6 +105,13 @@ def transaction_post_save(sender, instance, created, **kwargs):
     if not created:
         return
 
+    # El caller ya aplicó (o revirtió) los efectos manualmente — p.ej. la
+    # anti-transacción de reverse(), o cargas históricas. No duplicar.
+    if getattr(instance, '_effects_already_applied', False):
+        log.debug('SIGNAL_SKIP tx=%s — _effects_already_applied',
+                  getattr(instance, 'transaction_number', instance.pk))
+        return
+
     if instance.status != 'COMPLETED':
         return
 

@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     'capital',
     'tarjetas',
     'analytics',
+    'macro',
     'data_migration',
     'snapshots',
     'alerts',
@@ -226,6 +227,29 @@ if _CHANNEL_REDIS_URL:
         }
     }
 else:
+    # Sin CHANNEL_REDIS_URL: InMemoryChannelLayer aísla cada proceso (Celery,
+    # Daphne, gunicorn workers) en su propia cola en memoria, así que el push por
+    # WebSocket entre procesos se pierde en silencio. Se permite SOLO en dev/CI/tests;
+    # en producción es un fail-fast en vez de un fallback silencioso (auditoría #35).
+    import sys as _sys
+    _settings_module = os.environ.get('DJANGO_SETTINGS_MODULE', '')
+    _running_tests = (
+        _settings_module.endswith('.ci')
+        or 'PYTEST_CURRENT_TEST' in os.environ
+        or 'pytest' in os.path.basename(_sys.argv[0] if _sys.argv else '')
+        or 'test' in _sys.argv
+    )
+    # DEBUG puede finalizarse en el módulo concreto DESPUÉS de este import, así que
+    # también tratamos development.* como dev por el nombre del módulo de settings.
+    _is_dev = DEBUG or _settings_module.endswith('.development')
+    if not _is_dev and not _running_tests:
+        from django.core.exceptions import ImproperlyConfigured
+        raise ImproperlyConfigured(
+            'CHANNEL_REDIS_URL no está configurado. En producción los WebSockets '
+            'requieren un channel layer Redis compartido: InMemoryChannelLayer aísla '
+            'cada proceso y rompe el push multiproceso de forma silenciosa. '
+            'Define CHANNEL_REDIS_URL antes de arrancar.'
+        )
     # Desarrollo local o CI sin Redis: InMemoryChannelLayer (no multi-proceso)
     CHANNEL_LAYERS = {
         'default': {
@@ -392,10 +416,88 @@ CELERY_BEAT_SCHEDULE = {
         'options':  {'queue': 'default'},
     },
     # Predicciones ML: diario a las 01:00
-    'predictions-daily-forecast': {
-        'task':     'predictions.generate_daily_forecast',
-        'schedule': crontab(hour=1, minute=0),
+    # ── Pipeline ML de predicciones ───────────────────────────────────────────
+    # OJO: DatabaseScheduler re-siembra estas entradas en BD al arrancar beat;
+    # mantener en sync con rates/management/commands/sync_beat_schedule.py.
+    'predictions-train-daily': {
+        'task':     'predictions.train_all_prediction_models',
+        'schedule': crontab(hour=2, minute=0),
         'options':  {'queue': 'low'},
+    },
+    'predictions-cache-hourly': {
+        'task':     'predictions.cache_forecast_hourly',
+        'schedule': 60 * 60,
+        'options':  {'queue': 'low'},
+    },
+    'predictions-refresh-weights': {
+        'task':     'predictions.refresh_ensemble_weights',
+        'schedule': 4 * 60 * 60,
+        'options':  {'queue': 'low'},
+    },
+    'predictions-evaluate-daily': {
+        'task':     'predictions.evaluate_predictions',
+        'schedule': crontab(hour=3, minute=0),
+        'options':  {'queue': 'low'},
+    },
+    'predictions-weekly-backtest': {
+        'task':     'predictions.weekly_backtest_report',
+        'schedule': crontab(hour=4, minute=0, day_of_week=0),
+        'options':  {'queue': 'low'},
+    },
+    'predictions-weekly-tuning': {
+        'task':     'predictions.weekly_hyperparameter_tuning',
+        'schedule': crontab(hour=5, minute=0, day_of_week=0),
+        'options':  {'queue': 'low'},
+    },
+    # ── Tasa OFICIAL BCB (dolarapi → scrape BCB), base de la brecha ──────────
+    'rates-official-daily': {
+        'task':     'rates.update_exchange_rates',
+        'schedule': crontab(hour=8, minute=5),
+        'options':  {'queue': 'default'},
+    },
+    # ── Series físicas + higiene de tasas ────────────────────────────────────
+    'rates-derive-empresa-daily': {
+        'task':     'rates.derive_empresa_rates_daily',
+        'schedule': crontab(hour=1, minute=30),
+        'options':  {'queue': 'default'},
+    },
+    'rates-normalize-active': {
+        'task':     'rates.normalize_active_rates',
+        'schedule': crontab(hour=4, minute=30),
+        'options':  {'queue': 'default'},
+    },
+    'rates-cleanup-old': {
+        'task':     'rates.cleanup_old_rates',
+        'schedule': crontab(hour=3, minute=30),
+        'options':  {'queue': 'low'},
+    },
+    # ── ETL Google Sheet operativo ───────────────────────────────────────────
+    'transactions-sheet-sync': {
+        'task':     'transactions.sync_sheet_transactions',
+        'schedule': 30 * 60,
+        'options':  {'queue': 'default'},
+    },
+    # ── Indicadores macro Bolivia ────────────────────────────────────────────
+    'macro-daily-indicators': {
+        'task':     'macro.fetch_daily_indicators',
+        'schedule': crontab(hour=8, minute=30),
+        'options':  {'queue': 'default'},
+    },
+    'macro-worldbank-weekly': {
+        'task':     'macro.fetch_world_bank_indicators',
+        'schedule': crontab(hour=6, minute=0, day_of_week=1),
+        'options':  {'queue': 'low'},
+    },
+    'macro-news-4h': {
+        'task':     'macro.fetch_news',
+        'schedule': 4 * 60 * 60,
+        'options':  {'queue': 'default'},
+    },
+    # Kickstart del loop continuo (Redis lock deduplica si ya corre)
+    'rates-continuous-kickstart': {
+        'task':     'rates.continuous_fx_extraction',
+        'schedule': 15 * 60,
+        'options':  {'queue': 'critical'},
     },
     # ── Auto Profit Mode — optimizador de tasas ──────────────────────────────
     # Ejecutar cada 10 minutos para detectar oportunidades de margen

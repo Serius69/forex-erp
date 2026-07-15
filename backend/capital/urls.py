@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    GastoViewSet, CapitalSnapshotViewSet, CapitalManualEntryViewSet,
+    GastoViewSet, IngresoExtraViewSet, CapitalSnapshotViewSet, CapitalManualEntryViewSet,
     CapitalComposicionViewSet, CashBOBViewSet,
     capital_actual, ganancias_divisas, resumen_financiero, capital_resumen,
     capital_at_date,
@@ -12,6 +12,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r'gastos',       GastoViewSet,              basename='gastos')
+router.register(r'ingresos',     IngresoExtraViewSet,       basename='ingresos-extra')
 router.register(r'snapshots',    CapitalSnapshotViewSet,    basename='snapshots')
 router.register(r'caja',         CapitalManualEntryViewSet, basename='capital-caja')
 router.register(r'composicion',  CapitalComposicionViewSet, basename='composicion')

@@ -166,67 +166,101 @@ class CurrencyInventory(models.Model):
             self._create_alert('LOW_STOCK', user)
     
     def transfer_to_branch(self, target_branch, amount, user):
-        """Transfiere divisas a otra sucursal"""
-        if amount > self.total_balance:
-            raise ValueError("Saldo insuficiente para transferencia")
-        
-        # Obtener o crear inventario destino
-        target_inventory, created = CurrencyInventory.objects.get_or_create(
-            currency=self.currency,
-            branch=target_branch,
-            defaults={
-                'minimum_stock': self.minimum_stock,
-                'maximum_stock': self.maximum_stock,
-                'weighted_average_cost': self.weighted_average_cost
-            }
-        )
-        
-        # Realizar transferencia
-        self.remove_currency(amount, user)
-        target_inventory.add_currency(amount, self.weighted_average_cost, user)
-        
-        # Registrar transferencia
-        InventoryTransfer.objects.create(
-            currency=self.currency,
-            source_branch=self.branch,
-            target_branch=target_branch,
-            amount=amount,
-            rate=self.weighted_average_cost,
-            authorized_by=user,
-            status='COMPLETED'
-        )
-    
-    def adjust_inventory(self, physical_count, digital_count, user, reason):
-        """Ajusta el inventario según conteo físico"""
-        physical_diff = physical_count - self.physical_balance
-        digital_diff = digital_count - self.digital_balance
-        total_diff = physical_diff + digital_diff
-        
-        if total_diff != 0:
-            # Registrar ajuste
-            InventoryMovement.objects.create(
-                inventory=self,
-                movement_type='ADJUSTMENT',
-                amount=abs(total_diff),
-                rate=self.weighted_average_cost,
-                balance_before=self.total_balance,
-                balance_after=physical_count + digital_count,
-                user=user,
-                notes=f"Ajuste por {reason}. Diferencia: {total_diff}"
+        """
+        Transfiere divisas a otra sucursal.
+
+        Atómico y con lock de AMBOS inventarios: antes no había atomic ni
+        select_for_update → remove+add concurrentes podían perder movimientos
+        o dejar la transferencia a medias.
+        """
+        from django.db import transaction as db_tx
+
+        with db_tx.atomic():
+            # Releer el origen bajo lock (el saldo pudo cambiar desde la carga)
+            src = CurrencyInventory.objects.select_for_update().get(pk=self.pk)
+            if amount > src.total_balance:
+                raise ValueError("Saldo insuficiente para transferencia")
+
+            # Obtener o crear inventario destino (y lockearlo si ya existía)
+            target_inventory, created = CurrencyInventory.objects.get_or_create(
+                currency=src.currency,
+                branch=target_branch,
+                defaults={
+                    'minimum_stock': src.minimum_stock,
+                    'maximum_stock': src.maximum_stock,
+                    'weighted_average_cost': src.weighted_average_cost
+                }
             )
-            
-            # Actualizar balances
-            self.physical_balance = physical_count
-            self.digital_balance = digital_count
-            self.last_recount = timezone.now()
-            self.save()
-            
-            # Alerta si la diferencia es significativa (>1%)
-            if abs(total_diff) > self.total_balance * Decimal('0.01'):
-                self._create_alert('SIGNIFICANT_ADJUSTMENT', user, {
-                    'difference': float(total_diff),
-                    'percentage': float((total_diff / self.total_balance) * 100)
-                })
+            if not created:
+                target_inventory = (CurrencyInventory.objects
+                                    .select_for_update()
+                                    .get(pk=target_inventory.pk))
+
+            # Realizar transferencia sobre las instancias lockeadas
+            src.remove_currency(amount, user)
+            target_inventory.add_currency(amount, src.weighted_average_cost, user)
+
+            # Registrar transferencia (requested_by es NOT NULL — sin él, el
+            # create fallaba y TODA transferencia hacía rollback: la
+            # funcionalidad estaba rota de raíz)
+            InventoryTransfer.objects.create(
+                currency=src.currency,
+                source_branch=src.branch,
+                target_branch=target_branch,
+                amount=amount,
+                rate=src.weighted_average_cost,
+                requested_by=user,
+                authorized_by=user,
+                status='COMPLETED'
+            )
+
+        # Reflejar el estado post-transferencia en la instancia llamadora
+        self.refresh_from_db()
+
+    def adjust_inventory(self, physical_count, digital_count, user, reason):
+        """
+        Ajusta el inventario según conteo físico.
+
+        Atómico y con lock del registro: antes un ajuste concurrente con una
+        venta/compra podía pisar los balances con datos desactualizados.
+        """
+        from django.db import transaction as db_tx
+
+        with db_tx.atomic():
+            locked = CurrencyInventory.objects.select_for_update().get(pk=self.pk)
+            # trabajar con los balances REALES bajo lock, no los de la instancia
+            self.physical_balance = locked.physical_balance
+            self.digital_balance  = locked.digital_balance
+
+            physical_diff = physical_count - self.physical_balance
+            digital_diff = digital_count - self.digital_balance
+            total_diff = physical_diff + digital_diff
+
+            if total_diff != 0:
+                # Registrar ajuste
+                InventoryMovement.objects.create(
+                    inventory=self,
+                    movement_type='ADJUSTMENT',
+                    amount=abs(total_diff),
+                    rate=self.weighted_average_cost,
+                    balance_before=self.total_balance,
+                    balance_after=physical_count + digital_count,
+                    user=user,
+                    notes=f"Ajuste por {reason}. Diferencia: {total_diff}"
+                )
+
+                # Actualizar balances
+                self.physical_balance = physical_count
+                self.digital_balance = digital_count
+                self.last_recount = timezone.now()
+                self.save()
+
+                # Alerta si la diferencia es significativa (>1%)
+                if abs(total_diff) > self.total_balance * Decimal('0.01'):
+                    self._create_alert('SIGNIFICANT_ADJUSTMENT', user, {
+                        'difference': float(total_diff),
+                        'percentage': float((total_diff / self.total_balance) * 100)
+                    })
     
     def _create_alert(self, alert_type, user, extra_data=None):
         """Crea una alerta de inventario"""
@@ -246,6 +280,11 @@ class InventoryCard(models.Model):
         ('BLOCKED',  'Bloqueada'),
     ]
 
+    # Aislamiento multi-tenant. null solo para datos legados pre-migración.
+    company    = models.ForeignKey(
+        'tenants.Company', on_delete=models.PROTECT,
+        related_name='inventory_cards', null=True, blank=True,
+    )
     currency   = models.CharField(max_length=10)
     amount     = models.DecimalField(max_digits=15, decimal_places=2)
     status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ACTIVE')

@@ -33,8 +33,12 @@ const InventoryMovements: React.FC = () => {
     api.get('/inventory/stock/').then(res => {
       const list = res.data?.results ?? res.data ?? [];
       setInventory(Array.isArray(list) ? list : []);
-    }).catch(() => setInventory([]));
-  }, []);
+    }).catch(() => {
+      // Sin aviso, el filtro aparecía vacío como si no hubiera inventario.
+      setInventory([]);
+      enqueueSnackbar('Error al cargar el inventario para el filtro', { variant: 'error' });
+    });
+  }, [enqueueSnackbar]);
 
   const load = useCallback(async () => {
     setLoading(true);

@@ -18,7 +18,7 @@ from .models import PredictionModel, Prediction, TrainingData
 
 logger = logging.getLogger(__name__)
 
-CURRENCY_PAIRS = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB', 'PEN/BOB']
+CURRENCY_PAIRS = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB', 'PEN/BOB', 'CLP/BOB']
 
 # ── Compatibilidad con imports existentes en views.py ─────────────────────────
 # views.py importa estas dos funciones directamente
@@ -59,31 +59,29 @@ def train_all_prediction_models(self):
         results = {}
 
         for pair in CURRENCY_PAIRS:
-            # 1. Sincronizar datos desde ExchangeRate → TrainingData
+            # 1. Sincronizar datos desde ExchangeRate → TrainingData (las 3 series)
             try:
                 update_training_data(pair)
             except Exception as exc:
                 logger.warning("sync_data_failed pair=%s: %s", pair, exc)
 
-            # 2. Entrenar modelos base nuevos (XGBoost, ARIMA, BiLSTM)
-            try:
-                extended = engine.train_all(pair, include=['xgboost', 'arima', 'bilstm'])
-                results[pair] = {'new_models': extended}
-            except Exception as exc:
-                logger.error("train_extended_failed pair=%s: %s", pair, exc)
-                results[pair] = {'new_models': {'error': str(exc)}}
+            results[pair] = {}
+            # 2. Entrenar las 3 series (web / competencia / empresa) por separado.
+            #    Series sin datos suficientes (p.ej. web para divisas ≠ USD) degradan
+            #    limpio: train_all lanza y se captura, sin abortar el resto.
+            for market in MARKET_SOURCE_MAP:  # 'web', 'competencia', 'empresa'
+                try:
+                    extended = engine.train_all(
+                        pair, include=['xgboost', 'arima', 'bilstm'], market=market)
+                    results[pair][market] = {'new_models': extended}
+                except Exception as exc:
+                    logger.warning("train_extended pair=%s market=%s: %s", pair, market, exc)
+                    results[pair][market] = {'new_models': {'error': str(exc)}}
 
-            # 3. Entrenar modelos legacy (Prophet + LSTM original + Ensemble)
-            try:
-                from predictions.ml_service import ForexPredictionService
-                svc = ForexPredictionService()
-                _, pm = svc.train_prophet_model(pair)
-                results[pair]['prophet'] = pm
-                svc.train_ensemble_model(pair)
-                results[pair]['ensemble'] = 'ok'
-            except Exception as exc:
-                logger.warning("train_legacy_failed pair=%s: %s", pair, exc)
-                results[pair]['prophet'] = {'error': str(exc)}
+            # 3. Prophet: pasó a cadencia SEMANAL (weekly_hyperparameter_tuning).
+            #    Con MAPE ~20% el ensemble lo auto-subpondera a ~0.01; entrenarlo
+            #    a diario quemaba CPU sin mover el pronóstico. El artefacto
+            #    existente sigue sirviéndose entre reentrenos.
 
         success = sum(1 for v in results.values() if 'error' not in str(v).lower())
         logger.info("TASK_SUCCESS name=train_all_prediction_models success=%d/%d", success, len(CURRENCY_PAIRS))
@@ -123,12 +121,13 @@ def refresh_ensemble_weights(self):
         engine  = ForexMLEngine()
         results = {}
         for pair in CURRENCY_PAIRS:
-            try:
-                weights = engine.refresh_ensemble_weights(pair)
-                results[pair] = weights
-            except Exception as exc:
-                logger.warning("weights_refresh_failed pair=%s: %s", pair, exc)
-                results[pair] = {'error': str(exc)}
+            for market in MARKET_SOURCE_MAP:  # web / competencia / empresa
+                key = f'{pair}[{market}]'
+                try:
+                    results[key] = engine.refresh_ensemble_weights(pair, market=market)
+                except Exception as exc:
+                    logger.warning("weights_refresh_failed pair=%s market=%s: %s", pair, market, exc)
+                    results[key] = {'error': str(exc)}
 
         logger.info("TASK_SUCCESS name=refresh_ensemble_weights")
         return {'status': 'ok', 'weights': results}
@@ -160,15 +159,14 @@ def cache_forecast_hourly(self):
         cached = 0
 
         for pair in CURRENCY_PAIRS:
-            try:
-                engine.cache_all_horizons(pair)
-                cached += 1
-
-                # También guardar predicciones en BD para historial
-                _persist_ensemble_predictions(engine, pair)
-
-            except Exception as exc:
-                logger.warning("cache_hourly_failed pair=%s: %s", pair, exc)
+            for market in MARKET_SOURCE_MAP:  # web / competencia / empresa
+                try:
+                    engine.cache_all_horizons(pair, market=market)
+                    cached += 1
+                    # También guardar predicciones en BD para historial
+                    _persist_ensemble_predictions(engine, pair, market)
+                except Exception as exc:
+                    logger.warning("cache_hourly_failed pair=%s market=%s: %s", pair, market, exc)
 
         logger.info("TASK_SUCCESS name=cache_forecast_hourly cached=%d", cached)
         return {'status': 'ok', 'cached_pairs': cached}
@@ -178,19 +176,19 @@ def cache_forecast_hourly(self):
         raise
 
 
-def _persist_ensemble_predictions(engine, pair: str):
+def _persist_ensemble_predictions(engine, pair: str, market: str = 'web'):
     """Guarda las predicciones de las próximas 24h en la BD (para auditoría)."""
     try:
         from predictions.models import PredictionModel, Prediction
         from rates.models import RateConfiguration
 
         pm = PredictionModel.objects.filter(
-            model_type='ENSEMBLE', currency_pair=pair, is_active=True
+            model_type='ENSEMBLE', currency_pair=pair, market=market, is_active=True
         ).first()
         if not pm:
             return
 
-        result  = engine.predict(pair, horizon_key='24h', use_cache=True)
+        result  = engine.predict(pair, horizon_key='24h', use_cache=True, market=market)
         preds   = result.get('predictions', [])
         records = []
         rate_config = RateConfiguration.objects.filter(
@@ -261,6 +259,26 @@ def weekly_backtest_report(self):
                 logger.warning("backtest_failed pair=%s: %s", pair, exc)
                 reports[pair] = {'error': str(exc)}
 
+            # Meta-learner Ridge del ensemble (stacking): requiere historial de
+            # predicciones con actual_rate. Antes NUNCA se entrenaba (código
+            # muerto) y predict_with_meta caía siempre al promedio ponderado.
+            try:
+                from predictions.ensemble_forecaster import EnsembleForecaster
+                from predictions.market_keys import VALID_MARKETS
+                ens = EnsembleForecaster()
+                meta = {}
+                for market in VALID_MARKETS:
+                    try:
+                        meta[market] = ens.train_meta_learner(pair, market=market)
+                    except ValueError:
+                        meta[market] = 'sin datos suficientes'
+                reports.setdefault(pair, {})
+                if isinstance(reports[pair], dict):
+                    reports[pair]['meta_learner'] = meta
+                logger.info("meta_learner pair=%s %s", pair, meta)
+            except Exception as exc:
+                logger.warning("meta_learner_failed pair=%s: %s", pair, exc)
+
         logger.info("TASK_SUCCESS name=weekly_backtest_report")
         return {'status': 'ok', 'reports': reports}
 
@@ -273,63 +291,199 @@ def weekly_backtest_report(self):
 
 @shared_task(name='predictions.evaluate_predictions')
 def evaluate_predictions():
-    """Rellena actual_rate en predicciones pasadas y recalcula error_percentage."""
+    """
+    Rellena actual_rate en TODAS las predicciones vencidas y recalcula
+    error_percentage.
+
+    Bug histórico: solo miraba predicciones CREADAS en una ventana de 2 h
+    exactamente 24 h atrás — cualquier predicción más vieja (o si la tarea no
+    corría ese día, que era siempre porque el beat estaba roto) quedaba sin
+    actual_rate PARA SIEMPRE → la calibración conformal de los intervalos
+    nunca se activaba. Ahora: toda vencida de los últimos 90 días, en lotes,
+    comparando contra el mercado de SU propio modelo.
+    """
+    from decimal import Decimal
     from rates.models import ExchangeRate
 
-    evaluation_time = timezone.now() - timedelta(hours=24)
-    predictions     = Prediction.objects.filter(
-        created_at__gte=evaluation_time - timedelta(hours=1),
-        created_at__lt=evaluation_time  + timedelta(hours=1),
-        actual_rate__isnull=True,
-    )
-    evaluated = 0
+    now = timezone.now()
+    predictions = (Prediction.objects
+                   .filter(actual_rate__isnull=True,
+                           prediction_date__lt=now,
+                           prediction_date__gte=now - timedelta(days=90))
+                   .select_related('model')
+                   .order_by('prediction_date')[:5000])
+    to_update = []
     for prediction in predictions:
         currency_from, currency_to = prediction.currency_pair.split('/')
-        actual = ExchangeRate.objects.filter(
+        market = getattr(prediction.model, 'market', 'web') or 'web'
+        market_types = MARKET_SOURCE_MAP.get(market, MARKET_SOURCE_MAP['web'])
+        base = ExchangeRate.objects.filter(
             currency_from__code=currency_from,
             currency_to__code=currency_to,
-            valid_from__lte=prediction.prediction_date,
-            valid_until__gte=prediction.prediction_date,
-        ).first()
+            market_type__in=market_types,
+        )
+        # 1) tasa cuyo intervalo cubre el instante predicho; 2) fallback: la
+        #    última observada antes del instante (series con huecos)
+        actual = (base.filter(valid_from__lte=prediction.prediction_date,
+                              valid_until__gte=prediction.prediction_date).first()
+                  or base.filter(valid_from__lte=prediction.prediction_date)
+                         .order_by('-valid_from').first())
         if actual:
             # Usar tasa paralela (mid) como referencia real — BCB ya no es fuente activa
             prediction.actual_rate = (actual.buy_rate + actual.sell_rate) / 2
-            prediction.calculate_error()
-            evaluated += 1
+            # Recalcular error_percentage en memoria (equivalente a
+            # Prediction.calculate_error, pero sin save() por fila — se persiste
+            # todo en un único bulk_update al final para evitar el N+1 de escritura).
+            if (prediction.actual_rate and prediction.predicted_rate
+                    and prediction.actual_rate != 0):
+                actual_dec    = Decimal(str(prediction.actual_rate))
+                predicted_dec = Decimal(str(prediction.predicted_rate))
+                error_pct = (abs(actual_dec - predicted_dec) / actual_dec * Decimal('100'))
+                prediction.error_percentage = float(error_pct.quantize(Decimal('0.0001')))
+            to_update.append(prediction)
+
+    if to_update:
+        Prediction.objects.bulk_update(to_update, ['actual_rate', 'error_percentage'])
 
     _update_model_metrics()
+    evaluated = len(to_update)
     logger.info("evaluate_predictions evaluated=%d", evaluated)
     return {'predictions_evaluated': evaluated}
 
 
 # ── Tarea 6: Sincronizar datos de entrenamiento ───────────────────────────────
 
+# Cada serie de pronóstico ('market' de TrainingData) se alimenta de uno o más
+# market_type de ExchangeRate. Se pronostican por separado (web vs competencia vs
+# la tasa efectiva de la propia empresa).
+MARKET_SOURCE_MAP = {
+    'web':         ('paralelo_digital', 'parallel', 'digital'),
+    'competencia': ('paralelo_fisico_competencia',),
+    'empresa':     ('paralelo_fisico_empresa',),
+}
+
+
 @shared_task(name='predictions.update_training_data')
-def update_training_data(currency_pair: str):
-    """Sincroniza ExchangeRate → TrainingData (upsert)."""
+def update_training_data(currency_pair: str, market: str = None):
+    """Sincroniza ExchangeRate → TrainingData (upsert) por serie de mercado.
+
+    Con `market=None` (por defecto) sincroniza las TRES series
+    (web / competencia / empresa); con un market concreto, solo esa.
+    """
+    import statistics
+    from bisect import bisect_right
+    from datetime import datetime
+    from decimal import Decimal
+    from django.db.models import Avg
+    from django.db.models.functions import TruncDate, TruncHour
     from rates.models import ExchangeRate
 
     currency_from, currency_to = currency_pair.split('/')
-    rates = ExchangeRate.objects.filter(
-        currency_from__code=currency_from,
-        currency_to__code=currency_to,
-        market_type__in=('paralelo_digital', 'paralelo_fisico_empresa', 'parallel', 'digital'),
-    ).order_by('-valid_from')[:2000]
+    markets = [market] if market else list(MARKET_SOURCE_MAP.keys())
+    q4 = Decimal('0.0001')
+    q2 = Decimal('0.01')
 
-    updated = 0
-    for rate in rates:
-        # Usar mid de mercado paralelo como dato de entrenamiento
-        mid_rate = (rate.buy_rate + rate.sell_rate) / 2
-        _, created = TrainingData.objects.update_or_create(
-            currency_pair=currency_pair,
-            date=rate.valid_from,
-            defaults={'rate': mid_rate, 'source': rate.source},
-        )
-        if created:
-            updated += 1
+    # ── Series macro reales (as-of por fecha) ────────────────────────────────
+    # Antes estas columnas quedaban SIEMPRE NULL y los modelos entrenaban con
+    # macro=0 constante. Ahora se rellenan desde macro.MacroIndicator con el
+    # último valor conocido a cada fecha (sin mirar el futuro).
+    macro_lookup = {}   # col -> (fechas_ordenadas, valores)
+    try:
+        from macro.models import MacroIndicator
+        _MACRO_COLS = {
+            'usd_internacional':   'international_rate',
+            'tasa_interes_activa': 'interest_rate',
+            'inflacion_yoy':       'inflation_rate',
+        }
+        for series, col in _MACRO_COLS.items():
+            pts = list(MacroIndicator.objects.filter(series=series)
+                       .order_by('date').values_list('date', 'value'))
+            if pts:
+                macro_lookup[col] = ([p[0] for p in pts], [p[1] for p in pts])
+    except Exception as exc:   # app macro ausente/aún sin migrar → degradar limpio
+        logger.warning("update_training_data macro_unavailable: %s", exc)
 
-    logger.info("update_training_data pair=%s updated=%d", currency_pair, updated)
-    return {'pair': currency_pair, 'updated': updated}
+    def _macro_asof(col, day):
+        dates, values = macro_lookup.get(col, ((), ()))
+        i = bisect_right(dates, day) - 1
+        return values[i] if i >= 0 else None
+
+    total_updated = 0
+    per_market = {}
+    for mkt in markets:
+        market_types = MARKET_SOURCE_MAP[mkt]
+        # Granularidad por serie:
+        #   · web → HORARIA (TruncHour): el fx_engine produce tasas intradía
+        #     REALES cada pocos minutos; colapsarlas a 1 punto/día desechaba
+        #     esa señal y las features horarias del pipeline eran artefactos
+        #     de forward-fill. La historia vieja (1 cierre/día del CSV) queda
+        #     idéntica: TruncHour de un punto diario = ese mismo punto.
+        #   · competencia/empresa → DIARIA: son series de cierre diario.
+        # Solo OBSERVACIONES reales: los rellenos sintéticos (ESTIMADO_LOCF —
+        # colas planas que marchan el último dato durante meses — y las
+        # estimaciones INFERENCE) NO entrenan modelos.
+        trunc = TruncHour('valid_from') if mkt == 'web' else TruncDate('valid_from')
+        daily = (ExchangeRate.objects
+                 .filter(currency_from__code=currency_from,
+                         currency_to__code=currency_to,
+                         market_type__in=market_types)
+                 .exclude(source='ESTIMADO_LOCF')
+                 .exclude(source_method='INFERENCE')
+                 .annotate(day=trunc)
+                 .values('day')
+                 .annotate(avg_buy=Avg('buy_rate'), avg_sell=Avg('sell_rate'))
+                 .order_by('day'))
+
+        updated = 0
+        window = []   # últimos 30 mids (float) para ma_7/ma_30/volatility causales
+        for row in daily:
+            day = row['day']
+            if day is None or row['avg_buy'] is None or row['avg_sell'] is None:
+                continue
+            mid_rate = ((row['avg_buy'] + row['avg_sell']) / 2).quantize(q4)
+
+            # Técnicos causales (solo pasado — sin mirar el futuro)
+            window.append(float(mid_rate))
+            if len(window) > 30:
+                window.pop(0)
+            ma_7  = Decimal(str(statistics.fmean(window[-7:]))).quantize(q4)
+            ma_30 = Decimal(str(statistics.fmean(window))).quantize(q4)
+            vol   = round(statistics.pstdev(window), 6) if len(window) >= 5 else None
+
+            # TruncHour devuelve datetime (preservar la hora); TruncDate, date.
+            if isinstance(day, datetime):
+                dt = day if timezone.is_aware(day) else timezone.make_aware(day)
+                day_date = day.date()
+            else:
+                dt = timezone.make_aware(datetime(day.year, day.month, day.day))
+                day_date = day
+
+            defaults = {
+                'rate': mid_rate, 'source': mkt,
+                'ma_7': ma_7, 'ma_30': ma_30, 'volatility': vol,
+            }
+            # Precisión según el campo destino: (10,4) vs (5,2)
+            _MACRO_QUANT = {'international_rate': q4,
+                            'interest_rate': q2, 'inflation_rate': q2}
+            for col, quant in _MACRO_QUANT.items():
+                val = _macro_asof(col, day_date)
+                if val is not None:
+                    defaults[col] = Decimal(str(val)).quantize(quant)
+
+            _, created = TrainingData.objects.update_or_create(
+                currency_pair=currency_pair,
+                market=mkt,
+                date=dt,
+                defaults=defaults,
+            )
+            if created:
+                updated += 1
+        per_market[mkt] = updated
+        total_updated += updated
+
+    logger.info("update_training_data pair=%s updated=%d detail=%s",
+                currency_pair, total_updated, per_market)
+    return {'pair': currency_pair, 'updated': total_updated, 'per_market': per_market}
 
 
 # ── Tarea 7: Tuning semanal de hiperparámetros ────────────────────────────────
@@ -351,6 +505,23 @@ def weekly_hyperparameter_tuning(self):
         import os
         models_path = os.path.join(settings.MEDIA_ROOT, 'ml_models')
         results     = run_weekly_tuning(CURRENCY_PAIRS, models_path, n_trials=40)
+
+        # Prophet: reentrenamiento SEMANAL (movido desde el diario — con MAPE
+        # ~20% el ensemble lo subpondera a ~0.01; diario era CPU desperdiciada).
+        prophet_results = {}
+        try:
+            from predictions.ml_service import ForexPredictionService
+            svc = ForexPredictionService()
+            for pair in CURRENCY_PAIRS:
+                try:
+                    _, pm = svc.train_prophet_model(pair, market='web')
+                    prophet_results[pair] = pm
+                except Exception as exc:
+                    prophet_results[pair] = {'error': str(exc)}
+        except Exception as exc:
+            logger.warning("prophet_weekly_failed: %s", exc)
+        results['prophet_weekly'] = prophet_results
+
         logger.info("TASK_SUCCESS name=weekly_hyperparameter_tuning")
         return {'status': 'ok', 'results': results}
     except SoftTimeLimitExceeded:
@@ -393,21 +564,32 @@ def train_initial_models():
 
 def _update_model_metrics():
     """Actualiza recent_mape en cada PredictionModel activo."""
+    from django.db.models import Avg, Count, F, ExpressionWrapper, FloatField
+    from django.db.models.functions import Abs
+
+    # MAPE = promedio de |actual - predicted| / actual * 100. Se calcula con un
+    # aggregate(Avg(...)) en la base de datos en vez de iterar en Python (evita
+    # traer todas las filas). Se excluyen actual/predicted en 0 igual que el guard
+    # original de la comprensión de lista.
+    mape_expr = ExpressionWrapper(
+        Abs(F('actual_rate') - F('predicted_rate')) / F('actual_rate') * 100,
+        output_field=FloatField(),
+    )
     for model in PredictionModel.objects.filter(is_active=True):
-        recent = Prediction.objects.filter(
-            model=model,
-            actual_rate__isnull=False,
-            created_at__gte=timezone.now() - timedelta(days=30),
+        recent = (
+            Prediction.objects
+            .filter(
+                model=model,
+                actual_rate__isnull=False,
+                created_at__gte=timezone.now() - timedelta(days=30),
+            )
+            .exclude(actual_rate=0)
+            .exclude(predicted_rate=0)
         )
-        if not recent.exists():
+        agg = recent.aggregate(mape=Avg(mape_expr), n=Count('id'))
+        if not agg['n']:
             continue
-        errors = [
-            float(abs(p.actual_rate - p.predicted_rate) / p.actual_rate * 100)
-            for p in recent
-            if p.actual_rate and p.predicted_rate and p.actual_rate != 0
-        ]
-        if errors:
-            model.metrics['recent_mape']        = round(sum(errors) / len(errors), 4)
-            model.metrics['recent_predictions'] = len(errors)
-            model.metrics['last_evaluation']    = timezone.now().isoformat()
-            model.save(update_fields=['metrics'])
+        model.metrics['recent_mape']        = round(agg['mape'], 4)
+        model.metrics['recent_predictions'] = agg['n']
+        model.metrics['last_evaluation']    = timezone.now().isoformat()
+        model.save(update_fields=['metrics'])

@@ -47,7 +47,7 @@ class TransactionProfitLedger(models.Model):
         ),
     )
     transaction_type  = models.CharField(max_length=8, choices=TX_TYPE)
-    currency_code     = models.CharField(max_length=5, db_index=True)
+    currency_code     = models.CharField(max_length=20, db_index=True)  # = Currency.code (codes largos: USD_SMALL_BILLS)
     branch            = models.ForeignKey(
         'users.Branch', on_delete=models.PROTECT, related_name='profit_ledgers',
     )
@@ -231,7 +231,7 @@ class ExposureSnapshot(models.Model):
     branch            = models.ForeignKey(
         'users.Branch', on_delete=models.PROTECT, related_name='exposure_snapshots',
     )
-    currency_code     = models.CharField(max_length=5, db_index=True)
+    currency_code     = models.CharField(max_length=20, db_index=True)  # = Currency.code (codes largos: USD_SMALL_BILLS)
     currency_name     = models.CharField(max_length=100)
     scale_factor      = models.IntegerField(default=1)
 
@@ -307,7 +307,7 @@ class SpreadSnapshot(models.Model):
       - Cálculo de prima sobre la tasa oficial BCB
     """
     timestamp         = models.DateTimeField(db_index=True)
-    currency_code     = models.CharField(max_length=5, db_index=True)
+    currency_code     = models.CharField(max_length=20, db_index=True)  # = Currency.code (codes largos: USD_SMALL_BILLS)
     market_type       = models.CharField(
         max_length=30,
         help_text='Tipo de mercado: official, bcb, paralelo_digital, etc.',

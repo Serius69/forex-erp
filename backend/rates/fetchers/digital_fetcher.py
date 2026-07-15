@@ -21,15 +21,9 @@ from .base import BaseFetcher, FetchResult, DEFAULT_TIMEOUT
 
 log = logging.getLogger('kapitalya.rates.fetcher.digital')
 
-# Tasas base del mercado paralelo boliviano para estimaciones de fallback
-_PARALLEL_REFERENCE = {
-    'USD': Decimal('9.60'),
-    'EUR': Decimal('10.40'),
-    'BRL': Decimal('1.65'),
-    'ARS': Decimal('8.00'),   # por 1000 ARS
-    'CLP': Decimal('10.00'),  # por 1000 CLP
-    'PEN': Decimal('2.55'),
-}
+# Las tasas base de estimación ya NO son constantes hardcodeadas: se derivan de
+# la última tasa REAL en BD vía rates.fetchers.reference.real_reference_rates()
+# (las constantes 9.60/10.40/... quedaban obsoletas al moverse el paralelo).
 
 # Spread ±% aplicado sobre la tasa base para estimar buy/sell
 DIGITAL_SPREAD_ESTIMATE = {
@@ -169,27 +163,32 @@ class TakenosFetcher(BaseFetcher):
 
     def _estimate_digital_rates(self, source_suffix: str = '') -> list[FetchResult]:
         """
-        Estimación de tasas digitales basada en spread típico del mercado boliviano.
+        Estimación de tasas digitales derivada de la ÚLTIMA TASA REAL en BD
+        (ver rates.fetchers.reference) + spread típico del mercado digital.
 
         COMPLIANCE WARNING: source_method='INFERENCE', confidence=0.55.
-        Estas tasas NO provienen de una fuente en tiempo real — son estimaciones
-        basadas en spreads históricos observados.
+        Estas tasas NO provienen de una fuente en tiempo real. Si no hay tasa
+        real reciente de la que derivar, NO se emite nada (mejor sin dato que
+        con un número inventado).
         El frontend mostrará indicador rojo y requerirá confirmación del operador.
         """
         from django.utils import timezone as tz
+
+        from .reference import real_reference_rates
+
         results    = []
         fetched_at = tz.now()
+        references = real_reference_rates()
 
-        for code, ref in _PARALLEL_REFERENCE.items():
+        for code, ref in references.items():
             spread = DIGITAL_SPREAD_ESTIMATE.get(code, {
                 'buy_premium': Decimal('0.015'),
                 'sell_premium': Decimal('0.020'),
             })
-            scale     = SCALE_FACTORS.get(code, 1)
-            buy_unit  = ref * (1 - spread['buy_premium'])
-            sell_unit = ref * (1 + spread['sell_premium'])
-            buy_sc    = buy_unit  * Decimal(str(scale))
-            sell_sc   = sell_unit * Decimal(str(scale))
+            scale = SCALE_FACTORS.get(code, 1)
+            # ref ya viene en BOB por scale_factor unidades (igual que ExchangeRate)
+            buy_sc  = ref * (1 - spread['buy_premium'])
+            sell_sc = ref * (1 + spread['sell_premium'])
 
             result = FetchResult(
                 currency_code = code,
@@ -201,7 +200,8 @@ class TakenosFetcher(BaseFetcher):
                 scale_factor  = scale,
                 confidence    = 0.55,
                 raw_data      = {
-                    'method':      'estimated',
+                    'method':      'estimated_from_last_real',
+                    'base_rate':   float(ref),
                     'buy_premium': float(spread['buy_premium']),
                     'warning':     'NOT_REAL_TIME',
                 },
@@ -214,9 +214,9 @@ class TakenosFetcher(BaseFetcher):
                 results.append(result)
 
         log.warning(
-            "DIGITAL_RATES_ESTIMATED source_suffix=%s — scraping failed, "
-            "using hardcoded spread estimates (INFERENCE)",
-            source_suffix,
+            "DIGITAL_RATES_ESTIMATED source_suffix=%s currencies=%d — scraping "
+            "failed, derived from last real rates (INFERENCE)",
+            source_suffix, len(results),
         )
         return results
 
@@ -252,22 +252,26 @@ class AirtmFetcher(BaseFetcher):
 
     def _estimate_airtm(self) -> list[FetchResult]:
         """
-        Estimación con spread similar a Takenos pero ligeramente diferente.
-        COMPLIANCE: source_method='INFERENCE', confidence=0.50.
+        Estimación derivada de la última tasa real (ver rates.fetchers.reference)
+        con spread similar a Takenos pero ligeramente mayor.
+        COMPLIANCE: source_method='INFERENCE', confidence=0.50. Sin tasa real
+        reciente no se emite nada.
         """
         from django.utils import timezone as tz
+
+        from .reference import real_reference_rates
+
         results    = []
         fetched_at = tz.now()
 
-        for code, ref in _PARALLEL_REFERENCE.items():
+        for code, ref in real_reference_rates().items():
             scale     = SCALE_FACTORS.get(code, 1)
             spread    = DIGITAL_SPREAD_ESTIMATE.get(code, {
                 'buy_premium': Decimal('0.015'), 'sell_premium': Decimal('0.020'),
             })
-            buy_unit  = ref * (1 - spread['buy_premium']  - Decimal('0.005'))
-            sell_unit = ref * (1 + spread['sell_premium'] + Decimal('0.005'))
-            buy_sc    = buy_unit  * Decimal(str(scale))
-            sell_sc   = sell_unit * Decimal(str(scale))
+            # ref en BOB por scale_factor unidades — misma escala que ExchangeRate
+            buy_sc  = ref * (1 - spread['buy_premium']  - Decimal('0.005'))
+            sell_sc = ref * (1 + spread['sell_premium'] + Decimal('0.005'))
 
             result = FetchResult(
                 currency_code = code,
@@ -278,12 +282,15 @@ class AirtmFetcher(BaseFetcher):
                 sell_rate     = sell_sc,
                 scale_factor  = scale,
                 confidence    = 0.50,
-                raw_data      = {'method': 'estimated', 'warning': 'NOT_REAL_TIME'},
+                raw_data      = {'method': 'estimated_from_last_real',
+                                 'base_rate': float(ref),
+                                 'warning': 'NOT_REAL_TIME'},
                 source_method = 'INFERENCE',
                 source_url    = None,
                 fetched_at    = fetched_at,
             )
             if result.is_valid():
                 results.append(result)
-        log.warning("AIRTM_RATES_ESTIMATED — scraping failed, using INFERENCE fallback")
+        log.warning("AIRTM_RATES_ESTIMATED currencies=%d — scraping failed, "
+                    "derived from last real rates (INFERENCE)", len(results))
         return results

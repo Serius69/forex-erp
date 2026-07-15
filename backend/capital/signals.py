@@ -28,6 +28,11 @@ def update_currency_position(sender, instance, created, **kwargs):
     if instance.status != 'COMPLETED':
         return
 
+    # El caller ya aplicó/revirtió los efectos manualmente (p.ej. la
+    # anti-transacción de reverse()) — no volver a mover la posición.
+    if getattr(instance, '_effects_already_applied', False):
+        return
+
     # Evitar el bucle infinito cuando la reversa crea su propia TX
     update_fields = kwargs.get('update_fields') or []
     if update_fields and 'status' not in update_fields and not created:

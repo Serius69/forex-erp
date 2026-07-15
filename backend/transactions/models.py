@@ -363,21 +363,40 @@ class Transaction(models.Model):
 
         super().save(*args, **kwargs)
     
+    # Umbrales que exigen autorización de supervisor (fuente única — la vista
+    # de creación y requires_supervisor leen de aquí; antes estaban duplicados
+    # hardcodeados en dos sitios).
+    SUPERVISOR_THRESHOLD_USD = 5000
+    SUPERVISOR_THRESHOLD_BOB = 35000   # ~5000 USD
+
     def generate_transaction_number(self):
-        """Genera número único de transacción"""
+        """
+        Genera número único de transacción.
+
+        Serializa con select_for_update sobre la última TX del día (mismo
+        esquema que la vista de creación): sin el lock, dos saves concurrentes
+        podían leer el mismo último número y colisionar en el unique.
+        Debe llamarse dentro de una transacción de BD (save() ya lo garantiza
+        cuando viene de los flujos atómicos; en scripts, envolver en atomic()).
+        """
         prefix = f"{self.branch.code}{timezone.now().strftime('%Y%m%d')}"
-        
-        # Obtener el último número del día
-        last_transaction = Transaction.objects.filter(
-            transaction_number__startswith=prefix
-        ).order_by('-transaction_number').first()
-        
+
+        # Obtener el último número del día (bajo lock si hay transacción activa)
+        qs = Transaction.objects.filter(transaction_number__startswith=prefix)
+        try:
+            from django.db import connection
+            if connection.in_atomic_block:
+                qs = qs.select_for_update()
+        except Exception:
+            pass
+        last_transaction = qs.order_by('-transaction_number').first()
+
         if last_transaction:
             last_number = int(last_transaction.transaction_number[-4:])
             new_number = last_number + 1
         else:
             new_number = 1
-        
+
         return f"{prefix}{new_number:04d}"
     
     @property
@@ -444,18 +463,19 @@ class Transaction(models.Model):
 
     @property
     def requires_supervisor(self):
-        """Determina si requiere aprobación de supervisor"""
+        """Determina si requiere aprobación de supervisor (umbrales de clase)."""
         try:
-            # Montos mayores a 5000 USD equivalente
+            # Montos mayores al equivalente del umbral USD
             if self.currency_from is None or self.amount_from is None:
                 return False
             if self.currency_from.code == 'USD':
-                return self.amount_from > 5000
+                return self.amount_from > self.SUPERVISOR_THRESHOLD_USD
             elif self.currency_from.code == 'BOB':
-                return self.amount_from > 35000  # ~5000 USD
+                return self.amount_from > self.SUPERVISOR_THRESHOLD_BOB
             else:
-                # Convertir a USD para comparar
-                return self.amount_from * (self.exchange_rate or 1) > 35000
+                # Convertir a BOB para comparar
+                return (self.amount_from * (self.exchange_rate or 1)
+                        > self.SUPERVISOR_THRESHOLD_BOB)
         except Exception:
             return False
     
@@ -468,10 +488,14 @@ class Transaction(models.Model):
         time_limit = timezone.now() - timezone.timedelta(hours=24)
         return self.completed_at and self.completed_at > time_limit
     
-    def reverse(self, user, reason):
+    def reverse(self, user, reason, ip_address=None, user_agent=''):
         """
         Revierte la transacción: crea una anti-transacción y restaura el inventario.
         Debe llamarse dentro de db_transaction.atomic() para garantizar atomicidad.
+
+        ip_address/user_agent alimentan el audit log (UserActivity.ip_address es
+        NOT NULL — sin este parámetro el create fallaba y TODA la reversa hacía
+        rollback: la funcionalidad estaba rota de raíz).
         """
         from django.db import transaction as db_tx
         if not self.can_be_reversed():
@@ -486,8 +510,12 @@ class Transaction(models.Model):
             # 2. Revertir efectos sobre el efectivo BOB
             reverse_transaction_effects(self)
 
-            # 3. Crear transacción de reversa (registro contable)
-            reversal = Transaction.objects.create(
+            # 3. Crear transacción de reversa — SOLO registro contable.
+            #    Los efectos ya se aplicaron en los pasos 1-2; el flag
+            #    _effects_already_applied suprime las señales post_save
+            #    (caja BOB + CurrencyPosition) que antes volvían a aplicar
+            #    la reversión → inventario y caja quedaban revertidos DOS veces.
+            reversal = Transaction(
                 transaction_type     = 'SELL' if self.transaction_type == 'BUY' else 'BUY',
                 transaction_category = self.transaction_category,
                 customer             = self.customer,   # None si era INTERNA
@@ -502,20 +530,24 @@ class Transaction(models.Model):
                 notes                = f"REVERSA de {self.transaction_number}. Razón: {reason}",
                 status               = 'COMPLETED',
             )
+            reversal._effects_already_applied = True
+            reversal.save()
 
-            # 4. Actualizar inventario por la anti-transacción
-            svc._update_inventory(reversal)
+            # (El antiguo paso 4 — svc._update_inventory(reversal) — se eliminó:
+            #  duplicaba la restauración de inventario del paso 1.)
 
             # 5. Marcar original como REVERSED
             self.status = 'REVERSED'
             self.save(update_fields=['status', 'updated_at'])
 
-            # 6. Audit log
+            # 6. Audit log (ip_address es NOT NULL en UserActivity)
             from users.models import UserActivity
             UserActivity.objects.create(
-                user    = user,
-                action  = 'TRANSACTION_REVERSED',
-                details = {
+                user       = user,
+                action     = 'TRANSACTION_REVERSED',
+                ip_address = ip_address or '0.0.0.0',
+                user_agent = (user_agent or 'system/reverse')[:200],
+                details    = {
                     'original_tx':  self.transaction_number,
                     'reversal_tx':  reversal.transaction_number,
                     'reason':       reason,

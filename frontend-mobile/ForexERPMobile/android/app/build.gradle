@@ -6,7 +6,7 @@ react {
     // entryFile = file("../index.js")
 }
 
-def enableProguardInReleaseBuilds = true
+def enableProguardInReleaseBuilds = project.hasProperty('enableProguardInReleaseBuilds') ? project.property('enableProguardInReleaseBuilds').toBoolean() : true
 def jscFlavor = 'org.webkit:android-jsc:+'
 
 android {
@@ -14,7 +14,7 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.forexerpmobile"
+    namespace "com.forex"
 
     defaultConfig {
         applicationId "com.kapitalya.forex"

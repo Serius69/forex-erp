@@ -16,7 +16,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!username.trim() || !password.trim()) {
-      Alert.alert('Campos requeridos', 'Por favor completa usuario y contraseña.');
+      Alert.alert('Campos requeridos', 'Por favor completa usuario/correo y contraseña.');
       return;
     }
     setLoading(true);
@@ -52,16 +52,22 @@ export default function LoginScreen() {
           <Text style={styles.cardTitle}>Iniciar Sesión</Text>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Usuario</Text>
+            <Text style={styles.label}>Usuario o correo</Text>
             <TextInput
               style={styles.input}
-              placeholder="Ingresa tu usuario"
+              placeholder="usuario o correo@empresa.com"
               placeholderTextColor="#AAB4BE"
               value={username}
               onChangeText={setUsername}
               autoCapitalize="none"
               autoCorrect={false}
+              autoComplete="username"
+              keyboardType="email-address"
+              textContentType="username"
             />
+            <Text style={styles.hint}>
+              Puedes entrar con tu nombre de usuario o con tu correo electrónico.
+            </Text>
           </View>
 
           <View style={styles.field}>

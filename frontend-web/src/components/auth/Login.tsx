@@ -19,6 +19,7 @@ const Login: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState('');
+  const [info,         setInfo]         = useState('');
 
   // ── Email / username login ─────────────────────────────────────────────────
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
@@ -61,7 +62,8 @@ const Login: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      await loginGoogle(credential);
+      const pendingMsg = await loginGoogle(credential);
+      if (pendingMsg) setInfo(pendingMsg);
     } catch {
       setError('Error al iniciar sesión con Google. Intenta de nuevo.');
     } finally {
@@ -80,6 +82,7 @@ const Login: React.FC = () => {
   return (
     <Box sx={{
       minHeight: '100vh',
+      '@supports (min-height: 100dvh)': { minHeight: '100dvh' },
       display: 'grid',
       gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
       bgcolor: TOKENS.bg,
@@ -163,6 +166,12 @@ const Login: React.FC = () => {
             </Alert>
           )}
 
+          {info && (
+            <Alert severity="info" sx={{ mb: 2 }} onClose={() => setInfo('')}>
+              {info}
+            </Alert>
+          )}
+
           {/* Google sign-in */}
           {googleEnabled && (
             <>
@@ -201,6 +210,9 @@ const Login: React.FC = () => {
                   onKeyDown={e => { if (e.key === 'Enter') passRef.current?.focus(); }}
                   inputProps={{ spellCheck: false }}
                 />
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  Puedes ingresar con tu nombre de usuario o con tu correo electrónico.
+                </Typography>
               </Box>
 
               <Box>

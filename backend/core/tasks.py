@@ -52,7 +52,8 @@ def update_exchange_rates(self):
     try:
         from rates.services import RateService
         service = RateService()
-        updated = service.fetch_official_rates('BCB')
+        # Cadena DOLARAPI_OFICIAL → BCB (la primera que responda con datos)
+        updated = service.fetch_official_rates()
         log.info(
             "TASK_SUCCESS name=update_exchange_rates updated=%s",
             updated,

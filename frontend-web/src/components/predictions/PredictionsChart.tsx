@@ -24,33 +24,22 @@ import {
   Info,
 } from '@mui/icons-material';
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip as ChartTooltip,
+  ComposedChart,
+  Line,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RTooltip,
   Legend,
-  Filler,
-} from 'chart.js';
-import { Line } from 'react-chartjs-2';
-import { format, addHours } from 'date-fns';
+  ReferenceLine,
+  ResponsiveContainer,
+} from 'recharts';
+import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 import { api } from '../../services/api';
 import { useWebSocket } from '../../contexts/WebSocketContext';
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  ChartTooltip,
-  Legend,
-  Filler
-);
 
 interface PredictionData {
   date: string;
@@ -64,6 +53,7 @@ interface PredictionData {
 
 const PredictionsChart: React.FC = () => {
   const [predictions, setPredictions] = useState<Record<string, PredictionData[]>>({});
+  const [modelMape, setModelMape] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [selectedCurrency, setSelectedCurrency] = useState('USD');
   const [selectedModel, setSelectedModel] = useState('ENSEMBLE');
@@ -77,12 +67,31 @@ const PredictionsChart: React.FC = () => {
   const loadPredictions = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/predictions/predictions/current/', {
-        params: {
-          currency_pair: `${selectedCurrency}/BOB`,
-        },
-      });
-      setPredictions(response.data.predictions);
+      const [predRes, modelsRes] = await Promise.allSettled([
+        api.get('/predictions/predictions/current/', {
+          params: { currency_pair: `${selectedCurrency}/BOB` },
+        }),
+        api.get('/predictions/models/', {
+          params: { currency_pair: `${selectedCurrency}/BOB` },
+        }),
+      ]);
+      if (predRes.status === 'fulfilled') {
+        setPredictions(predRes.value.data.predictions);
+      }
+      // MAPE REAL por modelo (serie web) — nada de precisiones inventadas
+      if (modelsRes.status === 'fulfilled') {
+        const raw = modelsRes.value.data;
+        const items: any[] = raw?.results ?? raw ?? [];
+        const mape: Record<string, number> = {};
+        (Array.isArray(items) ? items : []).forEach((m: any) => {
+          if (m.market && m.market !== 'web') return;
+          const v = m.metrics?.mape;
+          if (typeof v === 'number' && v > 0 && mape[m.model_type] === undefined) {
+            mape[m.model_type] = v;
+          }
+        });
+        setModelMape(mape);
+      }
     } catch (error) {
       console.error('Error loading predictions:', error);
     } finally {
@@ -90,142 +99,51 @@ const PredictionsChart: React.FC = () => {
     }
   };
 
-  const getChartData = () => {
+  // Serie plana para recharts: una fila por período con la predicción, la banda
+  // de confianza (rango [inferior, superior]) y las tasas de compra/venta.
+  // Se deduplica por hora (puede haber varias predicciones cacheadas para el
+  // mismo período → antes el eje mostraba "13:00 13:00 14:00 14:00…"); gana
+  // la más reciente de cada etiqueta.
+  const chartData = React.useMemo(() => {
     const modelPredictions = predictions[selectedModel] || [];
-    const currentRate = rates[selectedCurrency];
-
-    const labels = modelPredictions.map((p) =>
-      format(new Date(p.date), 'HH:mm', { locale: es })
-    );
-
-    const datasets = [];
-
-    if (viewType === 'rate') {
-      // Línea de predicción principal
-      datasets.push({
-        label: 'Predicción',
-        data: modelPredictions.map((p) => p.rate),
-        borderColor: 'rgb(75, 192, 192)',
-        backgroundColor: 'rgba(75, 192, 192, 0.2)',
-        tension: 0.4,
-        pointRadius: 3,
+    const byLabel = new Map<string, any>();
+    modelPredictions.forEach((p) => {
+      const label = format(new Date(p.date), 'HH:mm', { locale: es });
+      byLabel.set(label, {
+        label,
+        rate: p.rate,
+        buy_rate: p.buy_rate,
+        sell_rate: p.sell_rate,
+        band: [p.confidence_lower, p.confidence_upper] as [number, number],
       });
+    });
+    return Array.from(byLabel.values());
+  }, [predictions, selectedModel]);
 
-      // Banda de confianza
-      datasets.push({
-        label: 'Límite Superior',
-        data: modelPredictions.map((p) => p.confidence_upper),
-        borderColor: 'rgba(75, 192, 192, 0.3)',
-        backgroundColor: 'transparent',
-        borderDash: [5, 5],
-        pointRadius: 0,
-        fill: false,
-      });
+  const currentRate = rates[selectedCurrency]?.official;
 
-      datasets.push({
-        label: 'Límite Inferior',
-        data: modelPredictions.map((p) => p.confidence_lower),
-        borderColor: 'rgba(75, 192, 192, 0.3)',
-        backgroundColor: 'rgba(75, 192, 192, 0.1)',
-        borderDash: [5, 5],
-        pointRadius: 0,
-        fill: '-1',
-      });
-
-      // Tasa actual
-      if (currentRate) {
-        datasets.push({
-          label: 'Tasa Actual',
-          data: Array(labels.length).fill(currentRate.official),
-          borderColor: 'rgb(255, 99, 132)',
-          borderDash: [10, 5],
-          pointRadius: 0,
-          fill: false,
-        });
-      }
-    } else {
-      // Tasas de compra y venta
-      datasets.push({
-        label: 'Compra',
-        data: modelPredictions.map((p) => p.buy_rate),
-        borderColor: 'rgb(54, 162, 235)',
-        backgroundColor: 'rgba(54, 162, 235, 0.2)',
-        tension: 0.4,
-      });
-
-      datasets.push({
-        label: 'Venta',
-        data: modelPredictions.map((p) => p.sell_rate),
-        borderColor: 'rgb(255, 99, 132)',
-        backgroundColor: 'rgba(255, 99, 132, 0.2)',
-        tension: 0.4,
-      });
+  const tooltipFormatter = (value: any, name: any) => {
+    if (Array.isArray(value)) {
+      return [`Bs. ${Number(value[0]).toFixed(4)} – ${Number(value[1]).toFixed(4)}`, name];
     }
-
-    return {
-      labels,
-      datasets,
-    };
-  };
-
-  const options = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'top' as const,
-      },
-      title: {
-        display: false,
-      },
-      tooltip: {
-        mode: 'index' as const,
-        intersect: false,
-      },
-    },
-    scales: {
-      x: {
-        display: true,
-        title: {
-          display: true,
-          text: 'Hora',
-        },
-      },
-      y: {
-        display: true,
-        title: {
-          display: true,
-          text: 'Tasa de Cambio (BOB)',
-        },
-      },
-    },
-    interaction: {
-      mode: 'nearest' as const,
-      axis: 'x' as const,
-      intersect: false,
-    },
+    return [`Bs. ${Number(value).toFixed(4)}`, name];
   };
 
   const getModelInfo = () => {
     const modelInfo = {
-      PROPHET: {
-        name: 'Prophet',
-        description: 'Modelo de series temporales de Facebook',
-        accuracy: '92%',
-      },
-      LSTM: {
-        name: 'LSTM',
-        description: 'Red neuronal de memoria a largo plazo',
-        accuracy: '89%',
-      },
-      ENSEMBLE: {
-        name: 'Ensemble',
-        description: 'Combinación de múltiples modelos',
-        accuracy: '94%',
-      },
+      PROPHET:  { name: 'Prophet',  description: 'Modelo de series temporales de Facebook' },
+      LSTM:     { name: 'LSTM',     description: 'Red neuronal de memoria a largo plazo' },
+      ENSEMBLE: { name: 'Ensemble', description: 'Combinación de múltiples modelos' },
     };
-
-    return modelInfo[selectedModel as keyof typeof modelInfo];
+    const base = modelInfo[selectedModel as keyof typeof modelInfo];
+    if (!base) return undefined;
+    // Precisión REAL desde metrics.mape del modelo entrenado (antes eran
+    // porcentajes hardcodeados 92/89/94% que no salían de ningún dato).
+    const mape = modelMape[selectedModel];
+    const accuracy = typeof mape === 'number' && mape < 100
+      ? `MAPE ${mape.toFixed(1)}%`
+      : null;
+    return { ...base, accuracy };
   };
 
   if (loading) {
@@ -257,7 +175,7 @@ const PredictionsChart: React.FC = () => {
                 <MenuItem value="ARS">ARS</MenuItem>
               </Select>
             </FormControl>
-            
+
             <ToggleButtonGroup
               value={selectedModel}
               exclusive
@@ -295,11 +213,15 @@ const PredictionsChart: React.FC = () => {
           </Grid>
           <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-              <Chip
-                label={`Precisión: ${getModelInfo()?.accuracy}`}
-                color="success"
-                size="small"
-              />
+              {getModelInfo()?.accuracy && (
+                <Tooltip title="Error porcentual medio del modelo en entrenamiento (menor = mejor)">
+                  <Chip
+                    label={getModelInfo()?.accuracy}
+                    color="success"
+                    size="small"
+                  />
+                </Tooltip>
+              )}
               <Chip
                 label="Próximas 24h"
                 color="primary"
@@ -329,7 +251,66 @@ const PredictionsChart: React.FC = () => {
         </Box>
 
         <Box sx={{ height: 400 }}>
-          <Line data={getChartData()} options={options} />
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+              <YAxis
+                tick={{ fontSize: 11 }}
+                tickFormatter={(v) => `${Number(v).toFixed(2)}`}
+                domain={['auto', 'auto']}
+                width={60}
+              />
+              <RTooltip formatter={tooltipFormatter} />
+              <Legend />
+              {viewType === 'rate' ? (
+                <>
+                  <Area
+                    dataKey="band"
+                    name="Banda de confianza"
+                    stroke="none"
+                    fill="rgba(75, 192, 192, 0.15)"
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="rate"
+                    name="Predicción"
+                    stroke="rgb(75, 192, 192)"
+                    strokeWidth={2}
+                    dot={{ r: 2 }}
+                  />
+                  {currentRate != null && (
+                    <ReferenceLine
+                      y={currentRate}
+                      stroke="rgb(255, 99, 132)"
+                      strokeDasharray="10 5"
+                      label={{ value: 'Tasa Actual', position: 'insideTopRight', fontSize: 11 }}
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  <Line
+                    type="monotone"
+                    dataKey="buy_rate"
+                    name="Compra"
+                    stroke="rgb(54, 162, 235)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="sell_rate"
+                    name="Venta"
+                    stroke="rgb(255, 99, 132)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                </>
+              )}
+            </ComposedChart>
+          </ResponsiveContainer>
         </Box>
 
         <Box sx={{ mt: 3 }}>

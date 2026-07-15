@@ -76,6 +76,46 @@ class Gasto(models.Model):
         return f"{self.fecha} | {self.get_categoria_display()} | Bs. {self.monto_bob}"
 
 
+class IngresoExtra(models.Model):
+    """
+    Ingreso no cambiario (ventas indirectas, comisiones, 'caiditas', intereses).
+    Aumenta el capital efectivo disponible. Contraparte de Gasto.
+    """
+    fecha       = models.DateField(default=timezone.localdate)
+    tipo        = models.CharField(
+        max_length=50,
+        help_text="Concepto libre: Venta indirecta, Caiditas, Comisión, Interés, etc."
+    )
+    monto_bob   = models.DecimalField(
+        max_digits=15, decimal_places=2,
+        validators=[MinValueValidator(Decimal('0.01'))],
+        help_text='Monto del ingreso en BOB'
+    )
+    medio_pago  = models.CharField(max_length=10, choices=Gasto.MEDIOS_PAGO, default='EFECTIVO')
+    notas       = models.TextField(blank=True)
+    branch      = models.ForeignKey(
+        'users.Branch', on_delete=models.PROTECT, related_name='ingresos_extra'
+    )
+    registrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='ingresos_registrados'
+    )
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table            = 'capital_ingreso_extra'
+        ordering            = ['-fecha', '-created_at']
+        verbose_name        = 'Ingreso Extra'
+        verbose_name_plural = 'Ingresos Extra'
+        indexes = [
+            models.Index(fields=['-fecha']),
+            models.Index(fields=['branch', '-fecha']),
+        ]
+
+    def __str__(self):
+        return f"{self.fecha} | {self.tipo} | Bs. {self.monto_bob}"
+
+
 class CapitalSnapshot(models.Model):
     """
     Instantánea del capital total en un momento dado.

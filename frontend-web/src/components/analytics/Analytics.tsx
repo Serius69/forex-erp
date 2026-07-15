@@ -536,12 +536,186 @@ const DecisionPanel: React.FC<{
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
+// ── Anomalies panel ────────────────────────────────────────────────────────────
+interface Anomaly {
+  type: string; source: string; severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  title: string; description: string; value: string; threshold: string;
+  deviation_pct: string; detected_at: string; recommendation: string;
+}
+interface AnomaliesData {
+  anomalies: Anomaly[];
+  summary: { total: number; critical: number; high: number; medium: number; low: number };
+  last_checked: string;
+}
+
+const SEV_COLOR: Record<string, any> = { CRITICAL: 'error', HIGH: 'warning', MEDIUM: 'info', LOW: 'default' };
+const SEV_LABEL: Record<string, string> = { CRITICAL: 'Crítico', HIGH: 'Alto', MEDIUM: 'Medio', LOW: 'Bajo' };
+
+const AnomaliesPanel: React.FC<{ loading: boolean; data: AnomaliesData | null }> = ({ loading, data }) => {
+  if (loading) return <Skeleton variant="rounded" height={280} />;
+  if (!data || data.anomalies.length === 0)
+    return (
+      <Alert severity="success" icon={<CheckCircle />}>
+        No se detectaron anomalías financieras en spreads, tasas, inventario ni capital.
+      </Alert>
+    );
+  return (
+    <Box>
+      <Grid container spacing={2} mb={2}>
+        {[
+          { k: 'total', label: 'Total', color: 'default' },
+          { k: 'critical', label: 'Críticas', color: 'error' },
+          { k: 'high', label: 'Altas', color: 'warning' },
+          { k: 'medium', label: 'Medias', color: 'info' },
+          { k: 'low', label: 'Bajas', color: 'default' },
+        ].map(s => (
+          <Grid item xs={6} sm={2.4} key={s.k}>
+            <Card variant="outlined">
+              <CardContent sx={{ textAlign: 'center', py: 1.5 }}>
+                <Typography variant="h5" fontWeight={800} color={`${s.color}.main` as any}>
+                  {(data.summary as any)[s.k] ?? 0}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">{s.label}</Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+      <Grid container spacing={2}>
+        {data.anomalies.map((a, i) => (
+          <Grid item xs={12} md={6} key={i}>
+            <Card variant="outlined" sx={{ borderLeft: 4, borderLeftColor: `${SEV_COLOR[a.severity]}.main` }}>
+              <CardContent>
+                <Box display="flex" alignItems="center" justifyContent="space-between" mb={0.5} gap={1}>
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Warning color={SEV_COLOR[a.severity]} fontSize="small" />
+                    <Typography variant="subtitle2" fontWeight={700}>{a.title}</Typography>
+                  </Box>
+                  <Chip size="small" color={SEV_COLOR[a.severity]} label={SEV_LABEL[a.severity] ?? a.severity} />
+                </Box>
+                <Typography variant="body2" color="text.secondary" mb={1}>{a.description}</Typography>
+                <Box display="flex" gap={2} flexWrap="wrap" mb={1}>
+                  <Chip size="small" variant="outlined" label={`Valor: ${a.value}`} />
+                  <Chip size="small" variant="outlined" label={`Umbral: ${a.threshold}`} />
+                  {a.deviation_pct && <Chip size="small" variant="outlined" label={`Desvío: ${a.deviation_pct}%`} />}
+                  <Chip size="small" label={a.source} />
+                </Box>
+                {a.recommendation && (
+                  <Typography variant="caption" color="primary" sx={{ display: 'block' }}>
+                    → {a.recommendation}
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+    </Box>
+  );
+};
+
+// ── Trends panel ───────────────────────────────────────────────────────────────
+interface TrendsData {
+  period: { desde: string; hasta: string; granularity: string };
+  series: {
+    pnl?: { fecha: string; ganancia_neta_bob: string; ganancia_bruta_bob: string }[];
+    volume?: { fecha: string; volumen_bob: string; num_transacciones: number }[];
+    transactions?: { fecha: string; buy_count: number; sell_count: number }[];
+  };
+  summary: { trend_direction?: string; growth_pct_mom?: string; best_day?: string; worst_day?: string };
+}
+
+const TrendsPanel: React.FC<{ loading: boolean; data: TrendsData | null }> = ({ loading, data }) => {
+  if (loading) return <Skeleton variant="rounded" height={320} />;
+  if (!data || !data.series?.pnl?.length)
+    return <Alert severity="info">Sin datos de tendencia para el período seleccionado.</Alert>;
+
+  const pnlSeries = (data.series.pnl ?? []).map(r => ({
+    fecha: r.fecha,
+    neta:  parseFloat(r.ganancia_neta_bob || '0'),
+    bruta: parseFloat(r.ganancia_bruta_bob || '0'),
+  }));
+  const txSeries = (data.series.transactions ?? []).map(r => ({
+    fecha: r.fecha, compras: r.buy_count, ventas: r.sell_count,
+  }));
+  const dir = data.summary?.trend_direction;
+
+  return (
+    <Box>
+      <Grid container spacing={2} mb={2}>
+        <Grid item xs={12} sm={4}>
+          <Card variant="outlined"><CardContent sx={{ py: 1.5 }}>
+            <Typography variant="caption" color="text.secondary">Tendencia</Typography>
+            <Box display="flex" alignItems="center" gap={1}>
+              {dir === 'up' ? <TrendingUp color="success" /> : dir === 'down' ? <TrendingDown color="error" /> : <TrendingFlat color="warning" />}
+              <Typography variant="h6" fontWeight={700}>
+                {dir === 'up' ? 'Al alza' : dir === 'down' ? 'A la baja' : 'Estable'}
+              </Typography>
+            </Box>
+          </CardContent></Card>
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          <Card variant="outlined"><CardContent sx={{ py: 1.5 }}>
+            <Typography variant="caption" color="text.secondary">Crecimiento MoM</Typography>
+            <Typography variant="h6" fontWeight={700}>{fmtSign(data.summary?.growth_pct_mom)}%</Typography>
+          </CardContent></Card>
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          <Card variant="outlined"><CardContent sx={{ py: 1.5 }}>
+            <Typography variant="caption" color="text.secondary">Mejor / peor día</Typography>
+            <Typography variant="body2" fontWeight={700}>{data.summary?.best_day ?? '—'} / {data.summary?.worst_day ?? '—'}</Typography>
+          </CardContent></Card>
+        </Grid>
+      </Grid>
+
+      <Card variant="outlined" sx={{ mb: 2 }}>
+        <CardContent>
+          <Typography variant="subtitle2" fontWeight={700} mb={1}>Ganancia neta vs bruta (BOB)</Typography>
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={pnlSeries}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+              <XAxis dataKey="fecha" fontSize={11} />
+              <YAxis fontSize={11} />
+              <RTooltip formatter={(v: any) => fmtBOB(v)} />
+              <Legend />
+              <ReferenceLine y={0} stroke="#999" />
+              <Line type="monotone" dataKey="neta" name="Neta" stroke="#2e7d32" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="bruta" name="Bruta" stroke="#1976d2" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {txSeries.length > 0 && (
+        <Card variant="outlined">
+          <CardContent>
+            <Typography variant="subtitle2" fontWeight={700} mb={1}>Operaciones diarias</Typography>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={txSeries}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                <XAxis dataKey="fecha" fontSize={11} />
+                <YAxis fontSize={11} />
+                <RTooltip />
+                <Legend />
+                <Bar dataKey="compras" name="Compras" fill="#2e7d32" />
+                <Bar dataKey="ventas" name="Ventas" fill="#c62828" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+    </Box>
+  );
+};
+
 const Analytics: React.FC = () => {
   const [tab,          setTab]          = useState(0);
   const [pnlData,      setPnlData]      = useState<PnLData | null>(null);
   const [exposureData, setExposureData] = useState<ExposureData | null>(null);
   const [spreadData,   setSpreadData]   = useState<SpreadRow[]>([]);
   const [decisionData, setDecisionData] = useState<Recomendacion[]>([]);
+  const [anomaliesData, setAnomaliesData] = useState<AnomaliesData | null>(null);
+  const [trendsData,   setTrendsData]   = useState<TrendsData | null>(null);
   const [loading,      setLoading]      = useState(true);
   const [days,         setDays]         = useState(30);
   const { lastCapitalUpdate }           = useWebSocket();
@@ -557,16 +731,20 @@ const Analytics: React.FC = () => {
       // then merge into a recomendaciones array that DecisionPanel expects.
       const DECISION_CURRENCIES = ['USD', 'EUR', 'ARS', 'BRL'];
 
-      const [pnlRes, expRes, spRes, ...decResults] = await Promise.allSettled([
+      const [pnlRes, expRes, spRes, anomRes, trendRes, ...decResults] = await Promise.allSettled([
         api.get('/analytics/pnl/',      { params: { date_from: dateFrom, date_to: dateTo } }),
         api.get('/analytics/exposure/'),
         api.get('/analytics/spread/'),
+        api.get('/analytics/anomalies/'),
+        api.get('/analytics/trends/',   { params: { date_from: dateFrom, date_to: dateTo } }),
         ...DECISION_CURRENCIES.map(c => api.get('/analytics/decision/', { params: { currency: c } })),
       ]);
 
       if (pnlRes.status === 'fulfilled') setPnlData(pnlRes.value.data);
       if (expRes.status === 'fulfilled') setExposureData(expRes.value.data);
       if (spRes.status === 'fulfilled')  setSpreadData(spRes.value.data.spreads ?? []);
+      if (anomRes.status === 'fulfilled')  setAnomaliesData(anomRes.value.data);
+      if (trendRes.status === 'fulfilled') setTrendsData(trendRes.value.data);
 
       // Map backend shape → Recomendacion interface
       // Backend: { currency, decision, motivo, score_total, señales, alertas, datos }
@@ -606,6 +784,8 @@ const Analytics: React.FC = () => {
     { label: 'Exposición', icon: <AccountBalance fontSize="small" /> },
     { label: 'Spread', icon: <CurrencyExchange fontSize="small" /> },
     { label: 'Decisiones', icon: <Psychology fontSize="small" /> },
+    { label: 'Anomalías', icon: <Warning fontSize="small" /> },
+    { label: 'Tendencias', icon: <TrendingUp fontSize="small" /> },
   ];
 
   return (
@@ -636,7 +816,8 @@ const Analytics: React.FC = () => {
         </Box>
       </Box>
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}>
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}
+        variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile>
         {TABS.map((t) => (
           <Tab key={t.label} icon={t.icon} iconPosition="start" label={t.label} />
         ))}
@@ -646,6 +827,8 @@ const Analytics: React.FC = () => {
       {tab === 1 && <ExposurePanel loading={loading} data={exposureData} />}
       {tab === 2 && <SpreadPanel loading={loading} data={spreadData} />}
       {tab === 3 && <DecisionPanel loading={loading} data={decisionData} />}
+      {tab === 4 && <AnomaliesPanel loading={loading} data={anomaliesData} />}
+      {tab === 5 && <TrendsPanel loading={loading} data={trendsData} />}
     </Box>
   );
 };

@@ -46,7 +46,9 @@ export default defineConfig({
         manualChunks: {
           'vendor-react':  ['react', 'react-dom', 'react-router-dom'],
           'vendor-mui':    ['@mui/material', '@mui/icons-material', '@emotion/react', '@emotion/styled'],
-          'vendor-charts': ['recharts', 'chart.js', 'react-chartjs-2'],
+          // Solo recharts: chart.js/react-chartjs-2 no están en package.json
+          // (el build de Docker con install limpio falla si se listan aquí)
+          'vendor-charts': ['recharts'],
           'vendor-redux':  ['@reduxjs/toolkit', 'react-redux'],
         },
       },

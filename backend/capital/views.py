@@ -11,10 +11,11 @@ from django.db.models import Sum, Count
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from .models import (Gasto, CapitalSnapshot, CapitalManualEntry,
+from .models import (Gasto, IngresoExtra, CapitalSnapshot, CapitalManualEntry,
                      CapitalEntryHistory, CapitalComposicion, CashBOB)
 from .serializers import (
     GastoSerializer, CrearGastoSerializer,
+    IngresoExtraSerializer, CrearIngresoExtraSerializer,
     CapitalSnapshotSerializer, CrearSnapshotSerializer,
     CapitalManualEntrySerializer, ActualizarCapitalEntrySerializer,
     CapitalEntryHistorySerializer,
@@ -111,6 +112,52 @@ class GastoViewSet(viewsets.ModelViewSet):
             'total_bob':      str(agg['total'] or 0),
             'total_gastos':   agg['count'] or 0,
             'por_categoria':  por_categoria,
+        })
+
+
+class IngresoExtraViewSet(viewsets.ModelViewSet):
+    """CRUD de ingresos no cambiarios (ventas indirectas, comisiones, etc.)."""
+    queryset           = IngresoExtra.objects.select_related('branch', 'registrado_por').all()
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return CrearIngresoExtraSerializer
+        return IngresoExtraSerializer
+
+    def get_queryset(self):
+        qs = _company_branch_filter(super().get_queryset(), self.request.user)
+
+        fecha_desde = self.request.query_params.get('date_from')
+        fecha_hasta = self.request.query_params.get('date_to')
+        tipo        = self.request.query_params.get('tipo')
+
+        if fecha_desde:
+            qs = qs.filter(fecha__gte=fecha_desde)
+        if fecha_hasta:
+            qs = qs.filter(fecha__lte=fecha_hasta)
+        if tipo:
+            qs = qs.filter(tipo__icontains=tipo)
+
+        return qs.order_by('-fecha', '-created_at')
+
+    @action(detail=False, methods=['GET'], url_path='resumen')
+    def resumen(self, request):
+        """Resumen de ingresos extra por tipo en el período."""
+        date_from = request.query_params.get('date_from', str(timezone.localdate()))
+        date_to   = request.query_params.get('date_to',   str(timezone.localdate()))
+
+        qs = self.get_queryset().filter(fecha__gte=date_from, fecha__lte=date_to)
+        agg = qs.aggregate(total=Sum('monto_bob'), count=Count('id'))
+        por_tipo = list(
+            qs.values('tipo')
+            .annotate(total=Sum('monto_bob'), count=Count('id'))
+            .order_by('-total')
+        )
+        return Response({
+            'total_bob':      str(agg['total'] or 0),
+            'total_ingresos': agg['count'] or 0,
+            'por_tipo':       por_tipo,
         })
 
 

@@ -62,7 +62,9 @@ Sistema ERP integral para casas de cambio bolivianas. Gestión en tiempo real de
 | `capital` | Gastos, posición de capital, P&L en tiempo real |
 | `tarjetas` | Tarjetas prepago con costeo FIFO |
 | `alerts` | Sistema unificado de alertas cross-módulo |
-| `analytics` | Snapshots P&L, exposición, spread |
+| `analytics` | Analytics por sucursal + seed del schedule de Celery Beat (`0007`) |
+| `snapshots` | Snapshots P&L, exposición, spread |
+| `data_migration` | Importación/sincronización de datos (Google Sheets) |
 | `tenants` | Multi-tenant SaaS: Company + Subscription |
 
 ---
@@ -122,10 +124,13 @@ docker compose exec backend python manage.py seed_data
 
 | Servicio | URL |
 |---------|-----|
-| API REST | http://localhost:8007/api |
-| Admin Django | http://localhost:8007/admin |
-| Frontend web | http://localhost:3000 |
-| WebSocket | ws://localhost:8007/ws |
+| Frontend web + API (vía nginx) | http://localhost:9091 |
+| API REST (backend directo) | http://localhost:9092/api |
+| Admin Django | http://localhost:9092/admin |
+| WebSocket | ws://localhost:9092/ws (o vía nginx :9091) |
+
+> El backend escucha en 8007 **dentro** del contenedor; el compose solo publica
+> 9091 (nginx) y 9092 (backend directo). En dev sin Docker: `runserver 0.0.0.0:8007`.
 
 ---
 
@@ -166,11 +171,17 @@ npm run dev    # http://localhost:5173
 ### App móvil
 
 ```bash
-cd mobile
+cd frontend-mobile/ForexERPMobile
 
-npm install
-npx react-native run-android   # emulador Android (API: 10.0.2.2:8000)
+npm install --legacy-peer-deps
+npm start                # Metro bundler en 8081
+npm run android          # emulador/dispositivo Android
 ```
+
+> La URL del backend se configura en `src/config.ts` (`API_BASE_URL`). En emulador
+> Android, `10.0.2.2` = localhost del host: `http://10.0.2.2:8007/api` con `runserver`
+> directo, o puerto `9092` si el backend corre en Docker. Es un repo git anidado
+> (gitlink): commitear dentro del subrepo. Ver `docs/MOBILE.md`.
 
 ---
 
@@ -198,7 +209,7 @@ El motor consume exclusivamente fuentes P2P en tiempo real:
 **Endpoints clave:**
 ```
 GET /api/rates/fx-engine/                                          # Tasas paralelas RT
-GET /api/rates/reference/                                          # Tasas BCB/BCP
+GET /api/rates/reference/                                          # Tasas de referencia (BCB/BCP históricas; BCB deprecado como fuente en vivo — ver DEPRECATED_BCB.md)
 GET /api/rates/parallel-rate/?currency=USD                         # Tasa paralela (cache 60s)
 GET /api/rates/dynamic-spread/?currency=USD&customer_tier=VIP      # Spread dinámico
 GET /api/rates/profitability-analysis/?start=&end=                 # Análisis de rentabilidad
@@ -294,9 +305,11 @@ Reportes regulatorios bolivianos generados automáticamente:
 
 ## Autenticación y seguridad
 
-**Flujo JWT seguro:**
+**Flujo JWT:**
 - Access token: en memoria JS únicamente (nunca localStorage), TTL 15 min en producción
-- Refresh token: httpOnly cookie (path=/api/auth/), inaccesible desde JavaScript
+- Refresh token: **localStorage** (rotado en cada refresh, limpiado en logout). Moverlo a
+  cookie httpOnly está pendiente — requiere cambio backend coordinado con la app móvil
+  (estado verificado 2026-07-08)
 - Login con email O username (`EmailOrUsernameBackend`)
 - Bloqueo de cuenta: 5 intentos fallidos → bloqueo 15 minutos
 - OAuth Google disponible en login y signup
@@ -384,10 +397,12 @@ forex-erp/
 │   ├── capital/            # Capital, posición, KPIs
 │   ├── tarjetas/           # Tarjetas prepago FIFO
 │   ├── alerts/             # Alertas cross-módulo
-│   ├── analytics/          # Snapshots y analytics
+│   ├── analytics/          # Analytics + seed beat schedule
+│   ├── snapshots/          # Snapshots P&L/exposición/spread
+│   ├── data_migration/     # Import/sync (Google Sheets)
 │   ├── tenants/            # Multi-tenant SaaS
 │   ├── scripts/            # seed_data, seed_kapitalya
-│   └── requirements.txt
+│   └── requirements.txt    # (+ requirements-gpu.txt para torch local)
 ├── frontend-web/
 │   ├── src/
 │   │   ├── components/     # UI compartida (KPICard, SkeletonLoader, RoleRoute...)
@@ -398,11 +413,11 @@ forex-erp/
 │   │   └── i18n/           # es (default) + en translations
 │   ├── index.html
 │   └── vite.config.ts
-├── docs/
-│   ├── API.md
-│   ├── DEPLOYMENT.md
-│   ├── FRONTEND.md
-│   └── MOBILE.md
+├── frontend-mobile/ForexERPMobile/   # App React Native (repo git anidado)
+├── frontend/                         # variante/legacy del frontend web
+├── nginx/                            # config del reverse proxy
+├── docs/                             # API, ARCHITECTURE, BACKEND, BUSINESS_LOGIC,
+│                                     #   DEPLOYMENT, FRONTEND, ML_MODELS, MOBILE, ROADMAP
 ├── docker-compose.yml
 ├── docker-compose.prod.yml
 └── docker-compose.tailscale.yml
@@ -415,9 +430,14 @@ forex-erp/
 | Documento | Contenido |
 |-----------|-----------|
 | [docs/API.md](docs/API.md) | Endpoints REST, payloads, ejemplos |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitectura del sistema |
+| [docs/BACKEND.md](docs/BACKEND.md) | Detalle de las apps Django |
+| [docs/BUSINESS_LOGIC.md](docs/BUSINESS_LOGIC.md) | Reglas de negocio |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Docker, producción, nginx, SSL |
 | [docs/FRONTEND.md](docs/FRONTEND.md) | React web, Redux, componentes clave |
 | [docs/MOBILE.md](docs/MOBILE.md) | React Native, pantallas, navegación |
+| [docs/ML_MODELS.md](docs/ML_MODELS.md) | Ensemble de predicción |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Roadmap del producto |
 
 ---
 

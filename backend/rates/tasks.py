@@ -1321,6 +1321,58 @@ def cleanup_old_rates_task(self):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Mantenimiento diario de series físicas — antes solo comandos manuales
+# ─────────────────────────────────────────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=1,
+    name='rates.derive_empresa_rates_daily',
+    soft_time_limit=600,
+)
+def derive_empresa_rates_daily(self):
+    """
+    Deriva la serie paralelo_fisico_empresa (tasa efectiva diaria) desde las
+    transacciones reales. Antes solo existía como comando manual → la serie
+    empresa se quedaba congelada; ahora se refresca cada madrugada.
+    """
+    from django.core.management import call_command
+    log.info('TASK_START rates.derive_empresa_rates_daily')
+    try:
+        call_command('derive_empresa_rates')
+        log.info('TASK_DONE rates.derive_empresa_rates_daily')
+        return {'ok': True}
+    except Exception as exc:
+        log.error('TASK_ERROR rates.derive_empresa_rates_daily error=%s', exc)
+        raise self.retry(exc=exc, countdown=600)
+
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=1,
+    name='rates.normalize_active_rates',
+    soft_time_limit=300,
+)
+def normalize_active_rates(self):
+    """
+    Red de seguridad: deja UNA sola tasa vigente (valid_until NULL) por
+    (divisa, mercado, fuente). Los orígenes conocidos del bloat ya expiran
+    solos, pero cualquier loader futuro que olvide hacerlo queda cubierto.
+    """
+    from .rate_expiry import expire_stale_active_rates
+    log.info('TASK_START rates.normalize_active_rates')
+    try:
+        closed = expire_stale_active_rates()
+        log.info('TASK_DONE rates.normalize_active_rates closed=%d', closed)
+        return {'closed': closed}
+    except Exception as exc:
+        log.error('TASK_ERROR rates.normalize_active_rates error=%s', exc)
+        raise self.retry(exc=exc, countdown=300)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Loop continuo de extracción — nunca se detiene
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1329,16 +1381,21 @@ def cleanup_old_rates_task(self):
 _CONTINUOUS_COUNTDOWN = 30
 _LOOP_LOCK_KEY        = 'rates:continuous_fx_loop:running'
 _LOOP_LOCK_TTL        = _CONTINUOUS_COUNTDOWN * 3   # 90 s — margen generoso
+# Marca "ya hay un siguiente ciclo agendado" — garantiza UNA sola cadena de
+# re-encolado por ventana (sin esto, cada redelivery por acks_late/restart
+# creaba una cadena paralela inmortal → cientos de ciclos por hora).
+_LOOP_NEXT_KEY        = 'rates:continuous_fx_loop:next_scheduled'
 
 # Fetchers activos en el loop continuo: (nombre_source, clase_fetcher, currency_pair)
 _CONTINUOUS_FETCHERS = [
     ('binance_p2p',        'rates.fetchers.binance_p2p.fetch_binance_p2p',       'USDT/BOB'),
     ('dolar_blue_bolivia', 'rates.fetchers.dolar_blue_bolivia.DolarBlueBoliviaFetcher', 'USD/BOB'),
-    ('airtm',              'rates.fetchers.airtm_v2_fetcher.AirtmV2Fetcher',     'USD/BOB'),
+    ('airtm',              'rates.fetchers.airtm_v2_fetcher.AirtmQuoteFetcher',  'USD/BOB'),
     ('eldorado',           'rates.fetchers.eldorado_fetcher.EldoradoFetcher',    'USDT/BOB'),
     ('wallbit',            'rates.fetchers.wallbit_fetcher.WallbitFetcher',      'USDT/BOB'),
     ('saldoar',            'rates.fetchers.saldoar_fetcher.SaldoARFetcher',      'USDT/ARS'),
-    ('p2p_exchanges',      'rates.fetchers.p2p_exchanges.P2PExchangesFetcher',   'USDT/BOB'),
+    ('bitget_p2p',         'rates.fetchers.p2p_exchanges.BitgetP2PFetcher',      'USDT/BOB'),
+    ('bybit_p2p',          'rates.fetchers.p2p_exchanges.BybitP2PFetcher',       'USDT/BOB'),
 ]
 
 
@@ -1361,12 +1418,14 @@ def continuous_fx_extraction(self):
     """
     Loop perpetuo de extracción de tasas.
 
-    Al terminar se re-encola a sí mismo con countdown=30 s.
+    Al terminar se re-encola a sí mismo con countdown=30 s — pero solo UNA
+    cadena puede agendar el siguiente ciclo (_LOOP_NEXT_KEY); las instancias
+    duplicadas (redelivery por acks_late, kickstart de beat, reinicios) mueren
+    sin descendencia. Si la cadena viva muere, el kickstart de beat
+    ('rates-continuous-kickstart', cada 15 min) la revive.
+
     Si un fetcher individual falla, el error se registra y el ciclo continúa
     con los demás fetchers sin interrumpir el loop.
-
-    Usa un Redis lock distribuido para evitar ejecuciones concurrentes si el
-    worker se reinicia mientras una instancia ya está corriendo.
     """
     import time
     from django.core.cache import cache
@@ -1376,9 +1435,11 @@ def continuous_fx_extraction(self):
     log.info('CONTINUOUS_FX start cycle=%s', self.request.id)
 
     # ── Distributed lock ─────────────────────────────────────────────────────
+    # Si otra instancia ya corre: morir SIN re-encolar (re-encolar aquí creaba
+    # cadenas paralelas inmortales). El kickstart de beat revive el loop si la
+    # cadena viva llegara a morir.
     if not cache.add(_LOOP_LOCK_KEY, self.request.id or 'running', _LOOP_LOCK_TTL):
-        log.info('CONTINUOUS_FX already_running — re-schedule in %ds', _CONTINUOUS_COUNTDOWN)
-        continuous_fx_extraction.apply_async(countdown=_CONTINUOUS_COUNTDOWN)
+        log.info('CONTINUOUS_FX already_running — duplicate dies (beat kickstart revives)')
         return
 
     snapshots_created = 0
@@ -1444,11 +1505,16 @@ def continuous_fx_extraction(self):
     finally:
         cache.delete(_LOOP_LOCK_KEY)
 
-    log.info('CONTINUOUS_FX cycle_done snapshots=%d — re-queuing in %ds',
-             snapshots_created, _CONTINUOUS_COUNTDOWN)
-
-    # Auto re-encolarse para el siguiente ciclo
-    continuous_fx_extraction.apply_async(countdown=_CONTINUOUS_COUNTDOWN)
+    # Auto re-encolarse para el siguiente ciclo — pero solo si NADIE más lo
+    # agendó ya en esta ventana (single-flight de la cadena de re-encolado).
+    if cache.add(_LOOP_NEXT_KEY, self.request.id or 'chain',
+                 max(_CONTINUOUS_COUNTDOWN - 2, 5)):
+        log.info('CONTINUOUS_FX cycle_done snapshots=%d — re-queuing in %ds',
+                 snapshots_created, _CONTINUOUS_COUNTDOWN)
+        continuous_fx_extraction.apply_async(countdown=_CONTINUOUS_COUNTDOWN)
+    else:
+        log.info('CONTINUOUS_FX cycle_done snapshots=%d — next cycle already '
+                 'scheduled by another chain, this one ends', snapshots_created)
 
 
 def _broadcast_consensus(consensus: dict) -> None:

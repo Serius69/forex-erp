@@ -54,7 +54,7 @@ const PinDialog: React.FC<PinDialogProps> = ({
           onChange={(e) => setPin(e.target.value)}
           error={!!error}
           helperText={error}
-          inputProps={{ maxLength: 6 }}
+          inputProps={{ maxLength: 6, inputMode: 'numeric', pattern: '[0-9]*' }}
           onKeyPress={(e) => e.key === 'Enter' && handleConfirm()}
           autoFocus
         />

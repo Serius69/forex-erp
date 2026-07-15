@@ -197,12 +197,30 @@ def apply_transaction_effects(transaction) -> None:
     except Exception as exc:
         log.error('PROFIT_LEDGER_FAIL tx=%s err=%s', transaction.transaction_number, exc)
 
-    # Guardar spread snapshot de esta transacción
+    # Spread snapshot: NO en el request path. `guardar_snapshot()` persiste un
+    # SpreadSnapshot por CADA tasa activa (bulk_create), es independiente de esta
+    # transacción y es redundante con la tarea periódica `analytics.snapshot_spreads`
+    # (cada 15 min). Se encola la MISMA tarea tras el commit (on_commit: correcto
+    # dentro de un atomic), con debounce por cache para no floodear la cola bajo
+    # alto volumen de operaciones.
     try:
-        from analytics.services import SpreadService
-        SpreadService.guardar_snapshot()
+        from django.core.cache import cache as _cache
+        from django.db import transaction as _db_tx
+        if _cache.add('spread_snapshot_enqueued', 1, 60):  # a lo sumo 1/min
+            _tx_num = transaction.transaction_number
+
+            def _enqueue_spread_snapshot():
+                # Corre en on_commit (fuera del try externo): captura su propio error
+                # para que la ausencia de broker nunca rompa el flujo de la operación.
+                try:
+                    from analytics.tasks import snapshot_spreads
+                    snapshot_spreads.delay()
+                except Exception as exc:
+                    log.warning('SPREAD_SNAPSHOT_ENQUEUE_FAIL tx=%s err=%s', _tx_num, exc)
+
+            _db_tx.on_commit(_enqueue_spread_snapshot)
     except Exception as exc:
-        log.warning('SPREAD_SNAPSHOT_FAIL tx=%s err=%s', transaction.transaction_number, exc)
+        log.warning('SPREAD_SNAPSHOT_ENQUEUE_FAIL tx=%s err=%s', transaction.transaction_number, exc)
 
     # Broadcast fuera del atomic — fire-and-forget
     _broadcast_capital_updated(transaction.branch_id)
@@ -320,89 +338,18 @@ def reverse_transaction_effects(transaction) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TransactionService:
-    """Servicio para gestión de transacciones"""
-    
-    @db_transaction.atomic
-    def create_transaction(self, data, user):
-        """Crea una nueva transacción con validaciones"""
-        from .models import Transaction, Customer
-        from inventory.models import CurrencyInventory
-        
-        # Validar cliente
-        customer = self._get_or_create_customer(data)
-        
-        # Crear transacción
-        transaction = Transaction(
-            transaction_type=data['transaction_type'],
-            customer=customer,
-            currency_from_id=data['currency_from'],
-            currency_to_id=data['currency_to'],
-            amount_from=Decimal(str(data['amount_from'])),
-            amount_to=Decimal(str(data['amount_to'])),
-            exchange_rate=Decimal(str(data['exchange_rate'])),
-            payment_method=data['payment_method'],
-            payment_reference=data.get('payment_reference', ''),
-            cashier=user,
-            branch=user.branch,
-            notes=data.get('notes', '')
-        )
-        
-        # Verificar si requiere supervisor
-        if transaction.requires_supervisor and not data.get('supervisor_pin'):
-            raise ValidationError("Esta transacción requiere autorización de supervisor")
-        
-        if data.get('supervisor_pin'):
-            supervisor = self._validate_supervisor_pin(data['supervisor_pin'])
-            transaction.supervisor = supervisor
-        
-        # Validar inventario
-        self._validate_inventory(transaction)
-        
-        # Guardar transacción
-        transaction.save()
-        
-        # Actualizar inventario de divisas
-        self._update_inventory(transaction)
+    """
+    Servicio para gestión de transacciones.
 
-        # Aplicar efectos sobre el efectivo BOB (CapitalComposicion + CashFlowLog)
-        apply_transaction_effects(transaction)
+    NOTA: el alta real de transacciones vive en TransactionViewSet.create
+    (lock de branch, idempotencia, supervisor por header y motor antifraude).
+    Se eliminaron `create_transaction`/`_get_or_create_customer` (2026-07):
+    eran código muerto sin llamadores y además rotos — el get_or_create de
+    Customer omitía `company` (violaba el unique_together multi-tenant) y
+    metía Decimal en campos Integer.
+    """
 
-        # Generar comprobante
-        receipt_file = self._generate_receipt(transaction)
-        transaction.receipt_number = f"R-{transaction.transaction_number}"
-        transaction.save()
-        
-        return transaction, receipt_file
-    
-    def _get_or_create_customer(self, data):
-        """Obtiene o crea un cliente"""
-        from .models import Customer
-        
-        customer_data = data.get('customer', {})
-        
-        if 'id' in customer_data:
-            return Customer.objects.get(id=customer_data['id'])
-        
-        customer, created = Customer.objects.get_or_create(
-            document_number=customer_data['document_number'],
-            defaults={
-                'document_type': customer_data.get('document_type', 'CI'),
-                'full_name': customer_data['full_name'],
-                'phone': customer_data.get('phone', ''),
-                'email': customer_data.get('email', ''),
-                'address': customer_data.get('address', ''),
-            }
-        )
-        
-        # Actualizar si ya existe
-        if not created:
-            for field in ['full_name', 'phone', 'email', 'address']:
-                if customer_data.get(field):
-                    setattr(customer, field, customer_data[field])
-            customer.save()
-        
-        return customer
-    
+
     def _validate_supervisor_pin(self, pin):
         """Valida PIN de supervisor"""
         from users.models import User

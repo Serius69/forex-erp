@@ -41,6 +41,8 @@ import {
   NavigateNext,
   Add,
   Close,
+  Casino,
+  Public,
 } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
@@ -69,6 +71,9 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   capital:           'Capital',
   ganancias:         'Ganancias',
   predictions:       'Predicciones',
+  simulator:         'Simulador',
+  macro:             'Macro Bolivia',
+  advisor:           'Asesor',
   analytics:         'Analytics',
   decisiones:        'Motor IA',
   'ai-insights':     'IA Insights',
@@ -164,6 +169,9 @@ const NAV_GROUPS: NavGroup[] = [
     roles: ['ADMIN', 'SUPERVISOR'],
     items: [
       { id: 'predictions',     label: 'Predicciones',       path: '/predictions',      icon: <Psychology fontSize="small" />, roles: ['ADMIN','SUPERVISOR'] },
+      { id: 'advisor',         label: 'Asesor',              path: '/advisor',          icon: <SmartToy fontSize="small" />,   roles: ['ADMIN','SUPERVISOR'] },
+      { id: 'simulator',       label: 'Simulador',           path: '/simulator',        icon: <Casino fontSize="small" />,     roles: ['ADMIN','SUPERVISOR'] },
+      { id: 'macro',           label: 'Macro Bolivia',       path: '/macro',            icon: <Public fontSize="small" />,     roles: ['ADMIN','SUPERVISOR'] },
       { id: 'analytics',       label: 'Analytics',           path: '/analytics',        icon: <BarChart fontSize="small" />,   roles: ['ADMIN','SUPERVISOR'] },
       { id: 'decisiones',      label: 'Motor IA',            path: '/decisiones',       icon: <SmartToy fontSize="small" />,   roles: ['ADMIN','SUPERVISOR'] },
       { id: 'ai-insights',     label: 'IA Insights',         path: '/ai-insights',      icon: <AutoAwesome fontSize="small" />, roles: ['ADMIN','SUPERVISOR'] },
@@ -548,7 +556,7 @@ export default function MainLayout() {
             </IconButton>
           )}
 
-          <Typography variant="subtitle1" fontWeight={700} sx={{ flex: 1 }}>
+          <Typography variant="subtitle1" fontWeight={700} noWrap sx={{ flex: 1, minWidth: 0 }}>
             {pageTitle()}
           </Typography>
 
@@ -576,8 +584,8 @@ export default function MainLayout() {
             Nueva
           </Button>
 
-          {/* System status (WS + stale indicator) */}
-          <Box sx={{ display: { xs: 'none', sm: 'flex' } }}>
+          {/* System status (WS + stale indicator) — en xs solo el punto de estado */}
+          <Box sx={{ display: 'flex' }}>
             <SystemStatusBar />
           </Box>
 
@@ -694,8 +702,8 @@ export default function MainLayout() {
           </Box>
         )}
 
-        {/* Page content */}
-        <Box sx={{ p: { xs: 2, sm: 3 }, maxWidth: 1400, mx: 'auto' }}>
+        {/* Page content — pb extra en xs para que el SpeedDial no tape la última fila */}
+        <Box sx={{ p: { xs: 2, sm: 3 }, pb: { xs: 12, sm: 3 }, maxWidth: 1400, mx: 'auto' }}>
           <Outlet />
         </Box>
 
@@ -707,7 +715,9 @@ export default function MainLayout() {
           onClose={() => setDialOpen(false)}
           icon={<SpeedDialIcon icon={<Add />} openIcon={<Close />} />}
           sx={{
-            position: 'fixed', bottom: 28, right: 28,
+            position: 'fixed',
+            bottom: { xs: 'calc(16px + env(safe-area-inset-bottom))', sm: 28 },
+            right: { xs: 16, sm: 28 },
             '& .MuiSpeedDial-fab': {
               width: 52, height: 52,
               background: `linear-gradient(135deg, ${TOKENS.blue} 0%, #1D4ED8 100%)`,

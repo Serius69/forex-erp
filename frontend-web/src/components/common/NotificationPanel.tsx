@@ -158,7 +158,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ open, onClose }) 
       anchor="right"
       open={open}
       onClose={onClose}
-      PaperProps={{ sx: { width: 420, display: 'flex', flexDirection: 'column' } }}
+      PaperProps={{ sx: { width: { xs: '100vw', sm: 420 }, maxWidth: '100%', display: 'flex', flexDirection: 'column' } }}
     >
       {/* ── Header ── */}
       <Box sx={{ p: 2, pb: 1 }}>

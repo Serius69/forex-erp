@@ -9,7 +9,7 @@ import {
 } from '@mui/material';
 import {
   Add, Refresh, AccountBalance, Receipt,
-  CameraAlt, Assessment, Inventory2,
+  CameraAlt, Assessment, Inventory2, TrendingUp,
 } from '@mui/icons-material';
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip,
@@ -25,18 +25,27 @@ import CapitalTimeline from './CapitalTimeline';
 import { useDashboard } from '../../hooks/useDashboard';
 import type { CapitalActual, Gasto, ResumenGastos, CapitalSnapshot } from '../../hooks/useDashboard';
 
+// Alineado con Gasto.CATEGORIAS del backend — un valor fuera de la lista da 400
 const CATEGORIAS = [
-  'ALQUILER', 'SERVICIOS', 'SALARIOS', 'SUMINISTROS',
-  'MANTENIMIENTO', 'IMPUESTOS', 'PUBLICIDAD', 'SEGUROS',
-  'TRANSPORTE', 'CAPACITACION', 'TECNOLOGIA', 'OTROS',
+  'ALQUILER', 'SERVICIOS', 'SUELDOS', 'COMISIONES',
+  'PUBLICIDAD', 'IMPUESTOS', 'SUMINISTROS', 'MANTENIMIENTO',
+  'TRANSPORTE', 'BANCO', 'OTROS',
 ];
 
 const CATEGORIA_COLOR: Record<string, string> = {
-  ALQUILER: '#1976d2', SERVICIOS: '#388e3c', SALARIOS: '#f57c00',
+  ALQUILER: '#1976d2', SERVICIOS: '#388e3c', SUELDOS: '#f57c00',
   SUMINISTROS: '#7b1fa2', MANTENIMIENTO: '#d32f2f', IMPUESTOS: '#0288d1',
-  PUBLICIDAD: '#c2185b', SEGUROS: '#00796b', TRANSPORTE: '#5d4037',
-  CAPACITACION: '#455a64', TECNOLOGIA: '#283593', OTROS: '#757575',
+  PUBLICIDAD: '#c2185b', COMISIONES: '#00796b', TRANSPORTE: '#5d4037',
+  BANCO: '#455a64', OTROS: '#757575',
 };
+
+// Alineado con Gasto.MEDIOS_PAGO del backend
+const MEDIOS_PAGO = [
+  { value: 'EFECTIVO', label: 'Efectivo' },
+  { value: 'QR',       label: 'QR / Billetera digital' },
+  { value: 'TRANSFER', label: 'Transferencia bancaria' },
+  { value: 'TARJETA',  label: 'Tarjeta de débito/crédito' },
+];
 
 // ── Capital Actual Card ───────────────────────────────────────────────────────
 const CapitalActualCard = ({ capital, loading }: { capital: CapitalActual | null; loading: boolean }) => (
@@ -99,7 +108,7 @@ const GastoDialog = ({ open, onClose, onSuccess }: {
     categoria: 'OTROS',
     descripcion: '',
     monto_bob: '',
-    medio_pago: 'CASH',
+    medio_pago: 'EFECTIVO',
     proveedor: '',
     nro_factura: '',
   });
@@ -110,7 +119,7 @@ const GastoDialog = ({ open, onClose, onSuccess }: {
     if (open) setForm({
       fecha: new Date().toISOString().split('T')[0],
       categoria: 'OTROS', descripcion: '', monto_bob: '',
-      medio_pago: 'CASH', proveedor: '', nro_factura: '',
+      medio_pago: 'EFECTIVO', proveedor: '', nro_factura: '',
     });
   }, [open]);
 
@@ -169,10 +178,7 @@ const GastoDialog = ({ open, onClose, onSuccess }: {
               <InputLabel>Medio de Pago</InputLabel>
               <Select value={form.medio_pago} label="Medio de Pago"
                 onChange={e => setForm(p => ({ ...p, medio_pago: e.target.value }))}>
-                <MenuItem value="CASH">Efectivo</MenuItem>
-                <MenuItem value="TRANSFER">Transferencia</MenuItem>
-                <MenuItem value="QR">QR</MenuItem>
-                <MenuItem value="CHECK">Cheque</MenuItem>
+                {MEDIOS_PAGO.map(m => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
               </Select>
             </FormControl>
           </Grid>
@@ -191,6 +197,91 @@ const GastoDialog = ({ open, onClose, onSuccess }: {
         <Button variant="contained" color="error" onClick={submit}
           disabled={loading || !form.descripcion || !form.monto_bob}>
           Registrar Gasto
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+// ── Dialog: Nuevo Ingreso Extra ──────────────────────────────────────────────
+const IngresoDialog = ({ open, onClose, onSuccess }: {
+  open: boolean; onClose: () => void; onSuccess: () => void;
+}) => {
+  const [form, setForm] = useState({
+    fecha: new Date().toISOString().split('T')[0],
+    tipo: '', monto_bob: '', medio_pago: 'EFECTIVO', notas: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const { enqueueSnackbar } = useSnackbar();
+
+  useEffect(() => {
+    if (open) setForm({
+      fecha: new Date().toISOString().split('T')[0],
+      tipo: '', monto_bob: '', medio_pago: 'EFECTIVO', notas: '',
+    });
+  }, [open]);
+
+  const submit = async () => {
+    setLoading(true);
+    try {
+      await api.post('/capital/ingresos/', {
+        ...form,
+        monto_bob: parseFloat(form.monto_bob),
+      });
+      enqueueSnackbar('Ingreso registrado', { variant: 'success' });
+      onSuccess();
+      onClose();
+    } catch (e: any) {
+      enqueueSnackbar(e.response?.data?.error || 'Error al registrar ingreso', { variant: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>
+        <Box display="flex" alignItems="center" gap={1}>
+          <TrendingUp color="success" /> Registrar Ingreso Extra
+        </Box>
+      </DialogTitle>
+      <DialogContent>
+        <Grid container spacing={2} sx={{ mt: 0.5 }}>
+          <Grid item xs={6}>
+            <TextField fullWidth label="Fecha" type="date" value={form.fecha}
+              onChange={e => setForm(p => ({ ...p, fecha: e.target.value }))}
+              InputLabelProps={{ shrink: true }} />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField fullWidth label="Concepto" required value={form.tipo}
+              placeholder="Venta indirecta, comisión…"
+              onChange={e => setForm(p => ({ ...p, tipo: e.target.value }))} />
+          </Grid>
+          <Grid item xs={6}>
+            <TextField fullWidth label="Monto (Bs.)" type="number" required value={form.monto_bob}
+              onChange={e => setForm(p => ({ ...p, monto_bob: e.target.value }))}
+              inputProps={{ min: 0.01, step: 0.01 }} />
+          </Grid>
+          <Grid item xs={6}>
+            <FormControl fullWidth>
+              <InputLabel>Medio de Pago</InputLabel>
+              <Select value={form.medio_pago} label="Medio de Pago"
+                onChange={e => setForm(p => ({ ...p, medio_pago: e.target.value }))}>
+                {MEDIOS_PAGO.map(m => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12}>
+            <TextField fullWidth label="Notas" value={form.notas}
+              onChange={e => setForm(p => ({ ...p, notas: e.target.value }))} />
+          </Grid>
+        </Grid>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancelar</Button>
+        <Button variant="contained" color="success" onClick={submit}
+          disabled={loading || !form.tipo || !form.monto_bob}>
+          Registrar Ingreso
         </Button>
       </DialogActions>
     </Dialog>
@@ -283,11 +374,12 @@ const SnapshotDialog = ({ open, onClose, onSuccess }: {
 const Capital: React.FC = () => {
   const [tab, setTab]                   = useState(0);
   const [gastoDialog, setGastoDialog]   = useState(false);
+  const [ingresoDialog, setIngresoDialog] = useState(false);
   const [snapshotDialog, setSnapshotDialog] = useState(false);
   const [dateFrom]                      = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
   const [dateTo]                        = useState(new Date().toISOString().split('T')[0]);
 
-  const { capital, gastos, resumenGastos, snapshots, loading, canSnapshot, refresh: load } =
+  const { capital, gastos, resumenGastos, ingresos, resumenIngresos, snapshots, loading, canSnapshot, refresh: load } =
     useDashboard(dateFrom, dateTo);
 
   const pieData = resumenGastos?.por_categoria.map(c => ({
@@ -310,6 +402,9 @@ const Capital: React.FC = () => {
               Snapshot
             </Button>
           )}
+          <Button variant="outlined" color="success" startIcon={<Add />} onClick={() => setIngresoDialog(true)}>
+            Nuevo Ingreso
+          </Button>
           <Button variant="contained" color="error" startIcon={<Add />} onClick={() => setGastoDialog(true)}>
             Nuevo Gasto
           </Button>
@@ -319,12 +414,14 @@ const Capital: React.FC = () => {
         </Box>
       </Box>
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}>
-        <Tab icon={<Assessment />} iconPosition="start" label="Dashboard" />
-        <Tab icon={<AccountBalance />} iconPosition="start" label="Capital Actual" />
-        <Tab icon={<Receipt />} iconPosition="start" label="Gastos" />
-        {canSnapshot && <Tab icon={<CameraAlt />} iconPosition="start" label="Snapshots" />}
-        <Tab icon={<Inventory2 />} iconPosition="start" label="Caja Manual" value={canSnapshot ? 4 : 3} />
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}
+        variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile>
+        <Tab icon={<Assessment />} iconPosition="start" label="Dashboard" value={0} />
+        <Tab icon={<AccountBalance />} iconPosition="start" label="Capital Actual" value={1} />
+        <Tab icon={<Receipt />} iconPosition="start" label="Gastos" value={2} />
+        <Tab icon={<TrendingUp />} iconPosition="start" label="Ingresos" value={3} />
+        {canSnapshot && <Tab icon={<CameraAlt />} iconPosition="start" label="Snapshots" value={4} />}
+        <Tab icon={<Inventory2 />} iconPosition="start" label="Caja Manual" value={5} />
       </Tabs>
 
       {/* Tab 0: Dashboard */}
@@ -461,8 +558,74 @@ const Capital: React.FC = () => {
         </Grid>
       )}
 
-      {/* Tab 3: Snapshots */}
-      {tab === 3 && canSnapshot && (
+      {/* Tab 3: Ingresos Extra */}
+      {tab === 3 && (
+        <Grid container spacing={3}>
+          {resumenIngresos && parseFloat(resumenIngresos.total_bob) > 0 && (
+            <Grid item xs={12} md={4}>
+              <Card>
+                <CardContent>
+                  <Typography fontWeight={700} mb={1}>Ingresos por Concepto</Typography>
+                  <Typography variant="h5" fontWeight={800} color="success.main">
+                    {formatCurrency(parseFloat(resumenIngresos.total_bob))}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {resumenIngresos.total_ingresos} ingresos registrados
+                  </Typography>
+                  <Divider sx={{ my: 1.5 }} />
+                  {resumenIngresos.por_tipo.slice(0, 6).map(t => (
+                    <Box key={t.tipo} display="flex" justifyContent="space-between" py={0.4}>
+                      <Typography variant="caption">{t.tipo} ({t.count})</Typography>
+                      <Typography variant="caption" fontWeight={600}>{formatCurrency(parseFloat(t.total))}</Typography>
+                    </Box>
+                  ))}
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
+          <Grid item xs={12} md={resumenIngresos && parseFloat(resumenIngresos.total_bob) > 0 ? 8 : 12}>
+            <TableContainer component={Paper}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ bgcolor: 'grey.100' }}>
+                    <TableCell><strong>Fecha</strong></TableCell>
+                    <TableCell><strong>Concepto</strong></TableCell>
+                    <TableCell align="right"><strong>Monto</strong></TableCell>
+                    <TableCell><strong>Pago</strong></TableCell>
+                    <TableCell><strong>Notas</strong></TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {loading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <TableRow key={i}><TableCell colSpan={5}><Skeleton /></TableCell></TableRow>
+                    ))
+                  ) : ingresos.length === 0 ? (
+                    <TableRow><TableCell colSpan={5} align="center">
+                      <Typography color="text.secondary" py={2}>Sin ingresos extra en el período</Typography>
+                    </TableCell></TableRow>
+                  ) : ingresos.map(i => (
+                    <TableRow key={i.id} hover>
+                      <TableCell>{i.fecha}</TableCell>
+                      <TableCell>{i.tipo}</TableCell>
+                      <TableCell align="right">
+                        <Typography fontWeight={700} color="success.main">
+                          {formatCurrency(parseFloat(i.monto_bob))}
+                        </Typography>
+                      </TableCell>
+                      <TableCell><Chip label={i.medio_pago} size="small" variant="outlined" /></TableCell>
+                      <TableCell>{i.notas || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Grid>
+        </Grid>
+      )}
+
+      {/* Tab 4: Snapshots */}
+      {tab === 4 && canSnapshot && (
         <TableContainer component={Paper}>
           <Table size="small">
             <TableHead>
@@ -506,8 +669,8 @@ const Capital: React.FC = () => {
         </TableContainer>
       )}
 
-      {/* Tab: Caja Manual */}
-      {tab === (canSnapshot ? 4 : 3) && (
+      {/* Tab 5: Caja Manual */}
+      {tab === 5 && (
         <Paper variant="outlined" sx={{ p: 3 }}>
           <CapitalCaja />
         </Paper>
@@ -515,6 +678,7 @@ const Capital: React.FC = () => {
 
       {/* Dialogs */}
       <GastoDialog open={gastoDialog} onClose={() => setGastoDialog(false)} onSuccess={load} />
+      <IngresoDialog open={ingresoDialog} onClose={() => setIngresoDialog(false)} onSuccess={load} />
       <SnapshotDialog open={snapshotDialog} onClose={() => setSnapshotDialog(false)} onSuccess={load} />
     </Box>
   );

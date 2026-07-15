@@ -24,16 +24,37 @@ from core.ratelimit import rate_limit
 log = logging.getLogger('tarjetas')
 
 
+def _validar_tipo_de_mi_empresa(tipo, user):
+    """
+    Guard multi-tenant para entradas por PK: el tipo de tarjeta debe pertenecer
+    a la empresa del usuario. Se responde 404 (no 403) para no revelar la
+    existencia de catálogos de otras empresas.
+    """
+    from rest_framework.exceptions import NotFound
+    if tipo.company_id != getattr(user, 'company_id', None):
+        raise NotFound('Tipo de tarjeta no encontrado.')
+
+
 class TipoTarjetaViewSet(viewsets.ModelViewSet):
-    """CRUD de tipos de tarjeta + inventario en tiempo real."""
+    """CRUD de tipos de tarjeta + inventario en tiempo real (por empresa)."""
     queryset           = TipoTarjeta.objects.filter(is_active=True)
     serializer_class   = TipoTarjetaSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        return super().get_queryset().filter(
+            company_id=getattr(self.request.user, 'company_id', None)
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.user.company)
+
     @action(detail=False, methods=['GET'], url_path='inventario')
     def inventario(self, request):
         """Snapshot del inventario de tarjetas con stock y valores."""
-        data = TarjetaService.inventario_completo()
+        data = TarjetaService.inventario_completo(
+            company_id=getattr(request.user, 'company_id', None)
+        )
         return Response(data)
 
     @action(detail=True, methods=['POST'], url_path='registrar-lote',
@@ -113,7 +134,9 @@ class LoteCompraViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset().filter(
+            tipo_tarjeta__company_id=getattr(self.request.user, 'company_id', None)
+        )
         tipo_id   = self.request.query_params.get('tipo_tarjeta')
         is_active = self.request.query_params.get('activos')
         if tipo_id:
@@ -140,6 +163,7 @@ class LoteCompraViewSet(viewsets.ModelViewSet):
         ser = LoteAPICreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         vd  = ser.validated_data
+        _validar_tipo_de_mi_empresa(vd['tipo_tarjeta'], request.user)
 
         lote = TarjetaService.registrar_lote(
             tipo_tarjeta   = vd['tipo_tarjeta'],
@@ -280,6 +304,7 @@ class ComprarTarjetaView(GenericAPIView):
         ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
         vd  = ser.validated_data
+        _validar_tipo_de_mi_empresa(vd['tipo_tarjeta'], request.user)
 
         lote = TarjetaService.registrar_lote(
             tipo_tarjeta   = vd['tipo_tarjeta'],
@@ -328,6 +353,7 @@ class VenderTarjetaView(GenericAPIView):
         ser = self.get_serializer(data=request.data)
         ser.is_valid(raise_exception=True)
         vd  = ser.validated_data
+        _validar_tipo_de_mi_empresa(vd['tipo_tarjeta'], request.user)
 
         try:
             venta = TarjetaService.registrar_venta(
@@ -370,7 +396,10 @@ class InventarioTarjetaView(GenericAPIView):
         operadora = request.query_params.get('operadora')
         con_stock = request.query_params.get('con_stock') == 'true'
 
-        tipos_qs = TipoTarjeta.objects.filter(is_active=True).prefetch_related('lotes')
+        company_id = getattr(request.user, 'company_id', None)
+        tipos_qs = TipoTarjeta.objects.filter(
+            is_active=True, company_id=company_id,
+        ).prefetch_related('lotes')
         if operadora:
             tipos_qs = tipos_qs.filter(operadora=operadora.upper())
 
@@ -419,10 +448,11 @@ class InventarioTarjetaView(GenericAPIView):
                 'lotes_activos':   lotes_activos,
             })
 
-        # Totales globales de ganancias del período
+        # Totales de ganancias del período (de la empresa del usuario)
         ganancia_total = (
             VentaTarjeta.objects
             .filter(
+                tipo_tarjeta__company_id=company_id,
                 created_at__date__gte=date_from,
                 created_at__date__lte=date_to,
             )
@@ -431,6 +461,7 @@ class InventarioTarjetaView(GenericAPIView):
         ingresos_total = (
             VentaTarjeta.objects
             .filter(
+                tipo_tarjeta__company_id=company_id,
                 created_at__date__gte=date_from,
                 created_at__date__lte=date_to,
             )
@@ -499,11 +530,14 @@ class MovimientoTarjetaViewSet(viewsets.ReadOnlyModelViewSet):
         date_from = request.query_params.get('date_from', hoy)
         date_to   = request.query_params.get('date_to',   hoy)
 
+        company_id = getattr(request.user, 'company_id', None)
         ventas_qs = VentaTarjeta.objects.filter(
+            tipo_tarjeta__company_id=company_id,
             created_at__date__gte=date_from,
             created_at__date__lte=date_to,
         )
         compras_qs = LoteCompra.objects.filter(
+            tipo_tarjeta__company_id=company_id,
             fecha_compra__gte=date_from,
             fecha_compra__lte=date_to,
         )
@@ -584,15 +618,20 @@ class PosicionInventarioView(GenericAPIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        company_id = getattr(request.user, 'company_id', None)
+        branch = getattr(request.user, 'branch', None) if request.user.role != 'ADMIN' else None
+        # Clave por empresa+sucursal: un caché global filtraría datos de una
+        # empresa a otra (y el snapshot de un cajero al del ADMIN).
+        cache_key = f'{CACHE_KEY_POSICION}:{company_id}:{branch.id if branch else "all"}'
+
         force = request.query_params.get('refresh') == 'true'
         if not force:
-            cached = cache.get(CACHE_KEY_POSICION)
+            cached = cache.get(cache_key)
             if cached is not None:
                 return Response(cached)
 
-        branch = getattr(request.user, 'branch', None) if request.user.role != 'ADMIN' else None
-        data = TarjetaService.get_posicion_inventario(branch=branch)
-        cache.set(CACHE_KEY_POSICION, data, CACHE_TTL_POSICION)
+        data = TarjetaService.get_posicion_inventario(branch=branch, company_id=company_id)
+        cache.set(cache_key, data, CACHE_TTL_POSICION)
         return Response(data)
 
 
@@ -606,7 +645,9 @@ class AlertasInventarioView(GenericAPIView):
 
     def get(self, request):
         branch = getattr(request.user, 'branch', None) if request.user.role != 'ADMIN' else None
-        posicion = TarjetaService.get_posicion_inventario(branch=branch)
+        posicion = TarjetaService.get_posicion_inventario(
+            branch=branch, company_id=getattr(request.user, 'company_id', None),
+        )
 
         alertas = [
             item for item in posicion['items']
@@ -660,10 +701,12 @@ class KPIsTarjetasView(GenericAPIView):
     def get(self, request):
         hoy = timezone.localdate()
         inicio_mes = hoy.replace(day=1)
+        company_id = getattr(request.user, 'company_id', None)
 
-        posicion = TarjetaService.get_posicion_inventario()
+        posicion = TarjetaService.get_posicion_inventario(company_id=company_id)
 
         ventas_mes = VentaTarjeta.objects.filter(
+            tipo_tarjeta__company_id=company_id,
             created_at__date__gte=inicio_mes,
             created_at__date__lte=hoy,
             estado='COMPLETADA',

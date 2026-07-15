@@ -15,7 +15,7 @@ import { es } from 'date-fns/locale';
 import { useSnackbar } from 'notistack';
 import { useFormik } from 'formik';
 import * as yup from 'yup';
-import { api } from '../../services/api';
+import { api, downloadFile } from '../../services/api';
 import { formatCurrency, formatNumber } from '../../utils/formatters';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -111,8 +111,21 @@ const TransactionHistory: React.FC = () => {
   const [cancelOpen,   setCancelOpen]   = useState(false);
   const [selected,     setSelected]     = useState<Transaction | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+  const [receiptBusy,  setReceiptBusy]  = useState<number | null>(null);
   const { user }                        = useAuth();
   const { enqueueSnackbar }             = useSnackbar();
+
+  const handleReceipt = async (tx: Transaction) => {
+    setReceiptBusy(tx.id);
+    try {
+      const res = await api.get(`/transactions/${tx.id}/receipt/`, { responseType: 'blob' });
+      downloadFile(res.data, `${tx.transaction_number}.pdf`);
+    } catch {
+      enqueueSnackbar('No se pudo generar el comprobante', { variant: 'error' });
+    } finally {
+      setReceiptBusy(null);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -400,6 +413,15 @@ const TransactionHistory: React.FC = () => {
                         </IconButton>
                       </Tooltip>
                     )}
+                    <Tooltip title="Comprobante PDF">
+                      <span>
+                        <IconButton size="small" color="primary"
+                          disabled={receiptBusy === tx.id}
+                          onClick={() => handleReceipt(tx)}>
+                          <Receipt fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
                   </Box>
                 </TableCell>
               </TableRow>

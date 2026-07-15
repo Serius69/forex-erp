@@ -78,12 +78,13 @@ h("USUARIOS")
 admin = User.objects.filter(username='sergio').first()
 if not admin:
     admin = User.objects.create_superuser(
-        username='sergio', email='sergio@kapitalya.bo',
+        username='sergio', email='kapitalyabolivia@gmail.com',
         first_name='Sergio', last_name='Troche',
         password='Kapitalya2026!', role='ADMIN', branch=branch,
     )
 else:
     admin.set_password('Kapitalya2026!')
+    admin.email = 'kapitalyabolivia@gmail.com'
     admin.role = 'ADMIN'; admin.branch = branch; admin.is_active = True
     admin.save()
 p("sergio / Kapitalya2026! (ADMIN)")

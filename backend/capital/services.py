@@ -412,13 +412,34 @@ class GananciaService:
 
         resultado = []
         for code in sorted(codes):
-            compras = qs.filter(
+            # Ambas orientaciones conviven en los datos: el formulario web y las
+            # cargas históricas registran SIEMPRE divisa→BOB (amount_from=divisa,
+            # amount_to=BOB) tanto para BUY como para SELL; datos antiguos/tests
+            # usan BOB→divisa en SELL. Se agregan las dos.
+            compras_dv = qs.filter(
                 transaction_type='BUY', currency_from__code=code,
             ).aggregate(ops=Count('id'), unidades=Sum('amount_from'), costo_bob=Sum('amount_to'))
+            compras_bob = qs.filter(
+                transaction_type='BUY', currency_from__code='BOB', currency_to__code=code,
+            ).aggregate(ops=Count('id'), unidades=Sum('amount_to'), costo_bob=Sum('amount_from'))
 
-            ventas = qs.filter(
-                transaction_type='SELL', currency_to__code=code,
+            ventas_dv = qs.filter(
+                transaction_type='SELL', currency_from__code=code,
+            ).aggregate(ops=Count('id'), unidades=Sum('amount_from'), ingreso_bob=Sum('amount_to'))
+            ventas_bob = qs.filter(
+                transaction_type='SELL', currency_from__code='BOB', currency_to__code=code,
             ).aggregate(ops=Count('id'), unidades=Sum('amount_to'), ingreso_bob=Sum('amount_from'))
+
+            compras = {
+                'ops':       (compras_dv['ops'] or 0)      + (compras_bob['ops'] or 0),
+                'unidades':  (compras_dv['unidades'] or 0) + (compras_bob['unidades'] or 0),
+                'costo_bob': (compras_dv['costo_bob'] or 0) + (compras_bob['costo_bob'] or 0),
+            }
+            ventas = {
+                'ops':         (ventas_dv['ops'] or 0)      + (ventas_bob['ops'] or 0),
+                'unidades':    (ventas_dv['unidades'] or 0) + (ventas_bob['unidades'] or 0),
+                'ingreso_bob': (ventas_dv['ingreso_bob'] or 0) + (ventas_bob['ingreso_bob'] or 0),
+            }
 
             costo_bob   = _q(compras['costo_bob']  or 0)
             ingreso_bob = _q(ventas['ingreso_bob'] or 0)

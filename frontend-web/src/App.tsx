@@ -24,6 +24,9 @@ const Dashboard    = lazy(() => import('./components/dashboard/Dashboard'));
 const Transactions = lazy(() => import('./components/transactions/Transactions'));
 const Inventory    = lazy(() => import('./components/inventory/Inventory'));
 const Predictions  = lazy(() => import('./components/predictions/Predictions'));
+const Simulator    = lazy(() => import('./components/predictions/Simulator'));
+const MacroPanel   = lazy(() => import('./components/macro/MacroPanel'));
+const AdvisorChat  = lazy(() => import('./components/advisor/AdvisorChat'));
 const Reports      = lazy(() => import('./components/reports/Reports'));
 const Settings     = lazy(() => import('./components/settings/Settings'));
 const Customers    = lazy(() => import('./components/customers/Customers'));
@@ -42,6 +45,7 @@ const AlertasPage         = lazy(() => import('./components/alertas/AlertasPage'
 const DecisionesPage      = lazy(() => import('./components/decisiones/DecisionesPage'));
 const AIInsights          = lazy(() => import('./components/ai/AIInsights'));
 const CompanyManagement   = lazy(() => import('./components/admin/CompanyManagement'));
+const BranchManagement    = lazy(() => import('./components/admin/BranchManagement'));
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
@@ -51,8 +55,11 @@ const LoadingScreen = () => (
     flexDirection="column"
     alignItems="center"
     justifyContent="center"
-    height="100vh"
-    sx={{ bgcolor: '#0F172A', gap: 3 }}
+    sx={{
+      bgcolor: '#0F172A', gap: 3,
+      minHeight: '100vh',
+      '@supports (min-height: 100dvh)': { minHeight: '100dvh' },
+    }}
   >
     {/* Logo mark */}
     <Box sx={{
@@ -137,6 +144,9 @@ function App() {
                         <Route path="ganancias"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Ganancias /></RoleRoute>} />
                         <Route path="reports/*"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Reports /></RoleRoute>} />
                         <Route path="predictions" element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Predictions /></RoleRoute>} />
+                        <Route path="simulator"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Simulator /></RoleRoute>} />
+                        <Route path="macro"       element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><MacroPanel /></RoleRoute>} />
+                        <Route path="advisor"     element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><AdvisorChat /></RoleRoute>} />
                         <Route path="decisiones"       element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><DecisionesPage /></RoleRoute>} />
                         <Route path="ai-insights"      element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><AIInsights /></RoleRoute>} />
                         <Route path="branch-analytics" element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><BranchAnalytics /></RoleRoute>} />
@@ -145,7 +155,7 @@ function App() {
                         <Route path="executive"         element={<RoleRoute roles={['ADMIN']}><ExecutiveDashboard /></RoleRoute>} />
                         <Route path="import"            element={<RoleRoute roles={['ADMIN']}><ImportData /></RoleRoute>} />
                         <Route path="admin/users"       element={<RoleRoute roles={['ADMIN']}><UserAdmin /></RoleRoute>} />
-                        <Route path="admin/branches"    element={<RoleRoute roles={['ADMIN']}><BranchAnalytics /></RoleRoute>} />
+                        <Route path="admin/branches"    element={<RoleRoute roles={['ADMIN']}><BranchManagement /></RoleRoute>} />
                         <Route path="admin/company"     element={<RoleRoute roles={['ADMIN']}><CompanyManagement /></RoleRoute>} />
                         <Route path="admin/audit"       element={<RoleRoute roles={['ADMIN']}><AuditLog /></RoleRoute>} />
                         <Route path="admin/maintenance" element={<RoleRoute roles={['ADMIN']}><MaintenancePanel /></RoleRoute>} />

@@ -30,7 +30,7 @@ class EnsembleForecaster:
 
     # ── Pesos dinámicos ────────────────────────────────────────────────────────
 
-    def compute_weights(self, currency_pair: str, window_days: int = WEIGHT_WINDOW_DAYS) -> dict:
+    def compute_weights(self, currency_pair: str, window_days: int = WEIGHT_WINDOW_DAYS, market: str = 'web') -> dict:
         """
         Calcula pesos inversamente proporcionales al MAPE de predicciones reales
         de los últimos `window_days` días. Fallback a métricas de entrenamiento.
@@ -47,6 +47,7 @@ class EnsembleForecaster:
                 .filter(
                     currency_pair=currency_pair,
                     model__model_type=model_type,
+                    model__market=market,
                     actual_rate__isnull=False,
                     created_at__gte=cutoff,
                 )
@@ -57,7 +58,7 @@ class EnsembleForecaster:
             if mape and mape > 0:
                 weights[model_type] = 1.0 / mape
             else:
-                weights[model_type] = self._fallback_weight(currency_pair, model_type)
+                weights[model_type] = self._fallback_weight(currency_pair, model_type, market)
 
         # Normalizar
         total = sum(weights.values()) or 1.0
@@ -65,22 +66,26 @@ class EnsembleForecaster:
         logger.info("ensemble.weights pair=%s weights=%s", currency_pair, normalized)
         return normalized
 
-    def _fallback_weight(self, currency_pair: str, model_type: str) -> float:
+    def _fallback_weight(self, currency_pair: str, model_type: str, market: str = 'web') -> float:
         """Usa MAPE de entrenamiento como proxy cuando no hay historial real."""
         from predictions.models import PredictionModel
         try:
-            pm   = PredictionModel.objects.get(model_type=model_type, currency_pair=currency_pair)
+            pm   = PredictionModel.objects.get(model_type=model_type, currency_pair=currency_pair, market=market)
             mape = pm.metrics.get('mape', 5.0)
             return 1.0 / max(float(mape), 0.01)
         except Exception:
-            return 1.0   # peso neutral si el modelo no existe
+            # Sin modelo entrenado (p.ej. ARIMA cuando pmdarima/scipy no están):
+            # peso 0 para que NO contamine el ensemble. Antes devolvía 1.0, que al
+            # ser ~5× el 1/MAPE de los modelos buenos hacía dominar al fantasma.
+            return 0.0
 
-    def save_weight_snapshot(self, currency_pair: str, weights: dict):
+    def save_weight_snapshot(self, currency_pair: str, weights: dict, market: str = 'web'):
         """Persiste snapshot de pesos para análisis histórico."""
         try:
             from predictions.models import EnsembleWeightHistory
             EnsembleWeightHistory.objects.create(
                 currency_pair=currency_pair,
+                market=market,
                 weights=weights,
             )
         except Exception as exc:
@@ -150,6 +155,7 @@ class EnsembleForecaster:
         currency_pair: str,
         alpha: float = 0.05,
         lookback_days: int = 90,
+        market: str = 'web',
     ) -> list:
         """
         Reemplaza los CIs heurísticos (unión de CIs base) por intervalos split
@@ -165,6 +171,7 @@ class EnsembleForecaster:
         cutoff = timezone.now() - pd.Timedelta(days=lookback_days)
         base_qs = Prediction.objects.filter(
             currency_pair=currency_pair,
+            model__market=market,
             actual_rate__isnull=False,
             created_at__gte=cutoff,
         )
@@ -186,7 +193,7 @@ class EnsembleForecaster:
 
     # ── Meta-learner (Ridge stacking) ─────────────────────────────────────────
 
-    def train_meta_learner(self, currency_pair: str, lookback_days: int = 90) -> dict:
+    def train_meta_learner(self, currency_pair: str, lookback_days: int = 90, market: str = 'web') -> dict:
         """
         Entrena un Ridge Regression sobre las predicciones históricas de los modelos base.
         Requiere que predictions.actual_rate esté poblado.
@@ -204,6 +211,7 @@ class EnsembleForecaster:
                 .filter(
                     currency_pair=currency_pair,
                     model__model_type=model_type,
+                    model__market=market,
                     actual_rate__isnull=False,
                     created_at__gte=cutoff,
                 )
@@ -240,7 +248,8 @@ class EnsembleForecaster:
         mae     = mean_absolute_error(y[split:], y_pred)
         mape    = float(np.mean(np.abs((y[split:] - y_pred) / np.where(y[split:] != 0, y[split:], 1))) * 100)
 
-        pair_safe     = currency_pair.replace('/', '_')
+        from predictions.market_keys import fname_suffix
+        pair_safe     = currency_pair.replace('/', '_') + fname_suffix(market)
         meta_path     = os.path.join(self.models_path, f'meta_ridge_{pair_safe}.pkl')
         joblib.dump({'model': ridge, 'features': BASE_MODELS}, meta_path)
 
@@ -251,11 +260,13 @@ class EnsembleForecaster:
         self,
         base_preds: dict,
         currency_pair: str,
+        market: str = 'web',
     ) -> list:
         """
         Usa el meta-learner Ridge si está disponible; si no, fallback a weighted average.
         """
-        pair_safe = currency_pair.replace('/', '_')
+        from predictions.market_keys import fname_suffix
+        pair_safe = currency_pair.replace('/', '_') + fname_suffix(market)
         meta_path = os.path.join(self.models_path, f'meta_ridge_{pair_safe}.pkl')
 
         if not os.path.exists(meta_path):

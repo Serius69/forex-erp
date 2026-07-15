@@ -238,7 +238,8 @@ class AIPricingEngine:
             if branch:
                 qs = qs.filter(branch=branch)
 
-            counts = qs.values('transaction_type').annotate(n=Count('id'))
+            # order_by() explícito: el ordering default contamina el GROUP BY
+            counts = qs.values('transaction_type').order_by('transaction_type').annotate(n=Count('id'))
             buy_count  = next((c['n'] for c in counts if c['transaction_type'] == 'BUY'), 0)
             sell_count = next((c['n'] for c in counts if c['transaction_type'] == 'SELL'), 0)
             total      = buy_count + sell_count
@@ -396,11 +397,12 @@ class AIPricingEngine:
             currency_code    = result['currency_code'],
             branch           = branch,
             trigger          = trigger,
-            rate_bcb         = rates.get('bcb'),
+            # (rate_bcb/weight_bcb eliminados: el modelo ya no tiene esos campos
+            #  desde que se quitaron las fuentes BCB — pasarlos rompía el save
+            #  de TODA decisión → el Motor AI no registraba nada)
             rate_binance     = rates.get('binance'),
             rate_historical  = rates.get('historical'),
             rate_competition = rates.get('competition'),
-            weight_bcb         = weights.get('bcb', '0'),
             weight_binance     = weights.get('binance', '0'),
             weight_historical  = weights.get('historical', '0'),
             weight_competition = weights.get('competition', '0'),

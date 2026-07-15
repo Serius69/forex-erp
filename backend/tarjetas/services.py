@@ -17,17 +17,22 @@ log = logging.getLogger('tarjetas')
 MONEY_Q = Decimal('0.01')
 
 
-def _publish_inventario_ws():
-    """Publica snapshot de inventario al grupo WS 'tarjetas_inventario'."""
+def ws_group_inventario(company_id) -> str:
+    """Grupo WS de inventario de tarjetas, aislado por empresa."""
+    return f'tarjetas_inventario_{company_id or "global"}'
+
+
+def _publish_inventario_ws(company_id=None):
+    """Publica snapshot de inventario al grupo WS de la empresa dada."""
     try:
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
         layer = get_channel_layer()
         if layer is None:
             return
-        snapshot = TarjetaService.get_posicion_inventario()
+        snapshot = TarjetaService.get_posicion_inventario(company_id=company_id)
         async_to_sync(layer.group_send)(
-            'tarjetas_inventario',
+            ws_group_inventario(company_id),
             {'type': 'inventario_update', 'data': snapshot},
         )
     except Exception:
@@ -87,7 +92,7 @@ class TarjetaService:
         )
         # Publicar cambio de inventario por WebSocket (fuera de la transacción)
         from django.db import transaction as _tx
-        _tx.on_commit(_publish_inventario_ws)
+        _tx.on_commit(lambda: _publish_inventario_ws(tipo_tarjeta.company_id))
         return lote
 
     # ── Venta de tarjetas (FIFO) ──────────────────────────────────────────────
@@ -210,6 +215,16 @@ class TarjetaService:
             costo_fifo_total += costo_lote * consumir
             restante         -= consumir
 
+        # Guard autoritativo contra sobreventa: el chequeo de stock_actual del
+        # inicio corre sin lock, así que dos ventas concurrentes de las últimas
+        # unidades pueden pasarlo ambas. Aquí los lotes ya están bloqueados
+        # (select_for_update) y seguimos dentro del atomic → rollback total.
+        if restante > 0:
+            raise ValueError(
+                f"Stock insuficiente de {tipo_tarjeta}: faltaron {restante} "
+                f"unidades al consumir lotes (posible venta concurrente)."
+            )
+
         # Actualizar ganancia en la venta
         ganancia = (venta.total_bob - costo_fifo_total).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
         VentaTarjeta.objects.filter(pk=venta.pk).update(
@@ -238,7 +253,7 @@ class TarjetaService:
             cantidad, precio_venta, ganancia, cajero.username,
         )
         from django.db import transaction as _tx
-        _tx.on_commit(_publish_inventario_ws)
+        _tx.on_commit(lambda: _publish_inventario_ws(tipo_tarjeta.company_id))
         return venta
 
     # ── Anulación de venta ────────────────────────────────────────────────────
@@ -287,21 +302,26 @@ class TarjetaService:
             venta.id, venta.numero_venta, motivo, anulado_por.username,
         )
         from django.db import transaction as _tx
-        _tx.on_commit(_publish_inventario_ws)
+        # (bug histórico: referenciaba `tipo_tarjeta`, variable inexistente en
+        #  anular_venta → NameError en el callback on_commit de toda anulación)
+        _tx.on_commit(lambda: _publish_inventario_ws(venta.tipo_tarjeta.company_id))
         return venta
 
     # ── Posición de inventario valorizada ─────────────────────────────────────
 
     @staticmethod
-    def get_posicion_inventario(branch=None) -> dict:
+    def get_posicion_inventario(branch=None, company_id=None) -> dict:
         """
         Posición valorizada del inventario agrupada por tipo de tarjeta.
         Para cada tipo: stock, valor costo, valor venta, margen potencial, lotes activos.
+        company_id: aislar al catálogo de esa empresa (multi-tenant).
         """
         from django.db.models import Sum
         tipos = TipoTarjeta.objects.filter(is_active=True).prefetch_related(
             'lotes', 'alertas_inventario',
         )
+        if company_id is not None:
+            tipos = tipos.filter(company_id=company_id)
 
         items = []
         total_unidades = 0
@@ -367,14 +387,17 @@ class TarjetaService:
     # ── Consultas de inventario ───────────────────────────────────────────────
 
     @staticmethod
-    def inventario_completo(branch=None) -> list:
+    def inventario_completo(branch=None, company_id=None) -> list:
         """
         Devuelve snapshot del inventario de tarjetas.
         branch: filtrar por sucursal (futuro soporte multi-branch).
+        company_id: aislar al catálogo de esa empresa (multi-tenant).
         """
         tipos = TipoTarjeta.objects.filter(is_active=True).prefetch_related(
             'lotes'
         )
+        if company_id is not None:
+            tipos = tipos.filter(company_id=company_id)
         result = []
         for t in tipos:
             result.append({

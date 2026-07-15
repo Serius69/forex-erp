@@ -277,7 +277,8 @@ const UserAdmin: React.FC = () => {
 
       {/* ── Tabs ── */}
       <Paper sx={{ mb: 2 }}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)}
+          variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile>
           <Tab icon={<Person />}   iconPosition="start" label="Usuarios" />
           <Tab icon={<Business />} iconPosition="start" label="Sucursales" />
         </Tabs>

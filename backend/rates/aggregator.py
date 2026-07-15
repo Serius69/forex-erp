@@ -246,6 +246,24 @@ class RateAggregator:
             if not market_items:
                 continue
 
+            # Las estimaciones (INFERENCE) solo cuentan si NO hay ninguna fuente
+            # real en el mercado — jamás se promedian junto a datos reales.
+            # Señal: los estimadores marcan raw_data.method='estimated*' /
+            # warning='NOT_REAL_TIME' (NormalizedResult no conserva source_method).
+            def _is_estimate(r):
+                rd = getattr(r, 'raw_data', None) or {}
+                return (str(rd.get('method', '')).startswith('estimated')
+                        or rd.get('warning') == 'NOT_REAL_TIME')
+
+            real_items = [r for r in market_items if not _is_estimate(r)]
+            if real_items and len(real_items) < len(market_items):
+                log.info(
+                    'AGG_INFERENCE_DROPPED code=%s market=%s dropped=%d — hay '
+                    'fuentes reales, se descartan estimaciones',
+                    code, market, len(market_items) - len(real_items),
+                )
+                market_items = real_items
+
             # IQR outlier rejection si hay suficientes fuentes
             filtered, outliers_removed = self._iqr_filter(market_items)
             if not filtered:

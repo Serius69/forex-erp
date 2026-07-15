@@ -72,3 +72,31 @@ def check_rate_lock_expirations(self):
     except Exception as exc:
         log.error('RATE_LOCK_CHECK_FAIL err=%s', exc, exc_info=True)
         raise self.retry(exc=exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  ETL Google Sheet operativo → BD (antes era 100% manual y quedaba días atrás)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@shared_task(
+    bind=True,
+    acks_late=True,
+    max_retries=2,
+    name='transactions.sync_sheet_transactions',
+    soft_time_limit=300,
+)
+def sync_sheet_transactions_task(self):
+    """
+    Cada 30 min — sincroniza las transacciones nuevas del Google Sheet
+    KapitalyaRegistro2026 (idempotente por seq de fila; ver el comando
+    sync_sheet_transactions para el detalle del parseo/convenciones).
+    """
+    from django.core.management import call_command
+    log.info('TASK_START transactions.sync_sheet_transactions')
+    try:
+        call_command('sync_sheet_transactions')
+        log.info('TASK_DONE transactions.sync_sheet_transactions')
+        return {'ok': True}
+    except Exception as exc:
+        log.error('TASK_ERROR transactions.sync_sheet_transactions err=%s', exc)
+        raise self.retry(exc=exc, countdown=600)

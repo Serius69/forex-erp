@@ -25,6 +25,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Prophet: el wheel trae un bundle cmdstan-2.33.1 INCOMPLETO (sin makefile) que rompe
+# el backend CmdStanPy ('Prophet' object has no attribute 'stan_backend'). Compilamos
+# el CmdStan real en la ruta que Prophet exige para que el forecaster Prophet funcione.
+RUN python -c "import cmdstanpy, prophet, pathlib; \
+    d = str(pathlib.Path(prophet.__file__).parent / 'stan_model'); \
+    cmdstanpy.install_cmdstan(version='2.33.1', dir=d, overwrite=True, cores=4, progress=False)"
+
 RUN python -m playwright install chromium --with-deps 2>/dev/null || \
     echo "Playwright install skipped"
 

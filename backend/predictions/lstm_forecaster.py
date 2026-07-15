@@ -47,7 +47,7 @@ class LSTMForecaster:
 
     # ── Entrenamiento ──────────────────────────────────────────────────────────
 
-    def train(self, currency_pair: str, df: pd.DataFrame, params: dict = None) -> dict:
+    def train(self, currency_pair: str, df: pd.DataFrame, params: dict = None, market: str = 'web') -> dict:
         """
         Entrena el modelo BiLSTM+Attention.
         Parámetros opcionales vía `params`: sequence_length, units_1, units_2, dropout.
@@ -73,8 +73,13 @@ class LSTMForecaster:
         features = [f for f in LSTM_FEATURES if f in df.columns]
         data     = df[features].dropna().values
 
+        # El scaler se ajusta SOLO con el tramo de entrenamiento (80% cronológico)
+        # para no filtrar estadísticos del test hacia el modelo (data leakage);
+        # luego transforma toda la serie con esos parámetros.
+        fit_rows = max(int(len(data) * 0.8), 1)
         scaler = RobustScaler()
-        scaled = scaler.fit_transform(data)
+        scaler.fit(data[:fit_rows])
+        scaled = scaler.transform(data)
 
         X, y = _make_sequences(scaled, seq_len)
 
@@ -130,24 +135,26 @@ class LSTMForecaster:
         metrics = _compute_metrics(y_true, y_pred)
 
         # ── Guardar ──
-        pair_safe   = currency_pair.replace('/', '_')
+        from predictions.market_keys import fname_suffix
+        pair_safe   = currency_pair.replace('/', '_') + fname_suffix(market)
         model_path  = os.path.join(self.models_path, f'bilstm_{pair_safe}.keras')
         scaler_path = os.path.join(self.models_path, f'scaler_bilstm_{pair_safe}.pkl')
 
         model.save(model_path)
         joblib.dump({'scaler': scaler, 'features': features, 'seq_len': seq_len}, scaler_path)
 
-        self._register(currency_pair, model_path, metrics, {**p, 'features': features})
+        self._register(currency_pair, model_path, metrics, {**p, 'features': features}, market)
         logger.info("BiLSTM entrenado pair=%s mape=%.4f%%", currency_pair, metrics['mape'])
         return metrics
 
     # ── Predicción ─────────────────────────────────────────────────────────────
 
-    def predict(self, currency_pair: str, df_recent: pd.DataFrame, horizon: int) -> list:
+    def predict(self, currency_pair: str, df_recent: pd.DataFrame, horizon: int, market: str = 'web') -> list:
         """Predicción iterativa hora a hora con actualización de secuencia."""
         import tensorflow as tf
 
-        pair_safe   = currency_pair.replace('/', '_')
+        from predictions.market_keys import fname_suffix
+        pair_safe   = currency_pair.replace('/', '_') + fname_suffix(market)
         model_path  = os.path.join(self.models_path, f'bilstm_{pair_safe}.keras')
         scaler_path = os.path.join(self.models_path, f'scaler_bilstm_{pair_safe}.pkl')
 
@@ -194,14 +201,15 @@ class LSTMForecaster:
 
     # ── Registro en BD ─────────────────────────────────────────────────────────
 
-    def _register(self, currency_pair, model_path, metrics, params):
+    def _register(self, currency_pair, model_path, metrics, params, market='web'):
         from predictions.models import PredictionModel
 
         PredictionModel.objects.update_or_create(
             model_type='BILSTM',
             currency_pair=currency_pair,
+            market=market,
             defaults={
-                'name':         f'BiLSTM {currency_pair}',
+                'name':         f'BiLSTM {currency_pair} [{market}]',
                 'parameters':   params,
                 'metrics':      metrics,
                 'model_file':   model_path,

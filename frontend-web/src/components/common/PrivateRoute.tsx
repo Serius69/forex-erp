@@ -13,7 +13,8 @@ const PrivateRoute: React.FC<PrivateRouteProps> = ({ children }) => {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
+      <Box display="flex" justifyContent="center" alignItems="center"
+        sx={{ minHeight: '100vh', '@supports (min-height: 100dvh)': { minHeight: '100dvh' } }}>
         <CircularProgress size={60} />
       </Box>
     );

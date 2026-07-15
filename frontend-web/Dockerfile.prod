@@ -24,7 +24,9 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Imagen final solo con los archivos estáticos
-# nginx:alpine para servir archivos y popular el volumen compartido
+# En compose-prod este contenedor NO sirve tráfico: es un "publicador" que
+# copia el build al volumen compartido (el nginx principal lo sirve). Se queda
+# en imagen root a propósito: necesita escribir el volumen (root-owned).
 FROM nginx:1.25-alpine
 
 # Copiar build al directorio que el volumen compartido lee

@@ -97,7 +97,16 @@ class SignupView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         _log_activity(user, 'SIGNUP', request, {'method': 'email'})
-        return _token_response(user, status.HTTP_201_CREATED)
+        # La cuenta queda inactiva y sin empresa: no se emiten tokens hasta
+        # que un ADMIN la apruebe y le asigne empresa/sucursal.
+        return Response(
+            {
+                'detail': 'Cuenta creada. Un administrador debe aprobarla y '
+                          'asignarte una empresa antes de que puedas ingresar.',
+                'pending_approval': True,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 # ── Google OAuth ───────────────────────────────────────────────────────────────
@@ -135,16 +144,27 @@ class GoogleAuthView(APIView):
                 'first_name':  id_info.get('given_name', ''),
                 'last_name':   id_info.get('family_name', ''),
                 'role':        'CASHIER',
-                'is_active':   True,
+                # Igual que el signup por email: inactiva y sin empresa hasta
+                # aprobación de un ADMIN (Google solo verifica el email).
+                'is_active':   False,
                 'is_verified': True,
             },
         )
         if created:
             user.set_unusable_password()
             user.save()
+            _log_activity(user, 'SIGNUP', request, {'method': 'google'})
+            return Response(
+                {
+                    'detail': 'Cuenta creada. Un administrador debe aprobarla y '
+                              'asignarte una empresa antes de que puedas ingresar.',
+                    'pending_approval': True,
+                },
+                status=status.HTTP_201_CREATED,
+            )
 
         if not user.is_active:
-            return Response({'error': 'Cuenta inactiva'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Cuenta inactiva o pendiente de aprobación'}, status=status.HTTP_403_FORBIDDEN)
 
         _log_activity(user, 'LOGIN', request, {'method': 'google', 'created': created})
         return _token_response(user)
@@ -445,18 +465,33 @@ def dashboard_stats(request):
     current_rates = {}
     try:
         bob = Currency.objects.get(code='BOB')
+        # UNA tasa por divisa: la del mercado de mayor prioridad (la primaria
+        # digital). Antes se iteraban TODAS las series vigentes y "ganaba la
+        # última" (solía ser competencia con LOCF viejo → ARS 5.13/8.21) y el
+        # avg_spread promediaba todos los mercados y variantes de caja.
+        _MKT_PRIO = {'paralelo_digital': 5, 'parallel': 4, 'digital': 3,
+                     'paralelo_fisico_empresa': 2, 'paralelo_fisico_competencia': 1,
+                     'official': 0}
         rates_qs = (ExchangeRate.objects
                     .filter(currency_to=bob, valid_until__isnull=True)
                     .select_related('currency_from')
                     .order_by('currency_from__code'))
-        spread_vals = []
+        best = {}
         for rate in rates_qs:
-            current_rates[rate.currency_from.code] = {
+            code = rate.currency_from.code
+            prio = _MKT_PRIO.get(rate.market_type, 0) + (10 if rate.is_primary else 0)
+            if prio >= best.get(code, (-1, None))[0]:
+                best[code] = (prio, rate)
+
+        spread_vals = []
+        for code, (_prio, rate) in best.items():
+            current_rates[code] = {
                 'buy':      float(rate.buy_rate),
                 'sell':     float(rate.sell_rate),
                 'official': float(rate.official_rate),
             }
-            if float(rate.buy_rate) > 0:
+            # spread promedio: solo divisas estándar (no variantes de caja)
+            if len(code) == 3 and float(rate.buy_rate) > 0:
                 spread_vals.append(
                     (float(rate.sell_rate) - float(rate.buy_rate)) / float(rate.buy_rate) * 100
                 )

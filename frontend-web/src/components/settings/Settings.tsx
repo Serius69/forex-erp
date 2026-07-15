@@ -88,7 +88,8 @@ const Settings: React.FC = () => {
       <Typography variant="h4" fontWeight="bold" mb={3}>Configuración</Typography>
 
       <Paper sx={{ mb: 3 }}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)}
+          variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile>
           <Tab icon={<Person />}        iconPosition="start" label="Perfil" />
           <Tab icon={<Lock />}          iconPosition="start" label="Seguridad" />
           <Tab icon={<Business />}      iconPosition="start" label="Sucursal" />

@@ -120,10 +120,9 @@ class SignupSerializer(serializers.Serializer):
             username = f'{base}{counter}'
             counter += 1
 
-        # Assign to default company if it exists
-        from tenants.models import Company
-        default_company = Company.objects.filter(is_active=True).order_by('id').first()
-
+        # Cuenta pendiente de aprobación: SIN empresa y desactivada. Un ADMIN
+        # debe activarla y asignarle empresa/sucursal. (Antes se auto-unía como
+        # CASHIER activo a la primera empresa → acceso multi-tenant indebido.)
         return User.objects.create_user(
             username    = username,
             email       = email,
@@ -131,9 +130,9 @@ class SignupSerializer(serializers.Serializer):
             first_name  = validated_data.get('first_name', ''),
             last_name   = validated_data.get('last_name', ''),
             role        = 'CASHIER',
-            is_active   = True,
+            is_active   = False,
             is_verified = False,
-            company     = default_company,
+            company     = None,
         )
 
 

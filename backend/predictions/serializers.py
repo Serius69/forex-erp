@@ -6,7 +6,7 @@ class PredictionModelSerializer(serializers.ModelSerializer):
     class Meta:
         model  = PredictionModel
         fields = [
-            'id', 'name', 'model_type', 'currency_pair',
+            'id', 'name', 'model_type', 'currency_pair', 'market',
             'parameters', 'metrics', 'model_file',
             'is_active', 'created_at', 'last_trained',
         ]

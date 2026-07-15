@@ -73,39 +73,40 @@ class ForexMLEngine:
 
     # ── Entrenamiento ──────────────────────────────────────────────────────────
 
-    def train_all(self, currency_pair: str, include: list = None) -> dict:
+    def train_all(self, currency_pair: str, include: list = None, market: str = 'web') -> dict:
         """
-        Entrena los modelos especificados en `include` (default: todos).
+        Entrena los modelos especificados en `include` (default: todos)
+        sobre la serie `market` ('web' | 'competencia' | 'empresa').
         Retorna dict {model: metrics | error}.
         """
         models_to_train = include or self.ALL_MODELS
         results         = {}
 
-        df = self.pipeline.build(currency_pair)
+        df = self.pipeline.build(currency_pair, market=market)
 
         for model_name in models_to_train:
             try:
-                results[model_name] = self._train_one(model_name, currency_pair, df)
+                results[model_name] = self._train_one(model_name, currency_pair, df, market)
             except Exception as exc:
-                logger.error("engine.train_failed pair=%s model=%s error=%s", currency_pair, model_name, exc)
+                logger.error("engine.train_failed pair=%s model=%s market=%s error=%s", currency_pair, model_name, market, exc)
                 results[model_name] = {'status': 'error', 'error': str(exc)}
 
         # Invalidar caché después de reentrenar
-        self._invalidate_cache(currency_pair)
+        self._invalidate_cache(currency_pair, market)
         return results
 
-    def _train_one(self, model_name: str, currency_pair: str, df: pd.DataFrame) -> dict:
+    def _train_one(self, model_name: str, currency_pair: str, df: pd.DataFrame, market: str = 'web') -> dict:
         if model_name == 'xgboost':
-            return self.xgboost.train(currency_pair, df)
+            return self.xgboost.train(currency_pair, df, market=market)
         elif model_name == 'arima':
-            return self.arima.train(currency_pair, df)
+            return self.arima.train(currency_pair, df, market=market)
         elif model_name == 'bilstm':
-            return self.bilstm.train(currency_pair, df)
+            return self.bilstm.train(currency_pair, df, market=market)
         elif model_name == 'prophet':
             # Delega al servicio legacy (ya tiene su propio entrenamiento)
             from predictions.ml_service import ForexPredictionService
             svc = ForexPredictionService()
-            _, metrics = svc.train_prophet_model(currency_pair)
+            _, metrics = svc.train_prophet_model(currency_pair, market=market)
             return metrics
         else:
             raise ValueError(f"Modelo desconocido: {model_name}")
@@ -118,6 +119,8 @@ class ForexMLEngine:
         horizon_key: str = '24h',
         use_cache: bool  = True,
         force_ensemble: bool = False,
+        market: str = 'web',
+        df: 'pd.DataFrame | None' = None,
     ) -> dict:
         """
         Genera pronóstico completo para el endpoint mejorado.
@@ -128,7 +131,7 @@ class ForexMLEngine:
           horizon_hours, predictions (lista completa horaria)
         """
         horizon_hours = _HORIZON_HOURS.get(horizon_key, 24)
-        cache_key     = f'ml_forecast:{currency_pair}:{horizon_key}'
+        cache_key     = f'ml_forecast:{currency_pair}:{market}:{horizon_key}'
 
         if use_cache:
             cached = cache.get(cache_key)
@@ -136,17 +139,21 @@ class ForexMLEngine:
                 logger.debug("cache.hit key=%s", cache_key)
                 return cached
 
-        df = self.pipeline.build(currency_pair)
+        # El df de features es idéntico para (par, market) e independiente del
+        # horizonte; permitir pasarlo evita reconstruir el pipeline (3 años × 40+
+        # features) una vez por horizonte en cache_all_horizons.
+        if df is None:
+            df = self.pipeline.build(currency_pair, market=market)
 
         # ── Obtener predicciones de cada modelo base ──
-        base_preds = self._collect_base_predictions(currency_pair, df, horizon_hours)
+        base_preds = self._collect_base_predictions(currency_pair, df, horizon_hours, market)
 
         # ── Calcular pesos dinámicos ──
-        weights = self.ensemble.compute_weights(currency_pair)
+        weights = self.ensemble.compute_weights(currency_pair, market=market)
 
         # ── Combinar (ensemble o meta-learner si existe) ──
         try:
-            ensemble_preds = self.ensemble.predict_with_meta(base_preds, currency_pair)
+            ensemble_preds = self.ensemble.predict_with_meta(base_preds, currency_pair, market=market)
         except FileNotFoundError:
             ensemble_preds = self.ensemble.combine(base_preds, weights, horizon_hours)
 
@@ -155,15 +162,15 @@ class ForexMLEngine:
 
         # ── Calibración conformal: CIs con cobertura real, no nominal ──
         try:
-            ensemble_preds = self.ensemble.conformalize(ensemble_preds, currency_pair)
+            ensemble_preds = self.ensemble.conformalize(ensemble_preds, currency_pair, market=market)
         except Exception as exc:
             logger.warning("conformal.skip pair=%s: %s", currency_pair, exc)
 
         # ── Métricas de backtesting ──
-        bt_metrics = self._backtesting_metrics(currency_pair, days=30)
+        bt_metrics = self._backtesting_metrics(currency_pair, days=30, market=market)
 
         # ── Feature importance del XGBoost (más explicable) ──
-        feat_importance = self._get_feature_importance(currency_pair)
+        feat_importance = self._get_feature_importance(currency_pair, market)
 
         # ── Construir respuesta ──
         next_pred = ensemble_preds[0]
@@ -201,31 +208,31 @@ class ForexMLEngine:
 
         return result
 
-    def _collect_base_predictions(self, currency_pair: str, df: pd.DataFrame, horizon: int) -> dict:
+    def _collect_base_predictions(self, currency_pair: str, df: pd.DataFrame, horizon: int, market: str = 'web') -> dict:
         base_preds = {}
 
         # XGBoost
         try:
-            base_preds['XGBOOST'] = self.xgboost.predict(currency_pair, df, horizon)
+            base_preds['XGBOOST'] = self.xgboost.predict(currency_pair, df, horizon, market=market)
         except Exception as exc:
             logger.warning("engine.base_pred_failed model=XGBOOST: %s", exc)
 
         # ARIMA
         try:
-            base_preds['ARIMA'] = self.arima.predict(currency_pair, horizon)
+            base_preds['ARIMA'] = self.arima.predict(currency_pair, horizon, market=market)
         except Exception as exc:
             logger.warning("engine.base_pred_failed model=ARIMA: %s", exc)
 
         # BiLSTM
         try:
-            base_preds['BILSTM'] = self.bilstm.predict(currency_pair, df, horizon)
+            base_preds['BILSTM'] = self.bilstm.predict(currency_pair, df, horizon, market=market)
         except Exception as exc:
             logger.warning("engine.base_pred_failed model=BILSTM: %s", exc)
 
         # Prophet (legacy service)
         try:
             from predictions.models import PredictionModel
-            pm = PredictionModel.objects.get(model_type='PROPHET', currency_pair=currency_pair)
+            pm = PredictionModel.objects.get(model_type='PROPHET', currency_pair=currency_pair, market=market)
             from predictions.ml_service import ForexPredictionService
             svc  = ForexPredictionService()
             base_preds['PROPHET'] = svc._predict_prophet(pm, horizon)
@@ -239,7 +246,7 @@ class ForexMLEngine:
 
     # ── Métricas de backtesting ────────────────────────────────────────────────
 
-    def _backtesting_metrics(self, currency_pair: str, days: int = 30) -> dict:
+    def _backtesting_metrics(self, currency_pair: str, days: int = 30, market: str = 'web') -> dict:
         """MAE, RMSE, MAPE promediados sobre las últimas `days` predicciones reales."""
         from predictions.models import Prediction
         from django.db.models import Avg, Min, Max
@@ -247,6 +254,7 @@ class ForexMLEngine:
         cutoff = timezone.now() - timedelta(days=days)
         qs     = Prediction.objects.filter(
             currency_pair=currency_pair,
+            model__market=market,
             actual_rate__isnull=False,
             created_at__gte=cutoff,
         )
@@ -326,38 +334,45 @@ class ForexMLEngine:
 
     # ── Feature importance ────────────────────────────────────────────────────
 
-    def _get_feature_importance(self, currency_pair: str) -> dict:
+    def _get_feature_importance(self, currency_pair: str, market: str = 'web') -> dict:
         """Extrae top-10 features de la última versión del modelo XGBoost."""
         try:
             from predictions.models import PredictionModel
-            pm = PredictionModel.objects.get(model_type='XGBOOST', currency_pair=currency_pair)
+            pm = PredictionModel.objects.get(model_type='XGBOOST', currency_pair=currency_pair, market=market)
             return pm.metrics.get('top_features', {})
         except Exception:
             return {}
 
     # ── Caché ─────────────────────────────────────────────────────────────────
 
-    def _invalidate_cache(self, currency_pair: str):
+    def _invalidate_cache(self, currency_pair: str, market: str = 'web'):
         for key in _HORIZON_HOURS:
-            cache.delete(f'ml_forecast:{currency_pair}:{key}')
+            cache.delete(f'ml_forecast:{currency_pair}:{market}:{key}')
 
-    def cache_all_horizons(self, currency_pair: str):
+    def cache_all_horizons(self, currency_pair: str, market: str = 'web'):
         """Pre-calcula y cachea todos los horizontes (llamado por tarea horaria)."""
+        # Construir el pipeline UNA vez y reusarlo en los 4 horizontes (antes se
+        # reconstruía por cada predict → O(4×build) sobre 3 años de datos).
+        try:
+            df = self.pipeline.build(currency_pair, market=market)
+        except Exception as exc:
+            logger.warning("cache.prewarm_build_failed pair=%s market=%s: %s", currency_pair, market, exc)
+            df = None
         for key in _HORIZON_HOURS:
             try:
-                self.predict(currency_pair, horizon_key=key, use_cache=False)
-                logger.info("cache.prewarmed pair=%s horizon=%s", currency_pair, key)
+                self.predict(currency_pair, horizon_key=key, use_cache=False, market=market, df=df)
+                logger.info("cache.prewarmed pair=%s market=%s horizon=%s", currency_pair, market, key)
             except Exception as exc:
-                logger.warning("cache.prewarm_failed pair=%s horizon=%s: %s", currency_pair, key, exc)
+                logger.warning("cache.prewarm_failed pair=%s market=%s horizon=%s: %s", currency_pair, market, key, exc)
 
     # ── Actualización de pesos ────────────────────────────────────────────────
 
-    def refresh_ensemble_weights(self, currency_pair: str):
+    def refresh_ensemble_weights(self, currency_pair: str, market: str = 'web'):
         """Recalcula y persiste pesos del ensemble (llamado cada 4h)."""
-        weights = self.ensemble.compute_weights(currency_pair)
-        self.ensemble.save_weight_snapshot(currency_pair, weights)
-        self._invalidate_cache(currency_pair)
-        logger.info("ensemble.weights_refreshed pair=%s", currency_pair)
+        weights = self.ensemble.compute_weights(currency_pair, market=market)
+        self.ensemble.save_weight_snapshot(currency_pair, weights, market=market)
+        self._invalidate_cache(currency_pair, market)
+        logger.info("ensemble.weights_refreshed pair=%s market=%s", currency_pair, market)
         return weights
 
     # ── Backtesting semanal ────────────────────────────────────────────────────

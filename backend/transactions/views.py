@@ -167,11 +167,14 @@ class TransactionViewSet(viewsets.ModelViewSet):
         exchange_rate = vd['exchange_rate']
 
         def _requires_supervisor_check():
+            # Umbrales centralizados en el modelo (fuente única)
+            usd_max = Transaction.SUPERVISOR_THRESHOLD_USD
+            bob_max = Transaction.SUPERVISOR_THRESHOLD_BOB
             if cur_from.code == 'USD':
-                return amount_from > 5000
+                return amount_from > usd_max
             if cur_from.code == 'BOB':
-                return amount_from > 35000
-            return amount_from * exchange_rate > 35000
+                return amount_from > bob_max
+            return amount_from * exchange_rate > bob_max
 
         supervisor_instance = None
         if _requires_supervisor_check():
@@ -233,6 +236,29 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 seq    = int(last.transaction_number[-4:]) + 1 if last else 1
                 tx_num = f"{prefix}{seq:04d}"
 
+                # ── Motor antifraude (reglas HIGH_VALUE/RATE_SANITY/VELOCITY…) ──
+                # Antes el motor existía pero NUNCA se invocaba en el path real:
+                # fraud_score/approval_required quedaban siempre en default.
+                from .fraud_detection import BLOCK, FraudDetectionEngine
+                fraud = FraudDetectionEngine().evaluate(
+                    transaction_type = vd['transaction_type'],
+                    currency_from    = cur_from.code,
+                    currency_to      = cur_to.code,
+                    amount_from      = int(vd['amount_from']),
+                    amount_to        = int(vd['amount_to']),
+                    exchange_rate    = vd['exchange_rate'],
+                    customer         = customer,
+                    cashier          = request.user,
+                    branch           = branch,
+                )
+                if fraud.decision == BLOCK:
+                    return Response(
+                        {'error': 'Transacción bloqueada por el motor antifraude',
+                         'fraud_flags': fraud.flags,
+                         'fraud_score': str(fraud.score)},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
                 # Cuantizar montos con precisión financiera
                 from core.finance import quantize_amount, quantize_money, quantize_rate
                 tx = Transaction.objects.create(
@@ -256,6 +282,10 @@ class TransactionViewSet(viewsets.ModelViewSet):
                     branch                = branch,
                     supervisor            = supervisor_instance,
                     completed_at          = now,
+                    # Resultado del motor antifraude (persistido para auditoría/ML)
+                    fraud_score           = fraud.score,
+                    fraud_flags           = fraud.flags,
+                    approval_required     = (fraud.decision == 'REQUIRE_APPROVAL'),
                 )
 
                 # Actualizar inventario de divisas.
@@ -484,8 +514,12 @@ class TransactionViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            reversal = transaction.reverse(request.user, reason)
-            
+            reversal = transaction.reverse(
+                request.user, reason,
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            )
+
             return Response({
                 'success': True,
                 'reversal': TransactionSerializer(reversal).data
@@ -531,73 +565,76 @@ class TransactionViewSet(viewsets.ModelViewSet):
             target_date = timezone.localdate()
         
         transactions = self.get_queryset().filter(created_at__date=target_date)
-        
+
+        # 5 consultas agrupadas en total (antes: ~50+ — un count/aggregate por
+        # divisa×lado + 24 pares count/aggregate horarios → N+1 severo).
+        from django.db.models import Q
+        from django.db.models.functions import ExtractHour
+
+        totals = transactions.aggregate(
+            total=Count('id'),
+            buy_count=Count('id', filter=Q(transaction_type='BUY')),
+            sell_count=Count('id', filter=Q(transaction_type='SELL')),
+            volume_bob=Sum('amount_to'),
+        )
+
         summary = {
             'date': target_date,
-            'total_transactions': transactions.count(),
+            'total_transactions': totals['total'],
             'by_type': {
-                'buy': transactions.filter(transaction_type='BUY').count(),
-                'sell': transactions.filter(transaction_type='SELL').count(),
+                'buy': totals['buy_count'],
+                'sell': totals['sell_count'],
             },
             'by_currency': {},
-            'total_volume_bob': 0,
+            'total_volume_bob': totals['volume_bob'] or 0,
             'by_payment_method': {},
             'by_hour': []
         }
-        
-        # Resumen por divisa
-        currencies = transactions.values('currency_from__code').distinct()
-        for currency in currencies:
-            code = currency['currency_from__code']
-            currency_transactions = transactions.filter(currency_from__code=code)
-            
-            summary['by_currency'][code] = {
-                'buy': {
-                    'count': currency_transactions.filter(transaction_type='BUY').count(),
-                    'volume': currency_transactions.filter(
-                        transaction_type='BUY'
-                    ).aggregate(Sum('amount_from'))['amount_from__sum'] or 0
-                },
-                'sell': {
-                    'count': currency_transactions.filter(transaction_type='SELL').count(),
-                    'volume': currency_transactions.filter(
-                        transaction_type='SELL'
-                    ).aggregate(Sum('amount_from'))['amount_from__sum'] or 0
-                }
+
+        # Resumen por divisa — una sola consulta agrupada
+        # (order_by() limpia el ordering default, que se colaría en el GROUP BY)
+        by_currency = (transactions
+                       .values('currency_from__code')
+                       .order_by('currency_from__code')
+                       .annotate(
+                           buy_count=Count('id', filter=Q(transaction_type='BUY')),
+                           buy_volume=Sum('amount_from', filter=Q(transaction_type='BUY')),
+                           sell_count=Count('id', filter=Q(transaction_type='SELL')),
+                           sell_volume=Sum('amount_from', filter=Q(transaction_type='SELL')),
+                       ))
+        for row in by_currency:
+            summary['by_currency'][row['currency_from__code']] = {
+                'buy':  {'count': row['buy_count'],  'volume': row['buy_volume'] or 0},
+                'sell': {'count': row['sell_count'], 'volume': row['sell_volume'] or 0},
             }
-        
-        # Volumen total en BOB
-        summary['total_volume_bob'] = transactions.aggregate(
-            Sum('amount_to')
-        )['amount_to__sum'] or 0
-        
-        # Por método de pago
-        payment_methods = transactions.values('payment_method').annotate(
+
+        # Por método de pago — una sola consulta agrupada
+        payment_methods = transactions.values('payment_method').order_by('payment_method').annotate(
             count=Count('id'),
             volume=Sum('amount_to')
         )
-        
         for pm in payment_methods:
             summary['by_payment_method'][pm['payment_method']] = {
                 'count': pm['count'],
                 'volume': float(pm['volume'] or 0)
             }
-        
-        # Por hora del día
+
+        # Por hora del día — una sola consulta agrupada (huecos rellenos con 0)
+        by_hour = {row['hour']: row for row in (
+            transactions
+            .annotate(hour=ExtractHour('created_at'))
+            .values('hour')
+            .order_by('hour')
+            .annotate(count=Count('id'), volume=Sum('amount_to'))
+        )}
         for hour in range(24):
-            hour_transactions = transactions.filter(
-                created_at__hour=hour
-            )
+            row = by_hour.get(hour)
             summary['by_hour'].append({
                 'hour': hour,
-                'count': hour_transactions.count(),
-                'volume': float(
-                    hour_transactions.aggregate(
-                        Sum('amount_to')
-                    )['amount_to__sum'] or 0
-                )
+                'count': row['count'] if row else 0,
+                'volume': float(row['volume'] or 0) if row else 0.0,
             })
-        
+
         return Response(summary)
     
     @action(detail=False, methods=['GET'], url_path='pending-approvals')

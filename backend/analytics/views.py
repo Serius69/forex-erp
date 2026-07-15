@@ -61,8 +61,9 @@ def analytics_pnl(request):
     date_from, date_to = parse_date_range(request)
     currency    = request.query_params.get('currency')
 
-    resumen = PnLService.resumen_periodo(branch, date_from, date_to) if branch else {}
-    series  = PnLService.series_pnl(branch, date_from, date_to) if branch else []
+    # branch=None (ADMIN sin sucursal / all_branches) → agregado de todas
+    resumen = PnLService.resumen_periodo(branch, date_from, date_to)
+    series  = PnLService.series_pnl(branch, date_from, date_to)
 
     # Top divisas por ganancia
     ledger_qs = TransactionProfitLedger.objects.filter(
@@ -652,7 +653,8 @@ def analytics_decision_history(request):
 
     from django.db.models import Count as DCount
     por_decision = dict(
-        qs.values('decision').annotate(n=DCount('id')).values_list('decision', 'n')
+        # order_by() explícito: un ordering default contaminaría el GROUP BY
+        qs.values('decision').order_by('decision').annotate(n=DCount('id')).values_list('decision', 'n')
     )
 
     # ── Build results ─────────────────────────────────────────────────────────

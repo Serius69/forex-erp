@@ -56,7 +56,7 @@ services:
     image: redis:7-alpine
     command: >
       redis-server
-      --requirepass ${REDIS_PASSWORD:-kapitalya_redis_2024}
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD requerido en producción}
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --save 900 1
@@ -65,7 +65,7 @@ services:
       - redis_data:/data
     # NO exponer puerto 6379 al host
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-kapitalya_redis_2024}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD requerido en producción}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -131,7 +131,7 @@ services:
       celery -A core flower
       --port=5555
       --url_prefix=flower
-      --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-kapitalya2024}
+      --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:?FLOWER_PASSWORD requerido en producción}
     expose:
       - "5555"
 
@@ -147,8 +147,12 @@ services:
         VITE_WS_BASE_URL: /ws
         VITE_APP_NAME: Kapitalya ERP
         VITE_APP_VERSION: "1.0.0"
+    # Publicador de assets: copia el build al volumen en CADA arranque.
+    # (Montar el volumen sobre /usr/share/nginx/html solo lo poblaba la
+    # primera vez → rebuilds posteriores quedaban enmascarados.)
+    command: sh -c "rm -rf /vol/* && cp -a /usr/share/nginx/html/. /vol/ && echo 'frontend build publicado'"
     volumes:
-      - frontend_build:/usr/share/nginx/html
+      - frontend_build:/vol
     restart: "no"  # Solo necesita correr una vez para popular el volumen
     networks:
       - kapitalya

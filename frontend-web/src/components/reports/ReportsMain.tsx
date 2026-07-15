@@ -14,6 +14,7 @@ import { useSnackbar } from 'notistack';
 import { api, downloadFile } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranchScope } from '../../contexts/BranchScopeContext';
+import ROUEReports from './ROUEReports';
 
 const ReportsMain: React.FC = () => {
   const [tab,       setTab]       = useState(0);
@@ -105,7 +106,8 @@ const ReportsMain: React.FC = () => {
   return (
     <Box>
       <Paper sx={{ mb: 3 }}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)}
+          variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile>
           <Tab icon={<Security />}   iconPosition="start" label="ASFI / Regulatorios" />
           <Tab icon={<Assessment />} iconPosition="start" label="Gerenciales" />
         </Tabs>
@@ -225,6 +227,9 @@ const ReportsMain: React.FC = () => {
               />
             </Grid>
           </Grid>
+
+          {/* ROUE — reportes de operaciones inusuales / sospechosas (por registro) */}
+          <ROUEReports />
         </Box>
       )}
 

@@ -8,6 +8,15 @@ DEBUG = False
 ENVIRONMENT = 'production'
 KAPITALYA_ENV = 'production'
 
+# Fail-fast: producción no arranca sin una SECRET_KEY real (sin default; se
+# rechazan el placeholder CAMBIAR_* de .env.production y el fallback de base.py).
+SECRET_KEY = env('SECRET_KEY')
+if 'CAMBIAR' in SECRET_KEY or 'insecure' in SECRET_KEY:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        'SECRET_KEY es un placeholder — generar una clave real antes de desplegar.'
+    )
+
 TAILSCALE_IP   = env('TAILSCALE_IP', default='100.x.x.x')
 TAILSCALE_MODE = env.bool('TAILSCALE_MODE', default=True)  # HTTP en red privada Tailscale
 

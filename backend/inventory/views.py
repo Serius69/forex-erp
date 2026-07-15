@@ -436,7 +436,10 @@ class InventoryCardViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        # Aislamiento multi-tenant: solo las tarjetas de la empresa del usuario.
+        queryset = super().get_queryset().filter(
+            company_id=getattr(self.request.user, 'company_id', None)
+        )
         currency = self.request.query_params.get('currency')
         status   = self.request.query_params.get('status')
         if currency:
@@ -444,3 +447,6 @@ class InventoryCardViewSet(viewsets.ModelViewSet):
         if status:
             queryset = queryset.filter(status=status)
         return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.user.company)

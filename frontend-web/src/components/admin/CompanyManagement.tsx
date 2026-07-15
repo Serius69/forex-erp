@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Box, Typography, Card, CardContent, Divider, Grid,
-  Chip, Button, LinearProgress, Table, TableHead,
+  Chip, Button, LinearProgress, Table, TableHead, TableContainer,
   TableRow, TableCell, TableBody, CircularProgress,
 } from '@mui/material';
 import {
@@ -197,6 +197,7 @@ export default function CompanyManagement() {
             <CardContent>
               <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 2 }}>Sucursales</Typography>
               <Divider sx={{ mb: 2 }} />
+              <TableContainer>
               <Table size="small">
                 <TableHead>
                   <TableRow>
@@ -239,6 +240,7 @@ export default function CompanyManagement() {
                   ))}
                 </TableBody>
               </Table>
+              </TableContainer>
             </CardContent>
           </Card>
         </Grid>

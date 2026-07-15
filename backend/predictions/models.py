@@ -14,24 +14,34 @@ class PredictionModel(models.Model):
         ('ENSEMBLE', 'Ensemble'),
     ]
     
+    MARKET_CHOICES = [
+        ('web',         'Web / Paralelo digital'),
+        ('competencia', 'Competencia / Físico mercado'),
+        ('empresa',     'Empresa / Transacciones propias'),
+    ]
+
     name = models.CharField(max_length=100)
     model_type = models.CharField(max_length=20, choices=MODEL_TYPES)
     currency_pair = models.CharField(max_length=10)
+    market = models.CharField(
+        max_length=15, choices=MARKET_CHOICES, default='web', db_index=True,
+        help_text='Serie que este modelo pronostica: web / competencia / empresa.',
+    )
     parameters = models.JSONField(default=dict)
     metrics = models.JSONField(default=dict)
     model_file = models.FileField(upload_to='ml_models/', null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_trained = models.DateTimeField(null=True, blank=True)
-    
+
     class Meta:
         ordering = ['name']
         verbose_name = 'Modelo de Predicción'
         verbose_name_plural = 'Modelos de Predicción'
-        unique_together = ['model_type', 'currency_pair']
-    
+        unique_together = ['model_type', 'currency_pair', 'market']
+
     def __str__(self):
-        return f"{self.name} - {self.currency_pair}"
+        return f"{self.name} - {self.currency_pair} [{self.market}]"
 
 class Prediction(models.Model):
     model = models.ForeignKey(PredictionModel, on_delete=models.CASCADE)
@@ -77,7 +87,27 @@ class Prediction(models.Model):
 
 class TrainingData(models.Model):
     """Datos históricos para entrenamiento"""
+
+    # ── Fuente/serie de mercado (pronóstico independiente por fuente) ──────────
+    #   web         → tasa digital/paralelo web (Binance/dólar blue)   → paralelo_digital
+    #   competencia → tasa física de mercado/competencia (casas)        → paralelo_fisico_competencia
+    #   empresa     → tasa efectiva realizada por la propia empresa      → paralelo_fisico_empresa
+    #                 (derivada de las transacciones reales)
+    MARKET_CHOICES = [
+        ('web',         'Web / Paralelo digital'),
+        ('competencia', 'Competencia / Físico mercado'),
+        ('empresa',     'Empresa / Transacciones propias'),
+    ]
+
     currency_pair = models.CharField(max_length=10)
+    market = models.CharField(
+        max_length=15,
+        choices=MARKET_CHOICES,
+        default='web',
+        db_index=True,
+        help_text='Fuente de la serie: web (digital), competencia (físico mercado) '
+                  'o empresa (transacciones propias). Cada una se pronostica por separado.',
+    )
     date = models.DateTimeField()
     rate = models.DecimalField(max_digits=10, decimal_places=4)
     volume = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
@@ -96,16 +126,18 @@ class TrainingData(models.Model):
     source = models.CharField(max_length=50, default='BCB')
     
     class Meta:
-        unique_together = ['currency_pair', 'date']
+        unique_together = ['currency_pair', 'market', 'date']
         ordering = ['-date']
         indexes = [
             models.Index(fields=['currency_pair', '-date']),
+            models.Index(fields=['currency_pair', 'market', '-date']),
         ]
 
 
 class EnsembleWeightHistory(models.Model):
     """Historial de pesos dinámicos del ensemble — permite auditar cómo evolucionaron."""
     currency_pair = models.CharField(max_length=10, db_index=True)
+    market        = models.CharField(max_length=15, default='web', db_index=True)
     weights       = models.JSONField()        # {'PROPHET': 0.35, 'BILSTM': 0.30, ...}
     recorded_at   = models.DateTimeField(auto_now_add=True, db_index=True)
 

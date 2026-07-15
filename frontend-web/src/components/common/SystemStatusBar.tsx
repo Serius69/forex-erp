@@ -49,8 +49,7 @@ export function SystemStatusBar() {
     <Box
       display="flex"
       alignItems="center"
-      gap={1.5}
-      sx={{ px: 1.5, py: 0.5, bgcolor: 'transparent' }}
+      sx={{ px: { xs: 0.5, sm: 1.5 }, py: 0.5, gap: { xs: 0.75, sm: 1.5 }, bgcolor: 'transparent' }}
     >
       {/* WS status dot */}
       <Tooltip title={wsTooltip} arrow placement="bottom">
@@ -65,7 +64,11 @@ export function SystemStatusBar() {
             color: 'rgba(255,255,255,0.6)',
             border: '1px solid rgba(255,255,255,0.08)',
             cursor: 'default',
-            '& .MuiChip-icon': { ml: '6px' },
+            // Móvil: solo el punto de estado (el label no cabe en la toolbar)
+            '& .MuiChip-label': { display: { xs: 'none', sm: 'block' } },
+            '& .MuiChip-icon': { ml: { xs: 0, sm: '6px' }, mr: { xs: 0, sm: '-6px' } },
+            minWidth: { xs: 22, sm: 'auto' },
+            justifyContent: 'center',
           }}
         />
       </Tooltip>

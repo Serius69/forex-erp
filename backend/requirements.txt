@@ -1,5 +1,5 @@
 # ── Django core ────────────────────────────────────────────────────────────────
-Django==4.2.16
+Django==4.2.30
 django-environ==0.11.2
 django-cors-headers==4.3.1
 django-filter==24.3
@@ -27,11 +27,14 @@ channels-redis==4.2.0
 # ── Generación de reportes ─────────────────────────────────────────────────────
 reportlab==4.2.2
 openpyxl==3.1.5
-Pillow==10.4.0
+Pillow==12.3.0
 
 # ── Machine Learning — core ────────────────────────────────────────────────────
 numpy==1.26.4
 pandas==2.1.4
+# scipy pineado < 1.14: statsmodels 0.14.1 / pmdarima 2.0.4 importan
+# scipy._lib._util._lazywhere, removido en scipy 1.14 (rompe el forecaster ARIMA).
+scipy==1.11.4
 scikit-learn==1.4.2
 joblib==1.4.2
 prophet==1.1.5
@@ -50,12 +53,11 @@ optuna==3.5.0
 holidays==0.45
 
 # ── HTTP / Scraping ────────────────────────────────────────────────────────────
-urllib3==2.1.0
+urllib3==2.7.0
 charset-normalizer==3.3.2
-requests==2.31.0
+requests==2.34.2
 httpx==0.27.0
 beautifulsoup4==4.12.3
-playwright==1.44.0
 
 # ── Seguridad / 2FA / OAuth ────────────────────────────────────────────────────
 pyotp==2.9.0
@@ -66,7 +68,7 @@ google-auth==2.37.0
 boto3==1.35.36
 
 # ── Servidor producción ────────────────────────────────────────────────────────
-gunicorn==22.0.0
+gunicorn==23.0.0
 daphne==4.1.2
 
 # PyTorch GPU: NO va aquí — nada en el backend lo importa y agregaba ~6.5 GB

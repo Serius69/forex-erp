@@ -24,7 +24,7 @@ PSI_RED    = 0.25   # drift significativo — reentrenar
 # Alerta si no hay datos nuevos en N horas
 DATA_STALENESS_THRESHOLD_HOURS = 4
 
-CURRENCY_PAIRS = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB', 'PEN/BOB']
+CURRENCY_PAIRS = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB', 'PEN/BOB', 'CLP/BOB']
 
 
 class ModelMonitor:
@@ -55,7 +55,13 @@ class ModelMonitor:
         for pm in PredictionModel.objects.filter(currency_pair=currency_pair, is_active=True):
             models_health[pm.model_type] = self._model_health(pm)
 
-        psi_result = self._compute_psi(currency_pair)
+        # PSI/frescura por serie de mercado (antes se mezclaban las 3 series
+        # en una sola distribución, enmascarando drift real de cada una).
+        from predictions.market_keys import VALID_MARKETS
+        psi_by_market   = {m: self._compute_psi(currency_pair, market=m)
+                           for m in VALID_MARKETS}
+        fresh_by_market = {m: self._data_freshness(currency_pair, market=m)
+                           for m in VALID_MARKETS}
 
         overall_scores = [v['health_score'] for v in models_health.values() if 'health_score' in v]
         overall_score  = round(float(np.mean(overall_scores)), 1) if overall_scores else 0.0
@@ -63,8 +69,10 @@ class ModelMonitor:
         return {
             'overall_health_score': overall_score,
             'models':               models_health,
-            'drift':                psi_result,
-            'data_freshness':       self._data_freshness(currency_pair),
+            'drift':                psi_by_market['web'],
+            'drift_by_market':      psi_by_market,
+            'data_freshness':       fresh_by_market['web'],
+            'data_freshness_by_market': fresh_by_market,
         }
 
     def _model_health(self, pm) -> dict:
@@ -111,7 +119,7 @@ class ModelMonitor:
 
     # ── PSI drift detection ────────────────────────────────────────────────────
 
-    def _compute_psi(self, currency_pair: str, bins: int = 10) -> dict:
+    def _compute_psi(self, currency_pair: str, market: str = 'web', bins: int = 10) -> dict:
         """
         Calcula PSI entre distribución de entrenamiento (90–180 días atrás)
         y distribución reciente (últimos 30 días).
@@ -122,14 +130,14 @@ class ModelMonitor:
         now       = timezone.now()
         ref_rates = list(
             TrainingData.objects
-            .filter(currency_pair=currency_pair,
+            .filter(currency_pair=currency_pair, market=market,
                     date__gte=now - timedelta(days=180),
                     date__lt=now  - timedelta(days=90))
             .values_list('rate', flat=True)
         )
         cur_rates = list(
             TrainingData.objects
-            .filter(currency_pair=currency_pair,
+            .filter(currency_pair=currency_pair, market=market,
                     date__gte=now - timedelta(days=30))
             .values_list('rate', flat=True)
         )
@@ -171,12 +179,12 @@ class ModelMonitor:
 
     # ── Frescura de datos ─────────────────────────────────────────────────────
 
-    def _data_freshness(self, currency_pair: str) -> dict:
+    def _data_freshness(self, currency_pair: str, market: str = 'web') -> dict:
         from predictions.models import TrainingData
 
         latest = (
             TrainingData.objects
-            .filter(currency_pair=currency_pair)
+            .filter(currency_pair=currency_pair, market=market)
             .order_by('-date')
             .values('date', 'source')
             .first()

@@ -36,6 +36,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    mem_limit: 1g
     restart: unless-stopped
     networks:
       - kapitalya
@@ -43,14 +44,20 @@ services:
   # ── Redis ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD:-kapitalya_redis} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD requerido en producción} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    environment:
+      # Disponible dentro del contenedor para el healthcheck autenticado
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD requerido en producción}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Con --requirepass, un PING sin auth devuelve NOAUTH y el servicio
+      # nunca llega a healthy → backend/celery quedaban bloqueados para siempre.
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
       interval: 10s
       timeout: 3s
       retries: 3
+    mem_limit: 512m
     restart: unless-stopped
     networks:
       - kapitalya
@@ -72,6 +79,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    mem_limit: 2g
     expose:
       - "8007"
 
@@ -87,6 +95,9 @@ services:
       interval: 60s
       timeout: 15s
       retries: 3
+    # Los workers cargan Prophet/XGBoost: sin límite pueden agotar la RAM
+    # del host y tumbar postgres/nginx.
+    mem_limit: 2g
 
   # ── Celery Beat (tareas programadas) ─────────────────────────────────────
   celery-beat:
@@ -94,21 +105,30 @@ services:
     command: celery -A core beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - ./backend/logs:/app/logs
+    mem_limit: 512m
 
   # ── Flower (monitoreo Celery) ─────────────────────────────────────────────
   flower:
     <<: *backend-base
-    command: celery -A core flower --port=5555 --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-kapitalya2024}
+    # --url_prefix: nginx lo sirve bajo /flower/ — sin el prefijo los assets
+    # y redirects del UI se generan contra / y se rompen.
+    command: celery -A core flower --port=5555 --url_prefix=flower --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:?FLOWER_PASSWORD requerido en producción}
+    mem_limit: 512m
     expose:
       - "5555"
 
   # ── Frontend (React build) ────────────────────────────────────────────────
+  # Publicador de assets: copia el build de la imagen al volumen compartido en
+  # CADA arranque. (Montar el volumen directo sobre /usr/share/nginx/html solo
+  # lo poblaba la primera vez → producción servía un build viejo para siempre.)
   frontend:
     build:
       context: ./frontend-web
       dockerfile: Dockerfile.prod
+    command: sh -c "rm -rf /vol/* && cp -a /usr/share/nginx/html/. /vol/ && echo 'frontend build publicado' && sleep infinity"
     volumes:
-      - frontend_build:/usr/share/nginx/html
+      - frontend_build:/vol
+    mem_limit: 256m
     restart: unless-stopped
     networks:
       - kapitalya
@@ -129,6 +149,7 @@ services:
     depends_on:
       - backend
       - frontend
+    mem_limit: 256m
     restart: unless-stopped
     networks:
       - kapitalya

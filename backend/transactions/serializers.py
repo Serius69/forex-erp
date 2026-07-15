@@ -217,13 +217,21 @@ class TransactionCreateSerializer(serializers.Serializer):
             )
 
     def _resolve_customer(self, value) -> Customer:
-        """Crea o busca un cliente a partir del dict recibido."""
+        """
+        Crea o busca un cliente a partir del dict recibido.
+        Siempre acotado a la empresa del usuario autenticado: sin ese filtro,
+        un `id` de otra empresa filtraba su PII (CI/nombre) en la respuesta, y
+        el mismo documento en dos empresas rompía el get_or_create.
+        """
         if not isinstance(value, dict):
             raise serializers.ValidationError("customer debe ser un objeto JSON.")
 
+        request = self.context.get('request')
+        company_id = getattr(getattr(request, 'user', None), 'company_id', None)
+
         if 'id' in value:
             try:
-                return Customer.objects.get(pk=int(value['id']))
+                return Customer.objects.get(pk=int(value['id']), company_id=company_id)
             except (Customer.DoesNotExist, ValueError):
                 raise serializers.ValidationError(
                     f"Cliente con id={value['id']} no encontrado."
@@ -238,6 +246,7 @@ class TransactionCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("full_name requerido.")
 
         customer, _ = Customer.objects.get_or_create(
+            company_id=company_id,
             document_number=doc,
             defaults={
                 'document_type': value.get('document_type', 'CI'),
@@ -279,6 +288,23 @@ class TransactionCreateSerializer(serializers.Serializer):
         # min_value=1 on StrictIntegerField handles amount_from/amount_to > 0.
         if data['exchange_rate'] <= 0:
             raise serializers.ValidationError({'exchange_rate': 'Debe ser mayor a 0.'})
+
+        # ── Consistencia servidor: amount_to debe derivar de amount_from × rate ──
+        # El total lo calcula el cliente (float en JS); aquí se exige que cuadre
+        # con la tasa declarada (±1 BOB por redondeo a entero). Sin este check,
+        # un cliente manipulado podía registrar cualquier total. Solo aplica al
+        # flujo estándar divisa→BOB (invariante: currency_to es siempre BOB).
+        _cur_to = data.get('currency_to')
+        if getattr(_cur_to, 'code', None) == 'BOB':
+            from decimal import Decimal as _D
+            _esperado = _D(data['amount_from']) * data['exchange_rate']
+            if abs(_D(data['amount_to']) - _esperado) > _D('1'):
+                raise serializers.ValidationError({
+                    'amount_to': (
+                        f'Inconsistente con amount_from × exchange_rate '
+                        f'(esperado ≈ {_esperado:.2f}, recibido {data["amount_to"]}).'
+                    )
+                })
 
         # ── Validar tasa contra tasa primaria del sistema (tolerancia 3%) ──────
         cur_from = data.get('currency_from')

@@ -89,15 +89,20 @@ def _get_capital(branch_id=None) -> dict:
         if branch_id:
             qs = qs.filter(branch_id=branch_id)
 
-        total_bob = sum(c.total_bob for c in qs)
-        total_fuertes = sum(c.fuertes for c in qs)
-        total_qr      = sum(c.qr_transferencias for c in qs)
+        # CapitalComposicion es un registro DIARIO por sucursal: sumar todo el
+        # histórico infla el capital (56 días ≈ Bs 14M fantasma). Se toma solo
+        # la composición más reciente de cada sucursal.
+        ultimas = list(qs.order_by('branch_id', '-fecha').distinct('branch_id'))
+
+        total_bob     = sum(c.total_bob for c in ultimas)
+        total_fuertes = sum(c.fuertes for c in ultimas)
+        total_qr      = sum(c.qr_transferencias for c in ultimas)
 
         return {
             'total_bob':         _safe_float(total_bob),
             'efectivo_bob':      _safe_float(total_fuertes),
             'digital_bob':       _safe_float(total_qr),
-            'branches':          qs.count(),
+            'branches':          len(ultimas),
         }
     except Exception as exc:
         log.debug('Capital fetch failed: %s', exc)

@@ -71,15 +71,19 @@ class DashboardChartsView(APIView):
                 .filter(created_at__date__gte=month_start)
                 .values('currency_from__code')
                 .annotate(volume=Sum('amount_to'), count=Count('id'))
-                .order_by('-volume')[:8]
+                .order_by('-volume')
             )
+            # Agrupar variantes de caja bajo su divisa base: USD_CASH_LOOSE y
+            # USD_SMALL_BILLS son productos operativos de USD, no divisas — antes
+            # aparecían como "divisas" separadas en los gráficos del dashboard.
+            merged: dict[str, int] = {}
+            for r in rows:
+                code = (r['currency_from__code'] or '?').split('_')[0]
+                merged[code] = merged.get(code, 0) + int(r['volume'] or 0)
+            ordered = sorted(merged.items(), key=lambda kv: -kv[1])[:8]
             return [
-                {
-                    'currency': r['currency_from__code'] or '?',
-                    'volume': int(r['volume'] or 0),
-                    'profit': 0,
-                }
-                for r in rows
+                {'currency': code, 'volume': vol, 'profit': 0}
+                for code, vol in ordered
             ]
         except Exception:
             return []
@@ -95,7 +99,11 @@ class DashboardChartsView(APIView):
                 .values('currency_code')
                 .annotate(profit=Sum('profit_bob'))
             )
-            cur_map = {r['currency_code']: float(r['profit'] or 0) for r in cur_profit}
+            # Agregar profit por divisa BASE (las variantes de caja suman al padre)
+            cur_map: dict = {}
+            for r in cur_profit:
+                base = (r['currency_code'] or '?').split('_')[0]
+                cur_map[base] = cur_map.get(base, 0.0) + float(r['profit'] or 0)
             for item in volume_by_currency:
                 item['profit'] = cur_map.get(item['currency'], 0)
 
@@ -116,15 +124,21 @@ class DashboardChartsView(APIView):
     def _capital_timeline(self):
         try:
             from capital.models import CapitalSnapshot
+            # OJO: el campo es total_bob (Sum('total_capital') lanzaba FieldError
+            # silencioso → el gráfico salía siempre "Sin datos"). Puede haber
+            # varios snapshots por fecha → quedarse con el ÚLTIMO de cada día,
+            # no sumarlos (doble conteo).
             rows = (
                 CapitalSnapshot.objects
-                .values('fecha')
-                .annotate(capital=Sum('total_capital'))
-                .order_by('fecha')
+                .order_by('fecha', 'created_at')
+                .values('fecha', 'total_bob')
             )
+            by_date: dict = {}
+            for r in rows:                       # el último de cada fecha gana
+                by_date[str(r['fecha'])] = float(r['total_bob'] or 0)
             return [
-                {'date': str(r['fecha']), 'capital': float(r['capital'] or 0)}
-                for r in rows
+                {'date': d, 'capital': v}
+                for d, v in sorted(by_date.items())
             ]
         except Exception:
             return []

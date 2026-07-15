@@ -56,6 +56,10 @@ export interface ForecastResult {
   data_freshness:      string;
   predictions:         ForecastPrediction[];
   generated_at:        string;
+  /** Serie de mercado del pronóstico servido (web | competencia | empresa) */
+  market?:             string;
+  /** true si el backend usó otra serie porque la pedida no tiene modelo */
+  market_fallback?:    boolean;
 }
 
 export interface SourceLiveRate {

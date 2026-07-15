@@ -30,7 +30,7 @@ class HyperparameterTuner:
 
     # ── XGBoost ───────────────────────────────────────────────────────────────
 
-    def tune_xgboost(self, currency_pair: str, df: pd.DataFrame) -> dict:
+    def tune_xgboost(self, currency_pair: str, df: pd.DataFrame, market: str = 'web') -> dict:
         """Optimiza XGBoost con Optuna. Retorna los mejores parámetros."""
         try:
             import optuna
@@ -83,12 +83,12 @@ class HyperparameterTuner:
         best_mape   = round(study.best_value, 4)
 
         logger.info("tune_xgboost pair=%s best_mape=%.4f%% params=%s", currency_pair, best_mape, best_params)
-        self._save_best_params(currency_pair, 'XGBOOST', best_params, best_mape)
+        self._save_best_params(currency_pair, 'XGBOOST', best_params, best_mape, market=market)
         return {'best_params': best_params, 'best_mape': best_mape, 'n_trials': self.n_trials}
 
     # ── BiLSTM ────────────────────────────────────────────────────────────────
 
-    def tune_bilstm(self, currency_pair: str, df: pd.DataFrame) -> dict:
+    def tune_bilstm(self, currency_pair: str, df: pd.DataFrame, market: str = 'web') -> dict:
         """Optimiza arquitectura BiLSTM con Optuna."""
         try:
             import optuna
@@ -160,12 +160,12 @@ class HyperparameterTuner:
         best_mape   = round(study.best_value, 4)
 
         logger.info("tune_bilstm pair=%s best_mape=%.4f%% params=%s", currency_pair, best_mape, best_params)
-        self._save_best_params(currency_pair, 'BILSTM', best_params, best_mape)
+        self._save_best_params(currency_pair, 'BILSTM', best_params, best_mape, market=market)
         return {'best_params': best_params, 'best_mape': best_mape, 'n_trials': min(self.n_trials, 20)}
 
     # ── Prophet ───────────────────────────────────────────────────────────────
 
-    def tune_prophet(self, currency_pair: str, df: pd.DataFrame) -> dict:
+    def tune_prophet(self, currency_pair: str, df: pd.DataFrame, market: str = 'web') -> dict:
         """Optimiza hiperparámetros de Prophet con búsqueda en grid (más rápido que Optuna para Prophet)."""
         try:
             from prophet import Prophet
@@ -213,21 +213,21 @@ class HyperparameterTuner:
 
         best_mape = round(best_mape, 4)
         logger.info("tune_prophet pair=%s best_mape=%.4f%% params=%s", currency_pair, best_mape, best_params)
-        self._save_best_params(currency_pair, 'PROPHET', best_params or {}, best_mape)
+        self._save_best_params(currency_pair, 'PROPHET', best_params or {}, best_mape, market=market)
         return {'best_params': best_params, 'best_mape': best_mape, 'trials': len(param_grid)}
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _save_best_params(self, currency_pair: str, model_type: str, params: dict, best_mape: float):
+    def _save_best_params(self, currency_pair: str, model_type: str, params: dict, best_mape: float, market: str = 'web'):
         """Actualiza PredictionModel.parameters con los mejores hiperparámetros encontrados."""
         from predictions.models import PredictionModel
         try:
-            pm = PredictionModel.objects.get(model_type=model_type, currency_pair=currency_pair)
+            pm = PredictionModel.objects.get(model_type=model_type, currency_pair=currency_pair, market=market)
             pm.parameters['best_hyperparams'] = params
             pm.parameters['tuning_mape']      = best_mape
             pm.parameters['tuned_at']         = timezone.now().isoformat()
             pm.save(update_fields=['parameters'])
-        except PredictionModel.DoesNotExist:
+        except (PredictionModel.DoesNotExist, PredictionModel.MultipleObjectsReturned):
             pass   # El modelo se creará en el próximo entrenamiento
 
 
@@ -236,23 +236,29 @@ class HyperparameterTuner:
 def run_weekly_tuning(currency_pairs: list, models_path: str, n_trials: int = 30) -> dict:
     """
     Punto de entrada para la tarea Celery semanal de tuning.
-    Ejecuta XGBoost y Prophet (no BiLSTM en producción — muy lento con Optuna).
+    Ejecuta XGBoost y Prophet (no BiLSTM en producción — muy lento con Optuna)
+    para las TRES series de mercado (antes solo se tuneaba 'web'; competencia y
+    empresa quedaban sin optimizar). Series sin datos degradan limpio.
     """
     from predictions.data_pipeline import ForexDataPipeline
+    from predictions.market_keys import VALID_MARKETS
 
     tuner    = HyperparameterTuner(models_path=models_path, n_trials=n_trials)
     pipeline = ForexDataPipeline()
     results  = {}
 
     for pair in currency_pairs:
-        try:
-            df = pipeline.build(pair)
-            xgb_result  = tuner.tune_xgboost(pair, df)
-            prop_result = tuner.tune_prophet(pair, df)
-            results[pair] = {'xgboost': xgb_result, 'prophet': prop_result}
-            logger.info("tuning.complete pair=%s", pair)
-        except Exception as exc:
-            logger.error("tuning.failed pair=%s error=%s", pair, exc)
-            results[pair] = {'error': str(exc)}
+        results[pair] = {}
+        for market in VALID_MARKETS:
+            try:
+                df = pipeline.build(pair, market=market)
+                xgb_result  = tuner.tune_xgboost(pair, df, market=market)
+                prop_result = tuner.tune_prophet(pair, df, market=market)
+                results[pair][market] = {'xgboost': xgb_result, 'prophet': prop_result}
+                logger.info("tuning.complete pair=%s market=%s", pair, market)
+            except Exception as exc:
+                logger.warning("tuning.skipped pair=%s market=%s error=%s",
+                               pair, market, exc)
+                results[pair][market] = {'error': str(exc)}
 
     return results

@@ -6,8 +6,6 @@ from channels.db import database_sync_to_async
 
 log = logging.getLogger('tarjetas')
 
-WS_GROUP = 'tarjetas_inventario'
-
 
 class TarjetasInventarioConsumer(AsyncWebsocketConsumer):
     """
@@ -15,16 +13,20 @@ class TarjetasInventarioConsumer(AsyncWebsocketConsumer):
 
     Ruta: ws://<host>/ws/tarjetas/inventario/
 
-    Al conectar: envía un snapshot completo del inventario.
-    Al publicar (group_send type=inventario_update): reenvía a todos los clientes.
+    Al conectar: envía un snapshot del inventario DE LA EMPRESA del usuario.
+    Al publicar (group_send type=inventario_update): reenvía a los clientes
+    del grupo de esa empresa (aislamiento multi-tenant).
     """
 
     async def connect(self):
-        if not self.scope.get('user') or not self.scope['user'].is_authenticated:
+        user = self.scope.get('user')
+        if not user or not user.is_authenticated:
             await self.close(code=4001)
             return
 
-        await self.channel_layer.group_add(WS_GROUP, self.channel_name)
+        from .services import ws_group_inventario
+        self.ws_group = ws_group_inventario(getattr(user, 'company_id', None))
+        await self.channel_layer.group_add(self.ws_group, self.channel_name)
         await self.accept()
 
         snapshot = await self._get_snapshot()
@@ -35,7 +37,8 @@ class TarjetasInventarioConsumer(AsyncWebsocketConsumer):
         log.debug('WS tarjetas connect user=%s', self.scope['user'])
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(WS_GROUP, self.channel_name)
+        if hasattr(self, 'ws_group'):
+            await self.channel_layer.group_discard(self.ws_group, self.channel_name)
 
     # Recibe mensajes del cliente (no requerido, pero aceptamos ping)
     async def receive(self, text_data=None, bytes_data=None):
@@ -62,4 +65,5 @@ class TarjetasInventarioConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def _get_snapshot(self):
         from .services import TarjetaService
-        return TarjetaService.get_posicion_inventario()
+        company_id = getattr(self.scope.get('user'), 'company_id', None)
+        return TarjetaService.get_posicion_inventario(company_id=company_id)

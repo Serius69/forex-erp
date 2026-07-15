@@ -62,7 +62,7 @@ class XGBoostForecaster:
 
     # ── Entrenamiento ──────────────────────────────────────────────────────────
 
-    def train(self, currency_pair: str, df: pd.DataFrame, params: dict = None) -> dict:
+    def train(self, currency_pair: str, df: pd.DataFrame, params: dict = None, market: str = 'web') -> dict:
         """
         Entrena XGBoost sobre el DataFrame del pipeline.
         Retorna métricas y registra el modelo en PredictionModel.
@@ -100,25 +100,27 @@ class XGBoostForecaster:
         top10 = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:10]
         metrics['top_features'] = {k: round(v, 4) for k, v in top10}
 
-        pair_safe  = currency_pair.replace('/', '_')
+        from predictions.market_keys import fname_suffix
+        pair_safe  = currency_pair.replace('/', '_') + fname_suffix(market)
         model_path = os.path.join(self.models_path, f'xgboost_{pair_safe}.pkl')
         joblib.dump(
             {'model': model, 'features': features, 'params': used_params},
             model_path,
         )
 
-        self._register(currency_pair, model_path, metrics, used_params, features)
+        self._register(currency_pair, model_path, metrics, used_params, features, market)
         logger.info("XGBoost entrenado pair=%s mape=%.4f%%", currency_pair, metrics['mape'])
         return metrics
 
     # ── Predicción ─────────────────────────────────────────────────────────────
 
-    def predict(self, currency_pair: str, df_recent: pd.DataFrame, horizon: int) -> list:
+    def predict(self, currency_pair: str, df_recent: pd.DataFrame, horizon: int, market: str = 'web') -> list:
         """
         Predicción iterativa hora a hora.
         Actualiza lags y features de calendario en cada paso.
         """
-        pair_safe  = currency_pair.replace('/', '_')
+        from predictions.market_keys import fname_suffix
+        pair_safe  = currency_pair.replace('/', '_') + fname_suffix(market)
         model_path = os.path.join(self.models_path, f'xgboost_{pair_safe}.pkl')
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"XGBoost no entrenado para {currency_pair}")
@@ -182,15 +184,16 @@ class XGBoostForecaster:
 
     # ── Registro en BD ─────────────────────────────────────────────────────────
 
-    def _register(self, currency_pair, model_path, metrics, params, features):
+    def _register(self, currency_pair, model_path, metrics, params, features, market='web'):
         from predictions.models import PredictionModel
         from django.utils import timezone
 
         PredictionModel.objects.update_or_create(
             model_type='XGBOOST',
             currency_pair=currency_pair,
+            market=market,
             defaults={
-                'name':         f'XGBoost {currency_pair}',
+                'name':         f'XGBoost {currency_pair} [{market}]',
                 'parameters':   {'params': params, 'features': features},
                 'metrics':      metrics,
                 'model_file':   model_path,

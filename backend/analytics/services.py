@@ -137,6 +137,9 @@ class ProfitEngine:
                 _q(profit_bob / cost_bob * 100, PCT_Q)
                 if cost_bob != 0 else _q(0, PCT_Q)
             )
+            # profit_pct es DecimalField(8,4): con costos ~0 el % desborda
+            _pct_max = Decimal('9999.9999')
+            profit_pct = max(-_pct_max, min(_pct_max, profit_pct))
 
         ledger = TransactionProfitLedger.objects.create(
             transaction          = transaction,
@@ -282,29 +285,51 @@ class PnLService:
 
     @staticmethod
     def series_pnl(branch, date_from: date, date_to: date) -> list:
-        """Serie temporal de P&L diario para gráficos."""
+        """Serie temporal de P&L diario para gráficos. branch=None → todas (agregado)."""
         from .models import PnLDailySnapshot
 
-        return list(
-            PnLDailySnapshot.objects
-            .filter(branch=branch, fecha__gte=date_from, fecha__lte=date_to)
-            .order_by('fecha')
-            .values(
-                'fecha', 'ingreso_ventas_bob', 'costo_ventas_bob',
-                'ganancia_bruta_bob', 'gastos_operativos_bob',
-                'ganancia_neta_bob', 'margen_neto_pct',
-                'num_ventas', 'num_compras',
+        qs = PnLDailySnapshot.objects.filter(fecha__gte=date_from, fecha__lte=date_to)
+        if branch is not None:
+            return list(
+                qs.filter(branch=branch)
+                .order_by('fecha')
+                .values(
+                    'fecha', 'ingreso_ventas_bob', 'costo_ventas_bob',
+                    'ganancia_bruta_bob', 'gastos_operativos_bob',
+                    'ganancia_neta_bob', 'margen_neto_pct',
+                    'num_ventas', 'num_compras',
+                )
+            )
+        # Todas las sucursales: un punto por fecha con las sumas
+        serie = list(
+            qs.values('fecha').order_by('fecha').annotate(
+                ingreso_ventas_bob=Sum('ingreso_ventas_bob'),
+                costo_ventas_bob=Sum('costo_ventas_bob'),
+                ganancia_bruta_bob=Sum('ganancia_bruta_bob'),
+                gastos_operativos_bob=Sum('gastos_operativos_bob'),
+                ganancia_neta_bob=Sum('ganancia_neta_bob'),
+                num_ventas=Sum('num_ventas'),
+                num_compras=Sum('num_compras'),
             )
         )
+        for row in serie:
+            ingreso = row['ingreso_ventas_bob'] or 0
+            row['margen_neto_pct'] = (
+                _q((row['ganancia_neta_bob'] or 0) / ingreso * 100, PCT_Q)
+                if ingreso else _q(0, PCT_Q)
+            )
+        return serie
 
     @staticmethod
     def resumen_periodo(branch, date_from: date, date_to: date) -> dict:
-        """Resumen agregado de P&L para un período."""
+        """Resumen agregado de P&L para un período. branch=None → todas."""
         from .models import PnLDailySnapshot
 
+        _qs = PnLDailySnapshot.objects.filter(fecha__gte=date_from, fecha__lte=date_to)
+        if branch is not None:
+            _qs = _qs.filter(branch=branch)
         agg = (
-            PnLDailySnapshot.objects
-            .filter(branch=branch, fecha__gte=date_from, fecha__lte=date_to)
+            _qs
             .aggregate(
                 total_ingreso=Sum('ingreso_ventas_bob'),
                 total_costo=Sum('costo_ventas_bob'),
@@ -518,18 +543,41 @@ class SpreadService:
         if not bob:
             return []
 
+        # Ordenar por (divisa, mercado, -valid_from) para poder quedarnos con la
+        # tasa activa MÁS RECIENTE de cada par (divisa, mercado). Pueden quedar
+        # miles de filas con valid_until NULL si la expiración de tasas no corrió;
+        # iterarlas todas (con una subconsulta cada una) colgaba el endpoint.
         tasas = (
             ExchangeRate.objects
             .filter(currency_to=bob, valid_until__isnull=True)
             .exclude(currency_from=bob)
             .select_related('currency_from')
-            .order_by('currency_from__code', 'market_type')
+            .order_by('currency_from__code', 'market_type', '-valid_from')
         )
 
         resultado = []
         hace_30d  = timezone.now() - timedelta(days=30)
 
+        # Promedios históricos de 30 días en UNA sola consulta agrupada
+        # (SpreadSnapshot tiene millones de filas; N subconsultas la vuelven O(N·M)).
+        hist_map = {
+            (row['currency_code'], row['market_type']): row
+            for row in (
+                SpreadSnapshot.objects
+                .filter(timestamp__gte=hace_30d)
+                .values('currency_code', 'market_type')
+                .annotate(avg_spread=Avg('spread_bob'), avg_pct=Avg('spread_pct'))
+            )
+        }
+
+        seen = set()
         for tasa in tasas:
+            # Solo la tasa activa más reciente por (divisa, mercado).
+            key = (tasa.currency_from_id, tasa.market_type)
+            if key in seen:
+                continue
+            seen.add(key)
+
             if tasa.buy_rate == 0:
                 continue
 
@@ -541,19 +589,7 @@ class SpreadService:
                 else _q(0, PCT_Q)
             )
 
-            # Promedio histórico de los últimos 30 días
-            hist = (
-                SpreadSnapshot.objects
-                .filter(
-                    currency_code=tasa.currency_from.code,
-                    market_type=tasa.market_type,
-                    timestamp__gte=hace_30d,
-                )
-                .aggregate(
-                    avg_spread=Avg('spread_bob'),
-                    avg_pct=Avg('spread_pct'),
-                )
-            )
+            hist = hist_map.get((tasa.currency_from.code, tasa.market_type), {})
 
             resultado.append({
                 'currency_code':     tasa.currency_from.code,
@@ -565,8 +601,8 @@ class SpreadService:
                 'spread_bob':        str(spread),
                 'spread_pct':        str(spread_pct),
                 'prima_oficial_pct': str(prima_pct),
-                'spread_prom_30d':   str(_q(hist['avg_spread'] or 0, RATE_Q)),
-                'spread_pct_prom_30d': str(_q(hist['avg_pct'] or 0, PCT_Q)),
+                'spread_prom_30d':   str(_q(hist.get('avg_spread') or 0, RATE_Q)),
+                'spread_pct_prom_30d': str(_q(hist.get('avg_pct') or 0, PCT_Q)),
                 'alerta_spread_bajo': spread_pct < SPREAD_MINIMO_PCT,
             })
 

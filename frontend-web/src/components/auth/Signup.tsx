@@ -39,6 +39,7 @@ const Signup: React.FC = () => {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState('');
+  const [success,     setSuccess]     = useState('');
 
   const strength = passwordStrength(form.password);
   const googleEnabled = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
@@ -66,7 +67,8 @@ const Signup: React.FC = () => {
 
     setLoading(true);
     try {
-      await signup(form);
+      const pendingMsg = await signup(form);
+      if (pendingMsg) setSuccess(pendingMsg);
     } catch (err: any) {
       const detail = err?.response?.data;
       if (typeof detail === 'object' && detail !== null) {
@@ -86,7 +88,8 @@ const Signup: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      await loginGoogle(credential);
+      const pendingMsg = await loginGoogle(credential);
+      if (pendingMsg) setSuccess(pendingMsg);
     } catch {
       setError('Error al registrarse con Google.');
     } finally {
@@ -101,6 +104,7 @@ const Signup: React.FC = () => {
   return (
     <Box sx={{
       minHeight: '100vh',
+      '@supports (min-height: 100dvh)': { minHeight: '100dvh' },
       display: 'grid',
       gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
       bgcolor: TOKENS.bg,
@@ -176,6 +180,12 @@ const Signup: React.FC = () => {
           {error && (
             <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
               {error}
+            </Alert>
+          )}
+
+          {success && (
+            <Alert severity="success" sx={{ mb: 2 }}>
+              {success}
             </Alert>
           )}
 
