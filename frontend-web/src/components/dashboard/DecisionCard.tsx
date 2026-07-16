@@ -24,6 +24,7 @@ import {
 import { useDecisions } from '../../hooks/useDecisions';
 import type { DecisionSignal, RiskLevel, PricingDecision } from '../../hooks/useDecisions';
 import { TOKENS } from '../../styles/theme';
+import { formatRate, formatPercent } from '../../utils/formatters';
 
 // ── Signal config ─────────────────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ const FLAGS: Record<string, string> = {
 };
 
 const f4 = (n: number | null | undefined) =>
-  n != null ? `Bs ${n.toFixed(4)}` : '—';
+  n != null ? `Bs ${formatRate(n)}` : '—';
 
 // ── Rate comparison bar ───────────────────────────────────────────────────────
 
@@ -83,11 +84,11 @@ const RateBar = ({ label, value, reference }: {
       </Typography>
       <Typography variant="caption" fontWeight={700}
         sx={{ fontVariantNumeric: 'tabular-nums', color: isAbove ? TOKENS.green : TOKENS.red }}>
-        {value.toFixed(4)}
+        {formatRate(value)}
       </Typography>
       <Typography variant="caption"
         sx={{ color: isAbove ? TOKENS.green : TOKENS.red, fontSize: '0.65rem' }}>
-        ({isAbove ? '+' : ''}{diff.toFixed(2)}%)
+        ({isAbove ? '+' : ''}{formatPercent(diff)})
       </Typography>
     </Box>
   );
@@ -272,7 +273,7 @@ const DecisionCard: React.FC<DecisionCardProps> = ({
                 Spread
               </Typography>
               <Typography variant="body2" fontWeight={700} sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                {latest.suggested_spread_pct.toFixed(3)}%
+                {formatPercent(latest.suggested_spread_pct, 3)}
               </Typography>
             </Box>
           </Box>
@@ -302,7 +303,7 @@ const DecisionCard: React.FC<DecisionCardProps> = ({
                   activeDot={{ r: 3, fill: cfg.color }}
                 />
                 <RTooltip
-                  formatter={(v: any) => [`Bs ${Number(v).toFixed(4)}`, 'Venta sugerida']}
+                  formatter={(v: any) => [`Bs ${formatRate(v)}`, 'Venta sugerida']}
                   contentStyle={{ fontSize: 11, borderRadius: 6, border: `1px solid ${TOKENS.border}` }}
                 />
               </AreaChart>

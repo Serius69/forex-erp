@@ -40,6 +40,7 @@ import { es } from 'date-fns/locale';
 
 import { api } from '../../services/api';
 import { useWebSocket } from '../../contexts/WebSocketContext';
+import { formatRate, formatNumber } from '../../utils/formatters';
 
 interface PredictionData {
   date: string;
@@ -124,9 +125,9 @@ const PredictionsChart: React.FC = () => {
 
   const tooltipFormatter = (value: any, name: any) => {
     if (Array.isArray(value)) {
-      return [`Bs. ${Number(value[0]).toFixed(4)} – ${Number(value[1]).toFixed(4)}`, name];
+      return [`Bs. ${formatRate(value[0])} – ${formatRate(value[1])}`, name];
     }
-    return [`Bs. ${Number(value).toFixed(4)}`, name];
+    return [`Bs. ${formatRate(value)}`, name];
   };
 
   const getModelInfo = () => {
@@ -251,13 +252,18 @@ const PredictionsChart: React.FC = () => {
         </Box>
 
         <Box sx={{ height: 400 }}>
+          {chartData.length === 0 ? (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              Sin datos suficientes de predicción para {selectedCurrency}/BOB con el modelo {selectedModel}.
+            </Alert>
+          ) : (
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="label" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
               <YAxis
                 tick={{ fontSize: 11 }}
-                tickFormatter={(v) => `${Number(v).toFixed(2)}`}
+                tickFormatter={(v) => formatNumber(v, 2)}
                 domain={['auto', 'auto']}
                 width={60}
               />
@@ -311,6 +317,7 @@ const PredictionsChart: React.FC = () => {
               )}
             </ComposedChart>
           </ResponsiveContainer>
+          )}
         </Box>
 
         <Box sx={{ mt: 3 }}>

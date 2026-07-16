@@ -15,6 +15,7 @@ import { format, parseISO, isValid } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { TOKENS } from '../../styles/theme';
 import { ratesApi, ForecastResult } from '../../services/ratesApi';
+import { formatRate, formatPercent, formatNumber } from '../../utils/formatters';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,7 @@ const predAtHorizon = (
 
 // ── Sparkline Recharts ─────────────────────────────────────────────────────
 
-const ForecastSparkline: React.FC<{ data: ForecastResult['predictions']; color: string }> = ({ data, color }) => {
+const ForecastSparkline: React.FC<{ data: ForecastResult['predictions']; color: string; isInference?: boolean }> = ({ data, color, isInference = false }) => {
   if (!data.length) return null;
 
   const chartData = data.map(p => ({
@@ -95,12 +96,13 @@ const ForecastSparkline: React.FC<{ data: ForecastResult['predictions']; color: 
           isAnimationActive={false}
         />
 
-        {/* Línea principal */}
+        {/* Línea principal (punteada si la serie es inferida/estimada) */}
         <Area
           type="monotone"
           dataKey="rate"
           stroke={color}
           strokeWidth={2}
+          strokeDasharray={isInference ? '5 3' : undefined}
           fill={`url(#fc-grad-${color.replace('#', '')})`}
           dot={false}
           isAnimationActive={false}
@@ -112,7 +114,7 @@ const ForecastSparkline: React.FC<{ data: ForecastResult['predictions']; color: 
 
         <RTooltip
           contentStyle={{ fontSize: '0.65rem', padding: '4px 8px' }}
-          formatter={(v: any) => [Number(v).toFixed(4), 'Tasa']}
+          formatter={(v: any) => [`Bs ${formatRate(v)}`, 'Tasa']}
           labelFormatter={(l) => `${l}`}
         />
       </AreaChart>
@@ -147,10 +149,10 @@ const HorizonRow: React.FC<{
         {label}
       </Typography>
       <Typography variant="body2" fontWeight={900} sx={{ color, fontVariantNumeric: 'tabular-nums' }}>
-        {p.rate.toFixed(4)}
+        {formatRate(p.rate)}
       </Typography>
       <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.62rem', fontVariantNumeric: 'tabular-nums' }}>
-        [{p.lower.toFixed(3)} – {p.upper.toFixed(3)}]
+        [{formatNumber(p.lower, 3)} – {formatNumber(p.upper, 3)}]
       </Typography>
     </Box>
   );
@@ -195,6 +197,7 @@ const PredictionCard: React.FC<PredictionCardProps> = ({
   const mape    = data?.backtesting_metrics?.mape ?? null;
   const health  = healthStatus(mape);
   const modColor = dominantModel ? (MODEL_COLORS[dominantModel] ?? color) : color;
+  const isInference = data?.data_freshness === 'INFERENCE';
 
   // ── Loading ──────────────────────────────────────────────────────────────
   if (loading) return (
@@ -262,18 +265,28 @@ const PredictionCard: React.FC<PredictionCardProps> = ({
                 }}
               />
             )}
+            {isInference && (
+              <Tooltip title="Serie estimada por inferencia (aún sin datos observados frescos)">
+                <Chip
+                  label="estimado"
+                  size="small"
+                  variant="outlined"
+                  sx={{ fontSize: '0.6rem', height: 20, fontWeight: 700, fontStyle: 'italic' }}
+                />
+              </Tooltip>
+            )}
           </Box>
         </Box>
 
         {/* Tasa predicha principal */}
         <Box display="flex" alignItems="baseline" gap={0.75} mb={0.5}>
           <Typography variant="h4" fontWeight={900} sx={{ color: modColor, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
-            {data.predicted_rate.toFixed(4)}
+            {formatRate(data.predicted_rate)}
           </Typography>
           <Typography variant="caption" color="text.secondary">BOB</Typography>
           {data.confidence_interval && (
             <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.62rem' }}>
-              IC 95%: [{data.confidence_interval.lower.toFixed(3)} – {data.confidence_interval.upper.toFixed(3)}]
+              IC 95%: [{formatNumber(data.confidence_interval.lower, 3)} – {formatNumber(data.confidence_interval.upper, 3)}]
             </Typography>
           )}
         </Box>
@@ -285,7 +298,7 @@ const PredictionCard: React.FC<PredictionCardProps> = ({
               MAPE:
             </Typography>
             <Typography variant="caption" fontWeight={700} sx={{ color: health.color === 'success' ? '#2e7d32' : health.color === 'warning' ? '#e65100' : '#c62828', fontSize: '0.65rem' }}>
-              {mape.toFixed(2)}%
+              {formatPercent(mape)}
             </Typography>
           </Box>
         )}
@@ -293,7 +306,7 @@ const PredictionCard: React.FC<PredictionCardProps> = ({
         {/* Sparkline */}
         {data.predictions.length > 0 && (
           <Box mx={-0.5} mb={1}>
-            <ForecastSparkline data={data.predictions} color={modColor} />
+            <ForecastSparkline data={data.predictions} color={modColor} isInference={isInference} />
           </Box>
         )}
 

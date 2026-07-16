@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
+import { formatRate, formatNumber, formatPercent } from '../../utils/formatters';
 
 const PAIRS = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB', 'PEN/BOB'];
 const MARKETS = [
@@ -180,8 +181,8 @@ const Simulator: React.FC = () => {
                       <XAxis dataKey="day" tick={{ fontSize: 12 }}
                              label={{ value: 'día', position: 'insideBottomRight', offset: -2, fontSize: 12 }} />
                       <YAxis tick={{ fontSize: 12 }} domain={['auto', 'auto']}
-                             tickFormatter={(v: number) => v.toFixed(2)} />
-                      <RTooltip formatter={(v: number, name: string) => [v.toFixed(4), name]} />
+                             tickFormatter={(v: number) => formatNumber(v, 2)} />
+                      <RTooltip formatter={(v: number, name: string) => [`Bs ${formatRate(v)}`, name]} />
                       <Area type="monotone" dataKey="p95" stroke="none" fill="#1976d2" fillOpacity={0.10} />
                       <Area type="monotone" dataKey="p75" stroke="none" fill="#1976d2" fillOpacity={0.18} />
                       <Line type="monotone" dataKey="p50" stroke="#1976d2" strokeWidth={2} dot={false} />
@@ -192,8 +193,8 @@ const Simulator: React.FC = () => {
                   <Typography variant="caption" color="text.secondary">
                     Calibrado con {result.calibration.n_days} días reales
                     ({result.calibration.from} → {result.calibration.to}) ·
-                    tasa actual {result.calibration.last_rate} ·
-                    σ anualizada {result.params.sigma_annual_pct}%
+                    tasa actual Bs {formatRate(result.calibration.last_rate)} ·
+                    σ anualizada {formatPercent(result.params.sigma_annual_pct, 1)}
                     {result.params.shock_pct !== 0 &&
                       ` · shock inicial ${result.params.shock_pct > 0 ? '+' : ''}${result.params.shock_pct}%`}
                   </Typography>
@@ -220,14 +221,14 @@ const Simulator: React.FC = () => {
                       ].map(([label, v]) => (
                         <Grid item xs={6} key={label as string}>
                           <Typography variant="caption" color="text.secondary">{label}</Typography>
-                          <Typography variant="h6" fontWeight={600}>{(v as number).toFixed(4)}</Typography>
+                          <Typography variant="h6" fontWeight={600}>{formatRate(v as number)}</Typography>
                         </Grid>
                       ))}
                       <Grid item xs={12}>
                         <Divider sx={{ my: 1 }} />
                         <Tooltip title="Probabilidad de que la tasa termine por encima de la actual">
                           <Chip
-                            label={`P(tasa sube) = ${((fd.prob_above_last ?? 0) * 100).toFixed(1)}%`}
+                            label={`P(tasa sube) = ${formatPercent((fd.prob_above_last ?? 0) * 100, 1)}`}
                             color={(fd.prob_above_last ?? 0) >= 0.5 ? 'success' : 'warning'}
                             size="small"
                           />

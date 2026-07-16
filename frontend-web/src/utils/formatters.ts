@@ -43,23 +43,26 @@ export const formatDate = (
 };
 
 export const formatPercentage = (value: number, showSign = true): string => {
-  const formatted = Math.abs(value).toFixed(2);
-  
+  // Locale-aware es-BO (coma decimal), manteniendo firma y signo explícito.
+  const formatted = new Intl.NumberFormat('es-BO', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(value));
+
   if (showSign && value > 0) {
     return `+${formatted}%`;
   } else if (value < 0) {
     return `-${formatted}%`;
   }
-  
+
   return `${formatted}%`;
 };
 
 export const formatCompactNumber = (value: number): string => {
-  if (value >= 1000000) {
-    return `${(value / 1000000).toFixed(1)}M`;
-  } else if (value >= 1000) {
-    return `${(value / 1000).toFixed(1)}K`;
-  }
-  
-  return value.toString();
+  // Notación compacta locale-aware es-BO → 'mil'/'M' con coma decimal (ej '1,2 M').
+  if (value === undefined || value === null || isNaN(value)) return '0';
+  return new Intl.NumberFormat('es-BO', {
+    notation:              'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
 };

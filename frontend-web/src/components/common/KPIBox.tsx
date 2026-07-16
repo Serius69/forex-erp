@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { alpha } from '@mui/material/styles';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { TOKENS } from '../../styles/theme';
+import { formatNumber } from '../../utils/formatters';
 
 export type KPIStatus = 'good' | 'warning' | 'critical' | 'neutral';
 
@@ -150,7 +151,7 @@ const KPIBox: React.FC<KPIBoxProps> = memo(({
                 <Typography variant="caption" fontWeight={700} sx={{
                   color: isNeutral ? TOKENS.muted : positive ? TOKENS.green : TOKENS.red,
                 }}>
-                  {Math.abs(change).toFixed(1)}%
+                  {formatNumber(Math.abs(change), 1)}%
                 </Typography>
               </Box>
               <Typography variant="caption" color="text.secondary">{changeLabel}</Typography>

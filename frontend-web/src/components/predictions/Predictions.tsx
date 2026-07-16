@@ -19,7 +19,7 @@ import { es } from 'date-fns/locale';
 import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
+import { formatCurrency, formatNumber, formatPercent, formatCompactNumber, formatRate } from '../../utils/formatters';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ForecastPoint {
@@ -131,7 +131,7 @@ const ForecastChart = ({ data, loading }: { data: ForecastPoint[]; loading: bool
           orientation="right"
           tick={{ fontSize: 11, fill: '#94a3b8' }}
           axisLine={false} tickLine={false}
-          tickFormatter={v => `${Math.round(v / 1000)}k`}
+          tickFormatter={v => formatCompactNumber(v)}
         />
         <RTooltip
           contentStyle={TOOLTIP_STYLE}
@@ -544,9 +544,9 @@ const Predictions: React.FC = () => {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                     <YAxis domain={['auto', 'auto']} tick={{ fontSize: 11 }}
-                      tickFormatter={v => v.toFixed(3)} />
+                      tickFormatter={v => formatNumber(v, 3)} />
                     <RTooltip contentStyle={TOOLTIP_STYLE}
-                      formatter={(v: any) => [Number(v).toFixed(4), '']} />
+                      formatter={(v: any, name: any) => [`Bs. ${formatRate(v)}`, name]} />
                     <Legend />
                     {mlModelKeys.filter(m => activeModels.includes(m)).map(modelType => (
                       <Line key={modelType} type="monotone" dataKey={`${modelType}_rate`}
@@ -568,9 +568,9 @@ const Predictions: React.FC = () => {
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                       <YAxis domain={['auto', 'auto']} tick={{ fontSize: 11 }}
-                        tickFormatter={v => v.toFixed(3)} />
+                        tickFormatter={v => formatNumber(v, 3)} />
                       <RTooltip contentStyle={TOOLTIP_STYLE}
-                        formatter={(v: any) => [Number(v).toFixed(4), '']} />
+                        formatter={(v: any, name: any) => [`Bs. ${formatRate(v)}`, name]} />
                       <Legend />
                       <Area type="monotone" dataKey={`${mlModelKeys[0]}_upper`}
                         name="Límite superior" stroke="transparent"

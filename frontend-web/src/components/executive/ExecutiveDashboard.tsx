@@ -17,7 +17,7 @@ import {
 import { alpha } from '@mui/material/styles';
 import { motion } from 'framer-motion';
 import { TOKENS } from '../../styles/theme';
-import { formatCurrency, formatNumber, formatCompactNumber, formatPercentage } from '../../utils/formatters';
+import { formatCurrency, formatNumber, formatCompactNumber, formatPercentage, formatRate, formatPercent } from '../../utils/formatters';
 import { useCEODashboard } from '../../hooks/useCEODashboard';
 import KPIBox from '../common/KPIBox';
 import ChartCard from '../common/ChartCard';
@@ -722,18 +722,18 @@ const ExecutiveDashboard: React.FC = () => {
                           <Typography variant="caption" color="text.secondary">
                             Compra:{' '}
                             <Box component="span" sx={{ color: TOKENS.green, fontWeight: 700 }}>
-                              {p.suggested_buy?.toFixed(4)}
+                              {p.suggested_buy != null ? formatRate(p.suggested_buy) : '—'}
                             </Box>
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
                             Venta:{' '}
                             <Box component="span" sx={{ color: TOKENS.red, fontWeight: 700 }}>
-                              {p.suggested_sell?.toFixed(4)}
+                              {p.suggested_sell != null ? formatRate(p.suggested_sell) : '—'}
                             </Box>
                           </Typography>
                         </Box>
                         <Chip
-                          label={`${p.spread_pct?.toFixed(2)}%`}
+                          label={formatPercent(p.spread_pct)}
                           size="small"
                           color={p.spread_pct > 0.5 ? 'success' : p.spread_pct > 0.3 ? 'warning' : 'error'}
                         />

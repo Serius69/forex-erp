@@ -17,6 +17,7 @@ import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
+import { formatRate, formatNumber } from '../../utils/formatters';
 
 const CURRENCIES = ['USD', 'EUR', 'CLP', 'PEN', 'BRL', 'ARS', 'GBP'];
 const DAYS_OPTIONS = [7, 14, 30, 60, 90, 180, 365];
@@ -58,7 +59,7 @@ const CustomTooltip = ({ active, payload, label, currency, scaleFactor }: any) =
         <Box key={p.dataKey} display="flex" justifyContent="space-between" gap={2}>
           <Typography variant="caption" color={p.color}>{p.name}</Typography>
           <Typography variant="caption" fontWeight="bold" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-            Bs. {Number(p.value).toFixed(4)}{scaleLabel}
+            Bs. {formatRate(p.value)}{scaleLabel}
           </Typography>
         </Box>
       ))}
@@ -192,17 +193,17 @@ const RateHistoryChart: React.FC = () => {
           {[
             {
               label: 'Compra actual',
-              value: `Bs. ${currentBuy.toFixed(4)}`,
+              value: `Bs. ${formatRate(currentBuy)}`,
               color: '#2e7d32',
               sub: changeBuy !== 0
-                ? `${changeBuy >= 0 ? '+' : ''}${changeBuy.toFixed(4)} vs ${days}d atrás`
+                ? `${changeBuy >= 0 ? '+' : ''}${formatNumber(changeBuy, 4)} vs ${days}d atrás`
                 : `Sin cambio`,
             },
             {
               label: 'Venta actual',
-              value: `Bs. ${currentSell.toFixed(4)}`,
+              value: `Bs. ${formatRate(currentSell)}`,
               color: '#1976d2',
-              sub: `Spread: Bs. ${spread.toFixed(4)}`,
+              sub: `Spread: Bs. ${formatRate(spread)}`,
             },
             {
               label: 'Puntos de datos',
@@ -269,7 +270,7 @@ const RateHistoryChart: React.FC = () => {
               />
               <YAxis
                 tick={{ fontSize: 11 }}
-                tickFormatter={v => `${Number(v).toFixed(2)}`}
+                tickFormatter={v => formatNumber(v, 2)}
                 domain={['auto', 'auto']}
                 width={60}
               />

@@ -17,7 +17,7 @@ import {
 import { api } from '../../services/api';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { useBranchScope } from '../../contexts/BranchScopeContext';
-import { formatCurrency, formatNumber, formatRate, formatPercent } from '../../utils/formatters';
+import { formatCurrency, formatNumber, formatRate, formatPercent, formatCompactNumber } from '../../utils/formatters';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 // Keys match the actual backend response from GananciaService.resumen_financiero()
@@ -330,9 +330,9 @@ const Ganancias: React.FC = () => {
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                       <XAxis dataKey="divisa" tick={{ fontSize: 12 }} />
-                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={v => formatCompactNumber(v)} />
                       <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }}
-                        tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                        tickFormatter={v => formatCompactNumber(v)} />
                       <RTooltip formatter={(v: any, name: string) => [formatCurrency(v), name]} />
                       <Bar yAxisId="left" dataKey="ingreso_bob" name="Ingresos" fill="#90caf9" radius={[4, 4, 0, 0]} />
                       <Bar yAxisId="right" dataKey="ganancia_bob" name="Ganancia" radius={[4, 4, 0, 0]}>

@@ -27,7 +27,7 @@ import {
 } from 'recharts';
 import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
-import { formatCurrency } from '../../utils/formatters';
+import { formatCurrency, formatCompactNumber } from '../../utils/formatters';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -196,11 +196,14 @@ const PnLPanel: React.FC<{ loading: boolean; data: PnLData | null }> = ({ loadin
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="h6" fontWeight={700} mb={2}>P&L Diario</Typography>
+          {chartData.length === 0 ? (
+            <Alert severity="info">Sin datos suficientes para graficar el P&L diario.</Alert>
+          ) : (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="fecha" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `Bs.${(v/1000).toFixed(0)}k`} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `Bs. ${formatCompactNumber(v)}`} />
               <RTooltip formatter={(v: any, name: string) => [fmtBOB(v), name]} />
               <Legend />
               <ReferenceLine y={0} stroke="#ccc" strokeDasharray="3 3" />
@@ -209,6 +212,7 @@ const PnLPanel: React.FC<{ loading: boolean; data: PnLData | null }> = ({ loadin
               <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#e53935" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
             </LineChart>
           </ResponsiveContainer>
+          )}
         </CardContent>
       </Card>
 
@@ -675,8 +679,8 @@ const TrendsPanel: React.FC<{ loading: boolean; data: TrendsData | null }> = ({ 
             <LineChart data={pnlSeries}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
               <XAxis dataKey="fecha" fontSize={11} />
-              <YAxis fontSize={11} />
-              <RTooltip formatter={(v: any) => fmtBOB(v)} />
+              <YAxis fontSize={11} tickFormatter={v => `Bs. ${formatCompactNumber(v)}`} />
+              <RTooltip formatter={(v: any) => [fmtBOB(v), 'BOB']} />
               <Legend />
               <ReferenceLine y={0} stroke="#999" />
               <Line type="monotone" dataKey="neta" name="Neta" stroke="#2e7d32" strokeWidth={2} dot={false} />

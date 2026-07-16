@@ -17,7 +17,7 @@ import {
 } from 'recharts';
 import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
-import { formatCurrency, formatNumber } from '../../utils/formatters';
+import { formatCurrency, formatNumber, formatCompactNumber } from '../../utils/formatters';
 import { useAuth } from '../../contexts/AuthContext';
 import CapitalCaja from './CapitalCaja';
 import CapitalDashboard from './CapitalDashboard';
@@ -466,7 +466,7 @@ const Capital: React.FC = () => {
                     ]}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                       <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                      <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `Bs.${(v / 1000).toFixed(0)}k`} />
+                      <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `Bs. ${formatCompactNumber(v)}`} />
                       <RTooltip formatter={(v: any) => [formatCurrency(v), 'Valor']} />
                       <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                         {['#2e7d32', '#1976d2', '#7b1fa2'].map((color, i) => (

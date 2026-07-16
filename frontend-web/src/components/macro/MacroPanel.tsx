@@ -20,6 +20,7 @@ import {
 } from 'recharts';
 import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
+import { formatNumber, formatCompactNumber, formatPercent } from '../../utils/formatters';
 
 interface IndicatorSummary {
   series: string;
@@ -33,16 +34,23 @@ interface IndicatorSummary {
 
 interface SeriesPoint { date: string; value: string; }
 
+// Formateo por indicador — todo es-BO (coma decimal). % para tasas/brecha,
+// US$ compacto para reservas/deuda, Bs para tipos de cambio.
 const CARD_META: Record<string, { icon: React.ReactNode; fmt: (v: number) => string; hint: string }> = {
-  inflacion_yoy:       { icon: <TrendingUp color="error" />,   fmt: v => `${v.toFixed(1)}%`, hint: 'Inflación anual (World Bank)' },
-  reservas_usd:        { icon: <Savings color="primary" />,    fmt: v => `$${(v / 1e6).toFixed(0)}M`, hint: 'Reservas internacionales' },
-  pib_crecimiento:     { icon: <TimelineIcon color="info" />,  fmt: v => `${v.toFixed(1)}%`, hint: 'Crecimiento del PIB' },
-  deuda_externa_usd:   { icon: <AccountBalance color="warning" />, fmt: v => `$${(v / 1e9).toFixed(1)}B`, hint: 'Deuda externa total' },
-  tasa_interes_activa: { icon: <Percent color="secondary" />,  fmt: v => `${v.toFixed(1)}%`, hint: 'Tasa de interés activa' },
-  tc_oficial_promedio: { icon: <Public color="action" />,      fmt: v => `Bs ${v.toFixed(2)}`, hint: 'TC oficial promedio anual' },
-  usd_internacional:   { icon: <CompareArrows color="primary" />, fmt: v => `Bs ${v.toFixed(3)}`, hint: 'USD/BOB internacional (er-api)' },
-  brecha_oficial_pct:  { icon: <TrendingDown color="error" />, fmt: v => `${v.toFixed(2)}%`, hint: 'Brecha oficial ↔ paralelo digital' },
+  inflacion_yoy:       { icon: <TrendingUp color="error" />,   fmt: v => formatPercent(v, 1), hint: 'Inflación anual (World Bank)' },
+  reservas_usd:        { icon: <Savings color="primary" />,    fmt: v => `US$ ${formatCompactNumber(v)}`, hint: 'Reservas internacionales' },
+  pib_crecimiento:     { icon: <TimelineIcon color="info" />,  fmt: v => formatPercent(v, 1), hint: 'Crecimiento del PIB' },
+  deuda_externa_usd:   { icon: <AccountBalance color="warning" />, fmt: v => `US$ ${formatCompactNumber(v)}`, hint: 'Deuda externa total' },
+  tasa_interes_activa: { icon: <Percent color="secondary" />,  fmt: v => formatPercent(v, 1), hint: 'Tasa de interés activa' },
+  tc_oficial_promedio: { icon: <Public color="action" />,      fmt: v => `Bs ${formatNumber(v, 2)}`, hint: 'TC oficial promedio anual' },
+  usd_internacional:   { icon: <CompareArrows color="primary" />, fmt: v => `Bs ${formatNumber(v, 3)}`, hint: 'USD/BOB internacional (er-api)' },
+  brecha_oficial_pct:  { icon: <TrendingDown color="error" />, fmt: v => formatPercent(v, 2), hint: 'Brecha oficial ↔ paralelo digital' },
 };
+
+// ¿La serie seleccionada se expresa en porcentaje? (ejes/tooltip con % y coma)
+const isPctSeries = (series: string, unit?: string) =>
+  unit?.includes('%') ||
+  ['inflacion_yoy', 'pib_crecimiento', 'tasa_interes_activa', 'brecha_oficial_pct'].includes(series);
 
 const MacroPanel: React.FC = () => {
   const { enqueueSnackbar } = useSnackbar();
@@ -175,9 +183,13 @@ const MacroPanel: React.FC = () => {
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                 <XAxis dataKey="date" tick={{ fontSize: 12 }} minTickGap={40} />
                 <YAxis tick={{ fontSize: 12 }} domain={['auto', 'auto']}
-                       tickFormatter={(v: number) => Math.abs(v) >= 1e9 ? `${(v / 1e9).toFixed(1)}B`
-                         : Math.abs(v) >= 1e6 ? `${(v / 1e6).toFixed(0)}M` : `${v}`} />
-                <RTooltip formatter={(v: number) => [v.toLocaleString(), selectedMeta?.unit || 'valor']} />
+                       tickFormatter={(v: number) => isPctSeries(selected, selectedMeta?.unit)
+                         ? formatPercent(v, 1)
+                         : Math.abs(v) >= 1e6 ? formatCompactNumber(v) : formatNumber(v, 2)} />
+                <RTooltip formatter={(v: number) => [
+                  isPctSeries(selected, selectedMeta?.unit) ? formatPercent(v, 2) : formatNumber(v, 2),
+                  selectedMeta?.unit || 'valor',
+                ]} />
                 <Line type="monotone" dataKey="value" stroke="#1976d2" strokeWidth={2} dot={chartData.length < 40} />
               </LineChart>
             </ResponsiveContainer>

@@ -249,9 +249,9 @@ const SpreadChart = memo(({ rates, loading }: { rates: Record<string, any>; load
         <BarChart data={data} layout="vertical" margin={{ top: 0, right: 24, left: 8, bottom: 0 }} barSize={14}>
           <CartesianGrid horizontal={false} stroke={TOKENS.border} />
           <XAxis type="number" tick={{ fontSize: 9, fill: TOKENS.muted }} axisLine={false} tickLine={false}
-            tickFormatter={v => `${v}%`} domain={[0, 'dataMax + 0.5']} />
+            tickFormatter={v => formatPercent(v, 1)} domain={[0, 'dataMax + 0.5']} />
           <YAxis type="category" dataKey="currency" tick={{ fontSize: 10, fill: TOKENS.muted, fontWeight: 600 }} axisLine={false} tickLine={false} width={32} />
-          <RTooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [`${v}%`, 'Spread']} cursor={{ fill: alpha(TOKENS.blue, 0.04) }} />
+          <RTooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [formatPercent(v), 'Spread']} cursor={{ fill: alpha(TOKENS.blue, 0.04) }} />
           <Bar dataKey="spread" radius={[0, 5, 5, 0]}>
             {data.map((entry, i) => (
               <Cell key={`spread-${i}`}
@@ -312,7 +312,7 @@ const Dashboard: React.FC = () => {
     },
     {
       title:  'Spread promedio',
-      value:  stats?.avg_spread != null ? `${safeNum(stats.avg_spread).toFixed(2)}%` : '—',
+      value:  stats?.avg_spread != null ? formatPercent(safeNum(stats.avg_spread)) : '—',
       icon:   <TrendingUp />,
       accent: TOKENS.navyLight,
     },
@@ -359,7 +359,7 @@ const Dashboard: React.FC = () => {
       title:  'Variación diaria',
       value:  (() => {
         const pct = safeNum(stats?.daily_variation_pct ?? stats?.volume_change_pct);
-        return pct !== 0 ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—';
+        return pct !== 0 ? `${pct >= 0 ? '+' : ''}${formatNumber(pct, 2)}%` : '—';
       })(),
       icon:   safeNum(stats?.daily_variation_pct ?? stats?.volume_change_pct) >= 0 ? <TrendingUp /> : <ArrowDownward />,
       accent: safeNum(stats?.daily_variation_pct ?? stats?.volume_change_pct) >= 0 ? TOKENS.green : TOKENS.red,
