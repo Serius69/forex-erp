@@ -197,6 +197,7 @@ class PredictionViewSet(viewsets.ModelViewSet):
             return Response({
                 'currency_pair': currency_pair,
                 'model_status':  'FALLBACK',
+                'data_freshness': 'INFERENCE',
                 'predictions': {
                     'NAIVE_FALLBACK': [
                         {
@@ -235,6 +236,11 @@ class PredictionViewSet(viewsets.ModelViewSet):
         return Response({
             'currency_pair': currency_pair,
             'predictions': predictions_by_model,
+            # LIVE = predicciones reales de modelos entrenados (vs 'FALLBACK'
+            # naive del arranque en frío). El frontend lo usa para distinguir
+            # visualmente un pronóstico estimado de uno real.
+            'model_status': 'LIVE',
+            'data_freshness': 'LIVE',
             'generated_at': timezone.now()
         })
     

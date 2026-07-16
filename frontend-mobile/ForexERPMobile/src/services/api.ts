@@ -2,6 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   AuthTokens, LoginCredentials, RatesMap, Prediction,
+  AdvisorResponse, MacroIndicatorSummary, MacroSeriesPoint, NewsPulse,
   Transaction, NewTransactionPayload, DailySummary,
   CurrencyInventory, Alert, Customer, ReportSummary, User,
 } from '../types/index';
@@ -264,5 +265,34 @@ export const reportsApi = {
     const txs: any[] = data?.results ?? data ?? [];
     // Agrupación por divisa con promedio ponderado real (BOB / unidades divisa)
     return aggregateDailyReport(txs);
+  },
+};
+
+// ── Asesor de divisas (chat "¿compro o vendo?") ───────────────────────────────
+export const advisorApi = {
+  async ask(message: string): Promise<AdvisorResponse> {
+    return request<AdvisorResponse>('/predictions/advisor/', {
+      method: 'POST',
+      body:   JSON.stringify({ message }),
+    });
+  },
+};
+
+// ── Macro (indicadores Bolivia + pulso de noticias) ───────────────────────────
+export const macroApi = {
+  async getSummary(): Promise<MacroIndicatorSummary[]> {
+    // Backend envuelve: { indicators: [...], as_of }
+    const data = await request<any>('/macro/indicators/summary/');
+    return data?.indicators ?? [];
+  },
+  async getSeries(series: string): Promise<MacroSeriesPoint[]> {
+    // Backend envuelve: { series, points: [...] }
+    const data = await request<any>(
+      `/macro/indicators/series/?series=${encodeURIComponent(series)}`,
+    );
+    return data?.points ?? [];
+  },
+  async getNewsPulse(): Promise<NewsPulse> {
+    return request<NewsPulse>('/macro/news/pulse/');
   },
 };

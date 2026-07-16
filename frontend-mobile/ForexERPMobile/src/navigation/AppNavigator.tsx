@@ -10,6 +10,8 @@ import DashboardScreen       from '../screens/DashboardScreen';
 import TransactionScreen     from '../screens/TransactionScreen';
 import InventoryScreen       from '../screens/InventoryScreen';
 import TarjetasScreen        from '../screens/TarjetasScreen';
+import AdvisorScreen         from '../screens/AdvisorScreen';
+import MacroScreen           from '../screens/MacroScreen';
 import ReportsScreen         from '../screens/ReportsScreen';
 import AlertsScreen          from '../screens/AlertsScreen';
 
@@ -39,6 +41,10 @@ function MainTabs() {
         options={{ title: 'Inventario',   tabBarIcon: ({ color }) => <TabIcon icon="🏦" color={color} /> }} />
       <Tab.Screen name="Tarjetas"    component={TarjetasScreen}
         options={{ title: 'Tarjetas',     tabBarIcon: ({ color }) => <TabIcon icon="💳" color={color} /> }} />
+      <Tab.Screen name="Advisor"     component={AdvisorScreen}
+        options={{ title: 'Asesor',       tabBarIcon: ({ color }) => <TabIcon icon="🧭" color={color} /> }} />
+      <Tab.Screen name="Macro"       component={MacroScreen}
+        options={{ title: 'Macro',        tabBarIcon: ({ color }) => <TabIcon icon="🌎" color={color} /> }} />
       <Tab.Screen name="Reports"     component={ReportsScreen}
         options={{ title: 'Reportes',     tabBarIcon: ({ color }) => <TabIcon icon="📈" color={color} /> }} />
       <Tab.Screen name="Alerts"      component={AlertsScreen}

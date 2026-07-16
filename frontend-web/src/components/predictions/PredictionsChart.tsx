@@ -55,6 +55,7 @@ interface PredictionData {
 const PredictionsChart: React.FC = () => {
   const [predictions, setPredictions] = useState<Record<string, PredictionData[]>>({});
   const [modelMape, setModelMape] = useState<Record<string, number>>({});
+  const [modelStatus, setModelStatus] = useState<string>('LIVE');
   const [loading, setLoading] = useState(true);
   const [selectedCurrency, setSelectedCurrency] = useState('USD');
   const [selectedModel, setSelectedModel] = useState('ENSEMBLE');
@@ -78,6 +79,8 @@ const PredictionsChart: React.FC = () => {
       ]);
       if (predRes.status === 'fulfilled') {
         setPredictions(predRes.value.data.predictions);
+        // 'FALLBACK' (arranque en frío) → pronóstico naive estimado, no real.
+        setModelStatus(predRes.value.data.model_status ?? 'LIVE');
       }
       // MAPE REAL por modelo (serie web) — nada de precisiones inventadas
       if (modelsRes.status === 'fulfilled') {
@@ -105,8 +108,16 @@ const PredictionsChart: React.FC = () => {
   // Se deduplica por hora (puede haber varias predicciones cacheadas para el
   // mismo período → antes el eje mostraba "13:00 13:00 14:00 14:00…"); gana
   // la más reciente de cada etiqueta.
+  // Modelo efectivo: si el elegido no tiene datos pero hay fallback naive
+  // (arranque en frío), se muestra ese en su lugar, marcado como estimado.
+  const isInference = modelStatus === 'FALLBACK'
+    || (!(predictions[selectedModel]?.length) && !!predictions['NAIVE_FALLBACK']?.length);
+  const effectiveModel = predictions[selectedModel]?.length
+    ? selectedModel
+    : (predictions['NAIVE_FALLBACK']?.length ? 'NAIVE_FALLBACK' : selectedModel);
+
   const chartData = React.useMemo(() => {
-    const modelPredictions = predictions[selectedModel] || [];
+    const modelPredictions = predictions[effectiveModel] || [];
     const byLabel = new Map<string, any>();
     modelPredictions.forEach((p) => {
       const label = format(new Date(p.date), 'HH:mm', { locale: es });
@@ -119,7 +130,7 @@ const PredictionsChart: React.FC = () => {
       });
     });
     return Array.from(byLabel.values());
-  }, [predictions, selectedModel]);
+  }, [predictions, effectiveModel]);
 
   const currentRate = rates[selectedCurrency]?.official;
 
@@ -223,6 +234,11 @@ const PredictionsChart: React.FC = () => {
                   />
                 </Tooltip>
               )}
+              {isInference && (
+                <Tooltip title="Pronóstico estimado (naive) mientras los modelos ML se calientan tras un reinicio. Se reemplaza por la predicción real en cuanto la caché horaria se puebla.">
+                  <Chip label="estimado" color="warning" size="small" variant="outlined" />
+                </Tooltip>
+              )}
               <Chip
                 label="Próximas 24h"
                 color="primary"
@@ -281,9 +297,10 @@ const PredictionsChart: React.FC = () => {
                   <Line
                     type="monotone"
                     dataKey="rate"
-                    name="Predicción"
+                    name={isInference ? 'Predicción (estimada)' : 'Predicción'}
                     stroke="rgb(75, 192, 192)"
                     strokeWidth={2}
+                    strokeDasharray={isInference ? '6 4' : undefined}
                     dot={{ r: 2 }}
                   />
                   {currentRate != null && (

@@ -129,6 +129,51 @@ export interface ReportSummary {
 }
 
 // ─── Navegación ───────────────────────────────────────────────────────────────
+// ── Asesor de divisas ─────────────────────────────────────────────────────────
+export interface AdvisorResponse {
+  reply: string;
+  decision: string;   // 'COMPRAR' | 'ESPERAR' | 'VENDER'
+  currency: string;
+  confidence: number; // 0..1
+  score: number;
+  signals?: Record<string, any>;
+}
+
+// ── Macro (indicadores Bolivia + pulso de noticias) ───────────────────────────
+export interface MacroIndicatorSummary {
+  series: string;
+  series_label: string;
+  date: string;
+  value: string;
+  unit?: string;
+  source?: string;
+  age_days: number;
+}
+
+export interface MacroSeriesPoint {
+  date: string;
+  value: string;
+  unit?: string;
+  source?: string;
+  series?: string;
+}
+
+export interface NewsItem {
+  title: string;
+  url?: string;
+  source?: string;
+  sentiment?: number;
+  published_at?: string;
+}
+
+export interface NewsPulse {
+  index: number | null;
+  label: string;
+  noticias_48h: number;
+  alcistas: NewsItem[];
+  bajistas: NewsItem[];
+}
+
 export type RootStackParamList = {
   Login: undefined;
   Main: undefined;
@@ -139,6 +184,8 @@ export type BottomTabParamList = {
   Transaction: undefined;
   Inventory: undefined;
   Tarjetas: undefined;
+  Advisor: undefined;
+  Macro: undefined;
   Reports: undefined;
   Alerts: undefined;
 };
