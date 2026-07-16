@@ -42,15 +42,22 @@ def generate_predictions():
     name='predictions.train_pair_prediction_models',
     bind=True,
     max_retries=1,
-    # OJO acks_late=False A PROPÓSITO: esta tarea es PESADA (3 mercados × 3
-    # modelos, BiLSTM incluido). Con acks_late el hard time_limit mata el worker
-    # (SIGKILL, no atrapa SoftTimeLimitExceeded) y el mensaje se RE-ENTREGA →
-    # loop infinito de muerte (bug real 2026-07-16: una misma tarea llevaba 8h
-    # reciclándose cada 70 min). Ackear al recibir evita el poison-loop: si un
-    # par excede su límite muere solo, y el reentreno diario lo recupera mañana.
-    acks_late=False,
-    soft_time_limit=1500,   # 25 min por PAR (antes 60 min para los 6 → timeout)
-    time_limit=1800,        # 30 min hard
+    # DISEÑO anti-pérdida Y anti-poison-loop (2026-07-16, tras dos incidentes):
+    #  - acks_late=True (global, se hereda): si el worker se reinicia a media
+    #    (deploy/docker restart → SIGKILL tras el grace) el mensaje NO-ackeado se
+    #    RE-ENCOLA y el par se reentrena — no se pierde. (El bug previo fue poner
+    #    acks_late=False "para cortar el poison-loop", que a cambio PERDÍA pares
+    #    prefetcheados en un restart: PEN/CLP se cayeron así.)
+    #  - El poison-loop NO puede volver porque la tarea es acotada (UN par, 9
+    #    entrenamientos) y el SOFT limit (25m) se atrapa SIEMPRE y retorna limpio
+    #    ANTES del hard (40m): un gap de 15 min es enorme para el fit de un solo
+    #    modelo (máx observado ~5m), así que el hard SIGKILL —el único evento que
+    #    generaba el ciclo de muerte— nunca se alcanza en la práctica. Los únicos
+    #    "worker lost + re-encola" quedan siendo reinicios reales (lo deseado).
+    #  - Red de seguridad final: el reentreno diario 02:00 re-cubre cualquier par
+    #    que, en un caso patológico, quedara sin entrenar.
+    soft_time_limit=1500,   # 25 min por PAR
+    time_limit=2400,        # 40 min hard — gap de 15 min para atrapar el soft
 )
 def train_pair_prediction_models(self, pair):
     """
@@ -59,31 +66,35 @@ def train_pair_prediction_models(self, pair):
     """
     logger.info("TASK_START name=train_pair_prediction_models pair=%s", pair)
     from predictions.ml_engine import ForexMLEngine
-    engine = ForexMLEngine()
-
-    # 1. Sincronizar datos ExchangeRate → TrainingData (las 3 series)
-    try:
-        update_training_data(pair)
-    except Exception as exc:
-        logger.warning("sync_data_failed pair=%s: %s", pair, exc)
 
     results = {}
-    # 2. Entrenar las 3 series por separado; series sin datos degradan limpio.
-    for market in MARKET_SOURCE_MAP:  # 'web', 'competencia', 'empresa'
-        try:
-            extended = engine.train_all(
-                pair, include=['xgboost', 'arima', 'bilstm'], market=market)
-            results[market] = {'new_models': extended}
-        except SoftTimeLimitExceeded:
-            logger.error("TASK_TIMEOUT train_pair pair=%s market=%s", pair, market)
-            results[market] = {'new_models': {'error': 'timeout'}}
-            break  # se acabó el tiempo del par; corta sin reciclar el mensaje
-        except Exception as exc:
-            logger.warning("train_extended pair=%s market=%s: %s", pair, market, exc)
-            results[market] = {'new_models': {'error': str(exc)}}
-    # Prophet: cadencia SEMANAL (weekly_hyperparameter_tuning), no aquí.
+    try:
+        engine = ForexMLEngine()
 
-    ok = 'error' not in str(results).lower()
+        # 1. Sincronizar datos ExchangeRate → TrainingData (las 3 series)
+        try:
+            update_training_data(pair)
+        except Exception as exc:
+            logger.warning("sync_data_failed pair=%s: %s", pair, exc)
+
+        # 2. Entrenar las 3 series por separado; series sin datos degradan limpio.
+        for market in MARKET_SOURCE_MAP:  # 'web', 'competencia', 'empresa'
+            try:
+                extended = engine.train_all(
+                    pair, include=['xgboost', 'arima', 'bilstm'], market=market)
+                results[market] = {'new_models': extended}
+            except Exception as exc:
+                logger.warning("train_extended pair=%s market=%s: %s", pair, market, exc)
+                results[market] = {'new_models': {'error': str(exc)}}
+
+    except SoftTimeLimitExceeded:
+        # Se acabó el presupuesto del par (soft): retorna LIMPIO (la tarea se
+        # ackea, NO se re-encola → sin poison-loop). Lo ya entrenado quedó
+        # persistido; lo que falte lo toma el reentreno diario.
+        logger.error("TASK_TIMEOUT train_pair pair=%s (soft limit) — retorno parcial", pair)
+        results['_timeout'] = True
+
+    ok = 'error' not in str(results).lower() and '_timeout' not in results
     logger.info("TASK_DONE name=train_pair_prediction_models pair=%s ok=%s", pair, ok)
     return {'status': 'ok' if ok else 'partial', 'pair': pair, 'results': results}
 
