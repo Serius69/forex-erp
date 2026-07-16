@@ -21,8 +21,17 @@ PSI_GREEN  = 0.10   # distribución estable
 PSI_YELLOW = 0.20   # cambio moderado — vigilar
 PSI_RED    = 0.25   # drift significativo — reentrenar
 
-# Alerta si no hay datos nuevos en N horas
-DATA_STALENESS_THRESHOLD_HOURS = 4
+# Frescura de datos: el umbral depende de la GRANULARIDAD de cada serie.
+# 'web' es intradía (horaria / tiempo real) → debe refrescar seguido; 'competencia'
+# y 'empresa' son de CIERRE DIARIO → naturalmente pasan >24h entre puntos, así que
+# un umbral chico dispara DATA_STALE constante (fatiga de alertas → se pierde la
+# señal real). Umbral por serie de mercado:
+DATA_STALENESS_THRESHOLD_HOURS = 6      # default / 'web' (tiempo real)
+DATA_STALENESS_THRESHOLDS_BY_MARKET = {
+    'web':         6,    # intradía / horaria
+    'competencia': 30,   # cierre diario (24h + holgura de fin de semana/feriado)
+    'empresa':     30,   # cierre diario (24h + holgura)
+}
 
 CURRENCY_PAIRS = ['USD/BOB', 'EUR/BOB', 'BRL/BOB', 'ARS/BOB', 'PEN/BOB', 'CLP/BOB']
 
@@ -192,8 +201,9 @@ class ModelMonitor:
         if not latest:
             return {'fresh': False, 'reason': 'Sin datos en TrainingData'}
 
+        threshold = DATA_STALENESS_THRESHOLDS_BY_MARKET.get(market, DATA_STALENESS_THRESHOLD_HOURS)
         hours_old = (timezone.now() - latest['date']).total_seconds() / 3600
-        fresh     = hours_old < DATA_STALENESS_THRESHOLD_HOURS
+        fresh     = hours_old < threshold
 
         if not fresh:
             logger.warning(
@@ -215,33 +225,53 @@ class ModelMonitor:
             'last_date': latest['date'].isoformat(),
             'hours_old': round(hours_old, 1),
             'source':    latest['source'],
-            'threshold_hours': DATA_STALENESS_THRESHOLD_HOURS,
+            'threshold_hours': threshold,
         }
 
     # ── Fuentes de datos externas ─────────────────────────────────────────────
 
     def _check_data_sources(self) -> dict:
-        """Verifica las últimas actualizaciones de cada fuente de tasas."""
+        """Verifica las últimas actualizaciones de cada fuente/mercado de tasas.
+
+        Antes consultaba ``source ∈ {'BCB','PARALLEL','DIGITAL'}`` — valores que NO
+        existen en ``rates.ExchangeRate``: el sistema usa ``market_type`` con valores
+        reales ('paralelo_digital', 'paralelo_fisico_competencia',
+        'paralelo_fisico_empresa', 'official', …), de modo que el filtro por ``source``
+        devolvía siempre ``no_data``. Ahora consulta por ``market_type`` real y con
+        umbral acorde a la CADENCIA de cada mercado (digital = tiempo real; físico =
+        cierre diario; oficial BCB = prácticamente fijo).
+        """
         from rates.models import ExchangeRate
 
+        # nombre lógico → (market_type real en ExchangeRate, umbral de frescura en horas)
+        checks = {
+            'paralelo_digital': ('paralelo_digital', 6),
+            'competencia':      ('paralelo_fisico_competencia', 30),
+            'empresa':          ('paralelo_fisico_empresa', 30),
+            'oficial':          ('official', 720),   # BCB: cambia rara vez (~mensual)
+        }
+
         sources = {}
-        for src in ['BCB', 'PARALLEL', 'DIGITAL']:
+        for label, (market_type, threshold_h) in checks.items():
             latest = (
                 ExchangeRate.objects
-                .filter(source=src)
+                .filter(market_type=market_type)
                 .order_by('-valid_from')
-                .values('valid_from')
+                .values('valid_from', 'source')
                 .first()
             )
-            if latest:
+            if latest and latest['valid_from']:
                 hours_old = (timezone.now() - latest['valid_from']).total_seconds() / 3600
-                sources[src] = {
-                    'last_update': latest['valid_from'].isoformat(),
-                    'hours_old':   round(hours_old, 1),
-                    'status':      'ok' if hours_old < 2 else 'stale',
+                sources[label] = {
+                    'market_type':     market_type,
+                    'last_update':     latest['valid_from'].isoformat(),
+                    'hours_old':       round(hours_old, 1),
+                    'source':          latest['source'],
+                    'threshold_hours': threshold_h,
+                    'status':          'ok' if hours_old < threshold_h else 'stale',
                 }
             else:
-                sources[src] = {'status': 'no_data'}
+                sources[label] = {'market_type': market_type, 'status': 'no_data'}
         return sources
 
     # ── Logging estructurado ──────────────────────────────────────────────────

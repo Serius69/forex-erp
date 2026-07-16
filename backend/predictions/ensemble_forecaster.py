@@ -9,10 +9,12 @@ Estrategia de pesos:
 
 El ensemble combina: PROPHET · BILSTM · XGBOOST · ARIMA
 """
+import math
 import numpy as np
 import pandas as pd
 import joblib
 import os
+from datetime import datetime
 from django.utils import timezone
 import logging
 
@@ -101,12 +103,19 @@ class EnsembleForecaster:
     ) -> list:
         """
         Promedio ponderado de las predicciones base.
-        CI: unión de todos los CIs (min lower, max upper) para cobertura conservadora.
+
+        CI (pre-conformal): banda SIMÉTRICA alrededor del punto ensemble, de ancho
+        igual al promedio PONDERADO de los anchos de los modelos que contribuyen.
+        Antes se tomaba la unión (min lower, max upper) de CIs heterogéneos, lo que
+        inflaba el intervalo cuando un modelo con banda plana o muy ancha (p.ej.
+        Prophet-naive o XGBoost sin CI real) estiraba los extremos → CI mal calibrado
+        justo cuando la conformalización se salta por pocos residuos. El ancho
+        ponderado ignora a los modelos de peso ~0 y no se deja arrastrar por outliers.
         """
         predictions = []
 
         for h in range(horizon):
-            rates, lowers, uppers, w_sum = [], [], [], 0.0
+            rates, w_sum, width_w_sum = [], 0.0, 0.0
 
             for model_type, preds in base_preds.items():
                 if h >= len(preds):
@@ -115,14 +124,15 @@ class EnsembleForecaster:
                 if w <= 0:
                     continue
                 rates.append(preds[h]['rate']  * w)
-                lowers.append(preds[h]['lower'])
-                uppers.append(preds[h]['upper'])
+                width_w_sum += w * (preds[h]['upper'] - preds[h]['lower'])
                 w_sum += w
 
             if not rates:
                 continue
 
             ensemble_rate = sum(rates) / (w_sum or 1.0)
+            # Semi-ancho = mitad del ancho promedio ponderado de las bandas base.
+            half_width    = (width_w_sum / (w_sum or 1.0)) / 2.0
 
             # Fecha de referencia desde el primer modelo disponible
             ref_list = next(iter(base_preds.values()), [])
@@ -131,8 +141,8 @@ class EnsembleForecaster:
             predictions.append({
                 'prediction_date': pred_ts,
                 'rate':            ensemble_rate,
-                'lower':           min(lowers),
-                'upper':           max(uppers),
+                'lower':           ensemble_rate - half_width,
+                'upper':           ensemble_rate + half_width,
                 'confidence':      0.95,
                 'external_factors': {
                     'model':      'ENSEMBLE',
@@ -183,13 +193,54 @@ class EnsembleForecaster:
             rows = list(base_qs.values_list('actual_rate', 'predicted_rate'))
 
         residuals = [float(actual) - float(pred) for actual, pred in rows]
-        calibrated = calibrate_predictions(predictions, residuals, alpha=alpha)
+
+        # Escala del ancho por horizonte: los residuos vienen de predicciones a
+        # 24 h (ENSEMBLE), así que el cuantil conformal cubre el error a 24 h.
+        # Bajo un supuesto de random-walk el error de pronóstico crece ~ sqrt(h);
+        # escalamos cada paso por sqrt(h/24) para que 168 h (7 d) reciba un
+        # intervalo MÁS ANCHO que 24 h y no quede sub-cubierto.
+        scales = self._horizon_scales(predictions, reference_hours=24.0)
+        calibrated = calibrate_predictions(predictions, residuals, alpha=alpha,
+                                           horizon_scale=scales)
         if calibrated is not predictions:
             logger.info(
                 "conformal.applied pair=%s n_residuals=%d alpha=%.3f",
                 currency_pair, len(residuals), alpha,
             )
         return calibrated
+
+    @staticmethod
+    def _horizon_scales(predictions: list, reference_hours: float = 24.0) -> list:
+        """Factor de ensanchado sqrt(h / reference_hours) por predicción.
+
+        ``h`` = horas hacia adelante de cada paso, derivadas de ``prediction_date``
+        respecto a ahora. Si la fecha no es interpretable se cae al índice del paso
+        (paso horario: 1 h, 2 h, …). Se acota a ≥ 1 h para no encoger por debajo del
+        horizonte de calibración.
+        """
+        now = timezone.now()
+        scales = []
+        for i, pred in enumerate(predictions):
+            hours_ahead = None
+            ts = pred.get('prediction_date')
+            dt = None
+            if isinstance(ts, str):
+                try:
+                    dt = datetime.fromisoformat(ts)
+                except ValueError:
+                    dt = None
+            elif hasattr(ts, 'timestamp'):     # datetime / pandas.Timestamp
+                dt = ts
+            if dt is not None:
+                try:
+                    hours_ahead = (dt - now).total_seconds() / 3600.0
+                except (TypeError, ValueError):
+                    hours_ahead = None
+            if hours_ahead is None or hours_ahead <= 0:
+                hours_ahead = float(i + 1)     # fallback: paso horario
+            hours_ahead = max(hours_ahead, 1.0)
+            scales.append(math.sqrt(hours_ahead / reference_hours))
+        return scales
 
     # ── Meta-learner (Ridge stacking) ─────────────────────────────────────────
 

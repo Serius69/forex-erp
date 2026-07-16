@@ -94,11 +94,18 @@ class ConformalCalibrator:
         self._residuals = r
         return self
 
-    def interval(self, point: float, alpha: float = 0.05) -> tuple[float, float] | None:
+    def interval(self, point: float, alpha: float = 0.05, scale: float = 1.0) -> tuple[float, float] | None:
         """Intervalo ``[lo, hi]`` de cobertura ``1 − alpha`` alrededor del punto.
 
         Cada cola se corrige a nivel ``α/2``. Devuelve ``None`` si no hay
         residuos suficientes para garantizar el nivel pedido.
+
+        ``scale`` (≥ 0) multiplica el ancho de ambas colas: los residuos de
+        calibración provienen de un horizonte fijo (24 h en el ensemble), pero el
+        error de pronóstico crece con el horizonte. Escalar el cuantil base por
+        ``sqrt(h/24)`` (random-walk) da intervalos que se ensanchan con el paso
+        adelante en vez de aplicar el mismo ancho de 24 h a 168 h. ``scale=1.0``
+        (default) conserva el comportamiento original.
         """
         if self._residuals is None:
             raise RuntimeError("ConformalCalibrator no ajustado — llama a fit() primero")
@@ -108,7 +115,7 @@ class ConformalCalibrator:
         lo = conformal_quantile(-r, alpha / 2.0)
         if up is None or lo is None:
             return None
-        return float(point - lo), float(point + up)
+        return float(point - lo * scale), float(point + up * scale)
 
     def to_dict(self) -> dict[str, Any]:
         if self._residuals is None:
@@ -126,6 +133,7 @@ def calibrate_predictions(
     *,
     alpha: float = 0.05,
     min_samples: int = MIN_CALIBRATION_SAMPLES,
+    horizon_scale: Sequence[float] | None = None,
 ) -> list[dict]:
     """Reemplaza ``lower``/``upper``/``confidence`` de cada predicción del
     ensemble por el intervalo conformal calibrado con los residuos históricos.
@@ -134,6 +142,12 @@ def calibrate_predictions(
     predicciones sin tocar (el CI heurístico original se conserva) — nunca
     degrada el resultado por falta de datos. Marca la procedencia en
     ``external_factors['interval_method']``.
+
+    ``horizon_scale`` (opcional, un factor por predicción) ensancha el intervalo
+    con el horizonte: los residuos de calibración son de un solo horizonte (24 h),
+    así que sin escalar todos los pasos —1 h … 168 h— recibirían el mismo ancho y
+    los horizontes largos quedarían sub-cubiertos. Con ``None`` (default) el
+    comportamiento es el original (factor 1.0 en todos los pasos).
     """
     r = np.asarray(residuals, dtype=float).ravel()
     if r.size < min_samples:
@@ -141,8 +155,9 @@ def calibrate_predictions(
 
     cal = ConformalCalibrator().fit_residuals(r)
     out: list[dict] = []
-    for pred in predictions:
-        interval = cal.interval(float(pred["rate"]), alpha)
+    for i, pred in enumerate(predictions):
+        scale = 1.0 if horizon_scale is None else float(horizon_scale[i])
+        interval = cal.interval(float(pred["rate"]), alpha, scale=scale)
         if interval is None:
             out.append(pred)
             continue
@@ -152,6 +167,8 @@ def calibrate_predictions(
         factors = dict(updated.get("external_factors") or {})
         factors["interval_method"] = "split_conformal"
         factors["calibration_n"] = cal.n
+        if horizon_scale is not None:
+            factors["horizon_scale"] = round(scale, 4)
         updated["external_factors"] = factors
         out.append(updated)
     return out
