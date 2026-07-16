@@ -39,66 +39,80 @@ def generate_predictions():
 # ── Tarea 1: Reentrenamiento diario completo ──────────────────────────────────
 
 @shared_task(
+    name='predictions.train_pair_prediction_models',
+    bind=True,
+    max_retries=1,
+    # OJO acks_late=False A PROPÓSITO: esta tarea es PESADA (3 mercados × 3
+    # modelos, BiLSTM incluido). Con acks_late el hard time_limit mata el worker
+    # (SIGKILL, no atrapa SoftTimeLimitExceeded) y el mensaje se RE-ENTREGA →
+    # loop infinito de muerte (bug real 2026-07-16: una misma tarea llevaba 8h
+    # reciclándose cada 70 min). Ackear al recibir evita el poison-loop: si un
+    # par excede su límite muere solo, y el reentreno diario lo recupera mañana.
+    acks_late=False,
+    soft_time_limit=1500,   # 25 min por PAR (antes 60 min para los 6 → timeout)
+    time_limit=1800,        # 30 min hard
+)
+def train_pair_prediction_models(self, pair):
+    """
+    Reentrena UN par (las 3 series web/competencia/empresa × xgboost/arima/bilstm).
+    Sub-tarea de train_all_prediction_models — acotada para no exceder límites.
+    """
+    logger.info("TASK_START name=train_pair_prediction_models pair=%s", pair)
+    from predictions.ml_engine import ForexMLEngine
+    engine = ForexMLEngine()
+
+    # 1. Sincronizar datos ExchangeRate → TrainingData (las 3 series)
+    try:
+        update_training_data(pair)
+    except Exception as exc:
+        logger.warning("sync_data_failed pair=%s: %s", pair, exc)
+
+    results = {}
+    # 2. Entrenar las 3 series por separado; series sin datos degradan limpio.
+    for market in MARKET_SOURCE_MAP:  # 'web', 'competencia', 'empresa'
+        try:
+            extended = engine.train_all(
+                pair, include=['xgboost', 'arima', 'bilstm'], market=market)
+            results[market] = {'new_models': extended}
+        except SoftTimeLimitExceeded:
+            logger.error("TASK_TIMEOUT train_pair pair=%s market=%s", pair, market)
+            results[market] = {'new_models': {'error': 'timeout'}}
+            break  # se acabó el tiempo del par; corta sin reciclar el mensaje
+        except Exception as exc:
+            logger.warning("train_extended pair=%s market=%s: %s", pair, market, exc)
+            results[market] = {'new_models': {'error': str(exc)}}
+    # Prophet: cadencia SEMANAL (weekly_hyperparameter_tuning), no aquí.
+
+    ok = 'error' not in str(results).lower()
+    logger.info("TASK_DONE name=train_pair_prediction_models pair=%s ok=%s", pair, ok)
+    return {'status': 'ok' if ok else 'partial', 'pair': pair, 'results': results}
+
+
+@shared_task(
     name='predictions.train_all_prediction_models',
     bind=True,
-    max_retries=2,
-    acks_late=True,
-    soft_time_limit=3600,
-    time_limit=4200,
+    acks_late=False,
+    soft_time_limit=120,
+    time_limit=180,
 )
 def train_all_prediction_models(self):
     """
-    Diaria 02:00 — Reentrenar todos los modelos (Prophet, BiLSTM, XGBoost, ARIMA).
-    Incluye actualización de datos de entrenamiento como primer paso.
+    Diaria 02:00 — Orquesta el reentrenamiento haciendo FAN-OUT por par.
+
+    Antes entrenaba los 6 pares en un solo task (54 entrenamientos secuenciales)
+    que excedía el hard time_limit y, con acks_late, reciclaba el mensaje en un
+    loop de muerte. Ahora despacha una sub-tarea acotada por par: cada una cabe
+    holgada en su límite y un par lento no tumba al resto.
     """
-    logger.info("TASK_START name=train_all_prediction_models")
-
-    try:
-        from predictions.ml_engine import ForexMLEngine
-        engine  = ForexMLEngine()
-        results = {}
-
-        for pair in CURRENCY_PAIRS:
-            # 1. Sincronizar datos desde ExchangeRate → TrainingData (las 3 series)
-            try:
-                update_training_data(pair)
-            except Exception as exc:
-                logger.warning("sync_data_failed pair=%s: %s", pair, exc)
-
-            results[pair] = {}
-            # 2. Entrenar las 3 series (web / competencia / empresa) por separado.
-            #    Series sin datos suficientes (p.ej. web para divisas ≠ USD) degradan
-            #    limpio: train_all lanza y se captura, sin abortar el resto.
-            for market in MARKET_SOURCE_MAP:  # 'web', 'competencia', 'empresa'
-                try:
-                    extended = engine.train_all(
-                        pair, include=['xgboost', 'arima', 'bilstm'], market=market)
-                    results[pair][market] = {'new_models': extended}
-                except Exception as exc:
-                    logger.warning("train_extended pair=%s market=%s: %s", pair, market, exc)
-                    results[pair][market] = {'new_models': {'error': str(exc)}}
-
-            # 3. Prophet: pasó a cadencia SEMANAL (weekly_hyperparameter_tuning).
-            #    Con MAPE ~20% el ensemble lo auto-subpondera a ~0.01; entrenarlo
-            #    a diario quemaba CPU sin mover el pronóstico. El artefacto
-            #    existente sigue sirviéndose entre reentrenos.
-
-        success = sum(1 for v in results.values() if 'error' not in str(v).lower())
-        logger.info("TASK_SUCCESS name=train_all_prediction_models success=%d/%d", success, len(CURRENCY_PAIRS))
-        return {'status': 'ok', 'results': results, 'success': success}
-
-    except SoftTimeLimitExceeded:
-        logger.error("TASK_TIMEOUT name=train_all_prediction_models")
-        raise
-
-    except Exception as exc:
-        logger.error("TASK_FAILURE name=train_all_prediction_models error=%s", exc)
-        try:
-            raise self.retry(exc=exc, countdown=300)
-        except self.MaxRetriesExceededError:
-            from core.tasks import _emit_system_alert
-            _emit_system_alert('ml', f'Reentrenamiento fallido: {exc}', severity='HIGH')
-            return {'status': 'error', 'error': str(exc)}
+    logger.info("TASK_START name=train_all_prediction_models (fan-out %d pares)",
+                len(CURRENCY_PAIRS))
+    dispatched = []
+    for pair in CURRENCY_PAIRS:
+        r = train_pair_prediction_models.delay(pair)
+        dispatched.append({'pair': pair, 'task_id': r.id})
+    logger.info("TASK_SUCCESS name=train_all_prediction_models dispatched=%d",
+                len(dispatched))
+    return {'status': 'dispatched', 'pairs': dispatched}
 
 
 # ── Tarea 2: Recalcular pesos del ensemble cada 4 horas ───────────────────────
