@@ -10,7 +10,7 @@ from django.utils.dateparse import parse_date
 from django.http import HttpResponse
 from .models import Transaction, Customer, TransactionDocument
 from .serializers import (
-    TransactionSerializer, CustomerSerializer,
+    TransactionSerializer, TransactionListSerializer, CustomerSerializer,
     TransactionCreateSerializer, TransactionDocumentSerializer
 )
 from django.db import transaction as db_transaction
@@ -79,9 +79,14 @@ class TransactionViewSet(viewsets.ModelViewSet):
         if transaction_type:
             queryset = queryset.filter(transaction_type=transaction_type)
         
+        # select_related profundo: los serializers anidados de cashier/supervisor
+        # (UserSerializer) recorren .branch → .company (company_name) y .company;
+        # sin traerlos aquí, cada fila disparaba ~3 queries EXTRA (N+1).
         return queryset.select_related(
             'customer', 'currency_from', 'currency_to',
-            'cashier', 'branch', 'supervisor',
+            'branch', 'branch__company',
+            'cashier', 'cashier__branch', 'cashier__branch__company', 'cashier__company',
+            'supervisor', 'supervisor__branch', 'supervisor__branch__company', 'supervisor__company',
         ).prefetch_related('documents').order_by('-created_at')
     
     def list(self, request, *args, **kwargs):
@@ -90,15 +95,20 @@ class TransactionViewSet(viewsets.ModelViewSet):
             return super().list(request, *args, **kwargs)
         except Exception as exc:
             import logging as _log
+            # Se registra el traceback completo para diagnóstico, pero NO se
+            # expone el detalle interno (str(exc)) al cliente en el 500.
             _log.getLogger('transactions').exception('TX_LIST_FAILED err=%s', exc)
             return Response(
-                {'error': 'Error al obtener transacciones', 'detail': str(exc)},
+                {'error': 'Error al obtener transacciones'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     def get_serializer_class(self):
         if self.action == 'create':
             return TransactionCreateSerializer
+        if self.action == 'list':
+            # Serializer ligero sin profit_margin (evita N+1 al paginar).
+            return TransactionListSerializer
         return TransactionSerializer
 
     @rate_limit(requests=60, window=60, scope='user')

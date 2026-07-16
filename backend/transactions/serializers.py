@@ -51,6 +51,29 @@ class CustomerSerializer(serializers.ModelSerializer):
             return float(obj.tx_volume) if obj.tx_volume else 0.0
         return float(obj.total_volume) if obj.total_volume else 0.0
 
+
+class CustomerNestedSerializer(serializers.ModelSerializer):
+    """
+    Cliente EMBEBIDO dentro de una transacción — versión ligera SIN los campos
+    calculados `transaction_count` / `total_volume`.
+
+    En contexto anidado el Customer llega vía `select_related('customer')`, sin
+    las anotaciones `tx_count`/`tx_volume` del CustomerViewSet, de modo que esos
+    SerializerMethodField caían a las @property (`.count()` + `.aggregate(Sum)`)
+    → 2 queries EXTRA por transacción en cada página (N+1). Para esos agregados
+    del cliente usar el endpoint /api/customers/ (que sí los anota).
+    """
+    class Meta:
+        model  = Customer
+        fields = [
+            'id', 'document_type', 'document_number', 'full_name',
+            'phone', 'email', 'address', 'birth_date', 'nationality',
+            'is_pep', 'is_frequent', 'notes',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
 class TransactionDocumentSerializer(serializers.ModelSerializer):
     uploaded_by = serializers.StringRelatedField()
 
@@ -61,7 +84,7 @@ class TransactionDocumentSerializer(serializers.ModelSerializer):
         read_only_fields = ['uploaded_at']
 
 class TransactionSerializer(serializers.ModelSerializer):
-    customer      = CustomerSerializer(read_only=True)
+    customer      = CustomerNestedSerializer(read_only=True)
     currency_from = CurrencySerializer(read_only=True)
     currency_to   = CurrencySerializer(read_only=True)
     cashier       = UserSerializer(read_only=True)
@@ -139,6 +162,22 @@ class TransactionSerializer(serializers.ModelSerializer):
 
     def get_reportable(self, obj) -> bool:
         return obj.visible_asfi
+
+
+class TransactionListSerializer(TransactionSerializer):
+    """
+    Variante para LISTADOS: excluye `profit_margin`.
+
+    La property `Transaction.profit_margin` hace un fallback que consulta
+    `ExchangeRate` cuando `parallel_rate_at_creation` es null → 1 query por fila
+    al serializar una página (N+1). El detalle (retrieve) sí la expone; ningún
+    frontend consume este campo desde el listado.
+    """
+    profit_margin = None  # remueve el field declarado heredado
+
+    class Meta(TransactionSerializer.Meta):
+        fields = [f for f in TransactionSerializer.Meta.fields if f != 'profit_margin']
+
 
 class TransactionCreateSerializer(serializers.Serializer):
     transaction_type     = serializers.ChoiceField(choices=['BUY', 'SELL'])

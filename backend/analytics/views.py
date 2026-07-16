@@ -23,6 +23,12 @@ log = logging.getLogger('analytics.decision')
 # ── Decision cache TTL (seconds) — override via DECISION_CACHE_TTL in settings
 _DECISION_TTL: int = getattr(settings, 'DECISION_CACHE_TTL', 45)
 
+# ── KPI cache TTL (seconds) — overview / pnl recalculan Sum/Count/Avg cada request
+_KPI_TTL: int = getattr(settings, 'KPI_CACHE_TTL', 300)
+
+# ── Anomalías: on-demand y cara (spreads + tasas + inventario + tx); caché corta
+_ANOMALY_TTL: int = getattr(settings, 'ANOMALY_CACHE_TTL', 60)
+
 
 def _branch(request):
     """Devuelve la sucursal del usuario, o None si es ADMIN sin filtro."""
@@ -61,6 +67,13 @@ def analytics_pnl(request):
     date_from, date_to = parse_date_range(request)
     currency    = request.query_params.get('currency')
 
+    # ── Cache (5 min) — clave por sucursal + rango + divisa ───────────────────
+    branch_key = branch.id if branch else 'global'
+    cache_key  = f'analytics:pnl:{branch_key}:{date_from}:{date_to}:{currency or "all"}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
     # branch=None (ADMIN sin sucursal / all_branches) → agregado de todas
     resumen = PnLService.resumen_periodo(branch, date_from, date_to)
     series  = PnLService.series_pnl(branch, date_from, date_to)
@@ -98,12 +111,14 @@ def analytics_pnl(request):
             if row.get(k) is not None:
                 row[k] = str(row[k])
 
-    return Response({
+    payload = {
         'resumen':     resumen,
         'series':      series,
         'top_divisas': top_divisas,
         'periodo':     {'desde': str(date_from), 'hasta': str(date_to)},
-    })
+    }
+    cache.set(cache_key, payload, timeout=_KPI_TTL)
+    return Response(payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -760,6 +775,13 @@ def analytics_overview(request):
     branch = _branch(request)
     today  = date.today()
 
+    # ── Cache (5 min) — clave por sucursal + fecha (KPIs today/week/month) ─────
+    branch_key = branch.id if branch else 'global'
+    cache_key  = f'analytics:overview:{branch_key}:{today.isoformat()}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
     def _pnl_kpi(d_from, d_to):
         qs = TransactionProfitLedger.objects.filter(
             transaction_type='SELL',
@@ -838,7 +860,7 @@ def analytics_overview(request):
         unacknowledged=Count('id', filter=DQ(is_acknowledged=False)),
     )
 
-    return Response({
+    payload = {
         'kpis':             kpis,
         'exposure':         exposure,
         'top_currencies':   top_currencies,
@@ -846,7 +868,9 @@ def analytics_overview(request):
         'alerts_summary':   alerts_summary,
         'calculado_en':     timezone.now().isoformat(),
         'branch':           branch.code if branch else 'global',
-    })
+    }
+    cache.set(cache_key, payload, timeout=_KPI_TTL)
+    return Response(payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1022,6 +1046,14 @@ def analytics_anomalies(request):
     source_filter   = request.query_params.get('source', '').upper()
     limit           = min(int(request.query_params.get('limit', 20)), 100)
 
+    # ── Cache corta (60s) — el cómputo (spreads+tasas+inventario+tx) es caro ──
+    branch_key = branch.id if branch else 'global'
+    cache_key  = (f'analytics:anomalies:{branch_key}:'
+                  f'{severity_filter or "all"}:{source_filter or "all"}:{limit}')
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
+
     anomalies = []
     now = timezone.now()
 
@@ -1166,7 +1198,7 @@ def analytics_anomalies(request):
     from collections import Counter
     sev_counts = Counter(a['severity'] for a in anomalies)
 
-    return Response({
+    payload = {
         'anomalies': anomalies,
         'summary': {
             'total':    len(anomalies),
@@ -1177,7 +1209,9 @@ def analytics_anomalies(request):
         },
         'branch':       branch.code if branch else 'global',
         'last_checked': now.isoformat(),
-    })
+    }
+    cache.set(cache_key, payload, timeout=_ANOMALY_TTL)
+    return Response(payload)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
