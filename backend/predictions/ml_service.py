@@ -472,23 +472,38 @@ class ForexPredictionService:
        
        return predictions
    
-    def _predict_naive_fallback(self, horizon: int) -> list[dict]:
+    def _predict_naive_fallback(self, horizon: int,
+                                currency_pair: str = 'USD/BOB',
+                                market: str = 'web') -> list[dict]:
        """
        Predicción de último recurso basada en la última tasa paralela conocida.
        Retorna el mismo formato que los modelos ML reales.
        Confidence interval: ±0.5% de la tasa actual.
+
+       A4 — se parametriza por `currency_pair`/`market`: antes consultaba SIEMPRE
+       USD/BOB (`currency_from__code='USD'`), así que para EUR/BRL/ARS/… inyectaba
+       la tasa del dólar como si fuera del par pedido. Los market_type se derivan
+       de la serie con el mismo mapa que usa el resto del pipeline.
        """
        from rates.models import ExchangeRate
        from decimal import Decimal
+       from .tasks import MARKET_SOURCE_MAP
+
+       try:
+           currency_from, currency_to = currency_pair.split('/')
+       except ValueError:
+           currency_from, currency_to = 'USD', 'BOB'
+       market_types = MARKET_SOURCE_MAP.get(
+           market, MARKET_SOURCE_MAP.get('web', ('paralelo_digital',)))
 
        rate = None
        try:
            latest = (
                ExchangeRate.objects
                .filter(
-                   currency_from__code='USD',
-                   currency_to__code='BOB',
-                   market_type__in=('paralelo_digital', 'parallel', 'digital'),
+                   currency_from__code=currency_from,
+                   currency_to__code=currency_to,
+                   market_type__in=market_types,
                )
                .order_by('-valid_from')
                .first()
@@ -529,7 +544,7 @@ class ForexPredictionService:
                'Prophet model_file faltante para %s — usando fallback naive',
                model_record.currency_pair,
            )
-           return self._predict_naive_fallback(horizon)
+           return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
 
        try:
            model_path = model_record.model_file.path
@@ -538,20 +553,37 @@ class ForexPredictionService:
                    'Prophet model file no encontrado en %s — usando fallback naive',
                    model_path,
                )
-               return self._predict_naive_fallback(horizon)
+               return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
 
            model = joblib.load(model_path)
 
            # Crear dataframe futuro
            future = model.make_future_dataframe(periods=horizon, freq='H')
 
-           # Agregar regresores (usar últimos valores conocidos)
-           if 'international_rate' in model.extra_regressors:
-               future['international_rate'] = (
-                   future['international_rate']
-                   .ffill()
-                   .fillna(9.50)
-               )
+           # A4 — Regresores: make_future_dataframe SOLO crea la columna 'ds'; el
+           # código previo hacía future['international_rate'].ffill() sobre una
+           # columna INEXISTENTE → KeyError → Prophet SIEMPRE caía al fallback
+           # naive. Además 'oil_price' nunca se rellenaba. Se construye cada
+           # regresor que el modelo espera con el último valor conocido de la
+           # serie (relleno causal/constante — no podemos pronosticar el exógeno).
+           regressors = list(getattr(model, 'extra_regressors', {}) or {})
+           if regressors:
+               from .models import TrainingData
+               mkt = getattr(model_record, 'market', 'web') or 'web'
+               latest = (
+                   TrainingData.objects
+                   .filter(currency_pair=model_record.currency_pair, market=mkt)
+                   .order_by('-date')
+                   .values('international_rate', 'oil_price')
+                   .first()
+               ) or {}
+               last_vals = {
+                   'international_rate': latest.get('international_rate'),
+                   'oil_price':          latest.get('oil_price'),
+               }
+               for reg in regressors:
+                   val = last_vals.get(reg)
+                   future[reg] = float(val) if val is not None else 0.0
 
            # Predecir
            forecast = model.predict(future)
@@ -575,7 +607,7 @@ class ForexPredictionService:
                'Prophet load error para %s: %s — usando fallback naive',
                model_record.currency_pair, exc,
            )
-           return self._predict_naive_fallback(horizon)
+           return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
    
     def _predict_lstm(self, model_record, horizon):
        """Predicciones con LSTM"""
@@ -585,7 +617,7 @@ class ForexPredictionService:
                'LSTM model_file faltante para %s — usando fallback naive',
                model_record.currency_pair,
            )
-           return self._predict_naive_fallback(horizon)
+           return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
 
        model_path = model_record.model_file.path
        if not os.path.exists(model_path):
@@ -593,25 +625,25 @@ class ForexPredictionService:
                'LSTM model file no encontrado en %s — usando fallback naive',
                model_path,
            )
-           return self._predict_naive_fallback(horizon)
+           return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
 
        try:
            model = tf.keras.models.load_model(model_path)
        except Exception as exc:
            logger.error('LSTM load error para %s: %s — usando fallback naive',
                         model_record.currency_pair, exc)
-           return self._predict_naive_fallback(horizon)
+           return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
 
        scaler_path = model_path.replace('lstm_', 'scaler_lstm_').replace('.h5', '.pkl')
        if not os.path.exists(scaler_path):
            logger.warning('LSTM scaler no encontrado en %s — usando fallback naive', scaler_path)
-           return self._predict_naive_fallback(horizon)
+           return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
 
        try:
            scaler = joblib.load(scaler_path)
        except Exception as exc:
            logger.error('LSTM scaler load error: %s — usando fallback naive', exc)
-           return self._predict_naive_fallback(horizon)
+           return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
 
        try:
            # Obtener datos recientes
@@ -659,7 +691,7 @@ class ForexPredictionService:
        except Exception as exc:
            logger.error('LSTM predict error para %s: %s — usando fallback naive',
                         model_record.currency_pair, exc)
-           return self._predict_naive_fallback(horizon)
+           return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
    
     def _predict_ensemble(self, model_record, horizon):
        """Predicciones con modelo ensemble"""

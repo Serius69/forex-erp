@@ -379,7 +379,7 @@ const Capital: React.FC = () => {
   const [dateFrom]                      = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]);
   const [dateTo]                        = useState(new Date().toISOString().split('T')[0]);
 
-  const { capital, gastos, resumenGastos, ingresos, resumenIngresos, snapshots, loading, canSnapshot, refresh: load } =
+  const { capital, gastos, resumenGastos, ingresos, resumenIngresos, snapshots, loading, error, canSnapshot, refresh: load } =
     useDashboard(dateFrom, dateTo);
 
   const pieData = resumenGastos?.por_categoria.map(c => ({
@@ -413,6 +413,17 @@ const Capital: React.FC = () => {
           </Tooltip>
         </Box>
       </Box>
+
+      {/* Error persistente (distingue "error" de "sin datos") */}
+      {error && !loading && (
+        <Alert
+          severity="error"
+          sx={{ mb: 3 }}
+          action={<Button color="inherit" size="small" onClick={load}>Reintentar</Button>}
+        >
+          {error}
+        </Alert>
+      )}
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 3 }}
         variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile>

@@ -19,7 +19,7 @@ import { alpha } from '@mui/material/styles';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { TOKENS } from '../../styles/theme';
-import { formatCurrency, formatNumber, formatCompactNumber } from '../../utils/formatters';
+import { formatCurrency, formatNumber, formatCompactNumber, formatRate, formatPercent } from '../../utils/formatters';
 import { useOperativeDashboard } from '../../hooks/useOperativeDashboard';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -124,10 +124,10 @@ const RatesPanel = memo(({ rates, loading }: { rates: Record<string, any>; loadi
                     </Box>
                   </Box>
                   <Typography variant="body2" fontWeight={700} color={TOKENS.green} textAlign="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {rate.buy?.toFixed(4)}
+                    {formatRate(rate.buy)}
                   </Typography>
                   <Typography variant="body2" fontWeight={700} color={TOKENS.red} textAlign="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {rate.sell?.toFixed(4)}
+                    {formatRate(rate.sell)}
                   </Typography>
                   <Box sx={{ textAlign: 'right' }}>
                     <Typography variant="caption" sx={{
@@ -135,7 +135,7 @@ const RatesPanel = memo(({ rates, loading }: { rates: Record<string, any>; loadi
                       fontWeight: isHighSpread ? 700 : 400,
                       fontVariantNumeric: 'tabular-nums',
                     }}>
-                      {spreadPct.toFixed(2)}%
+                      {formatPercent(spreadPct)}
                     </Typography>
                     {isHighSpread && <Typography sx={{ fontSize: 10, lineHeight: 1 }}>⚠</Typography>}
                   </Box>

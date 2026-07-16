@@ -1178,3 +1178,31 @@ def analytics_anomalies(request):
         'branch':       branch.code if branch else 'global',
         'last_checked': now.isoformat(),
     })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Analista — chat de inteligencia de negocio (datos reales)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def analytics_assistant(request):
+    """
+    POST /api/analytics/assistant/  {"message": "¿cómo va el negocio hoy?"}
+
+    Responde en lenguaje natural sobre negocio, ganancias, tasas, pronóstico,
+    macro e inventario, todo anclado en los datos reales del sistema.
+    """
+    message = (request.data.get('message') or '').strip()
+    if not message:
+        return Response({'error': 'message requerido'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(message) > 500:
+        return Response({'error': 'message demasiado largo (máx 500)'},
+                        status=status.HTTP_400_BAD_REQUEST)
+    try:
+        from analytics.assistant import answer
+        return Response(answer(message))
+    except Exception as exc:
+        log.error('ASSISTANT_FAIL msg=%r err=%s', message[:80], exc, exc_info=True)
+        return Response({'error': 'analista no disponible', 'detail': str(exc)},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)

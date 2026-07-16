@@ -51,6 +51,42 @@ MAX_DIVERGENCE_PCT: float = 5.0
 # Confianza mínima para usar en transacciones (Phase 9)
 MIN_CONFIDENCE_FOR_TX: float = 0.70
 
+# Frescura máxima de la tasa primaria para poder transaccionar (2026-07-16).
+# Antes SOLO se bloqueaba INFERENCE/baja confianza: una tasa REAL con confianza
+# plena pero de hace días (si todos los fetchers murieron) se seguía sirviendo
+# como "vigente". Los mercados de tiempo real (paralelo digital/scrapers) se
+# actualizan cada pocos minutos; los diarios (oficial BCB, físico) una vez al
+# día → umbrales distintos para no bloquear falsamente una tasa diaria legítima.
+# El objetivo es cortar "fetchers caídos por días", no la frescura fina.
+STALE_RATE_MAX_AGE_HOURS: dict[str, float] = {
+    'paralelo_digital':             24,
+    'digital':                      24,
+    'parallel':                     24,
+    'official':                     48,
+    'paralelo_fisico_competencia':  48,
+    'paralelo_fisico_empresa':      48,
+}
+STALE_RATE_DEFAULT_HOURS: float = 36
+
+
+def _rate_age_hours(rate) -> float | None:
+    """Edad de la tasa en horas (por fetched_at, si no valid_from). None si no hay fecha."""
+    from django.utils import timezone as _tz
+    ts = getattr(rate, 'fetched_at', None) or getattr(rate, 'valid_from', None)
+    if not ts:
+        return None
+    return (_tz.now() - ts).total_seconds() / 3600.0
+
+
+def _rate_is_stale(rate) -> bool:
+    """True si la tasa supera el umbral de frescura de su mercado."""
+    age = _rate_age_hours(rate)
+    if age is None:
+        return False  # sin timestamp no podemos afirmar que esté rancia
+    limit = STALE_RATE_MAX_AGE_HOURS.get(
+        getattr(rate, 'market_type', None), STALE_RATE_DEFAULT_HOURS)
+    return age > limit
+
 # TTL de cache en segundos
 CACHE_TTL_PRIMARY     = 60        # tasa primaria global: 1 min
 CACHE_TTL_SUMMARY     = 120       # resumen multi-fuente: 2 min
@@ -266,6 +302,19 @@ class ExchangeRateService:
                 f'{float(rate.confidence):.0%} — mínimo requerido {MIN_CONFIDENCE_FOR_TX:.0%}.'
             )
 
+        if _rate_is_stale(rate):
+            age_h = _rate_age_hours(rate) or 0
+            log.warning(
+                'STALE_PRIMARY_RATE %s/%s market=%s age=%.1fh — bloqueada para tx',
+                currency_from_code, currency_to_code, rate.market_type, age_h,
+            )
+            raise ValueError(
+                f'COMPLIANCE: La tasa de {currency_from_code} está DESACTUALIZADA '
+                f'(última actualización hace {age_h:.0f}h). Es probable que los '
+                f'extractores de tasas estén caídos. Actualice la tasa manualmente '
+                f'o espere la próxima actualización automática antes de operar.'
+            )
+
         amount = quantize_rate(amount)
 
         if transaction_type == 'BUY':
@@ -376,6 +425,7 @@ class ExchangeRateService:
             is_primary_safe    = (
                 primary_rate.source_method != 'INFERENCE'
                 and float(primary_rate.confidence) >= MIN_CONFIDENCE_FOR_TX
+                and not _rate_is_stale(primary_rate)
             ),
             sources            = source_rates,
             **stats,

@@ -8,7 +8,6 @@
  *   3. Rate-change debounced refresh (only resumen-capital, composicion is unaffected by rates)
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSnackbar } from 'notistack';
 import { api } from '../services/api';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import { useBranchScope } from '../contexts/BranchScopeContext';
@@ -62,6 +61,7 @@ interface UseCapitalReturn {
   capital: CapitalResumen | null;
   composicion: ComposicionHoy | null;
   loading: boolean;
+  error: string | null;
   connected: boolean;
   refresh: () => Promise<void>;
 }
@@ -70,14 +70,15 @@ export function useCapital(): UseCapitalReturn {
   const [capital, setCapital]         = useState<CapitalResumen | null>(null);
   const [composicion, setComposicion] = useState<ComposicionHoy | null>(null);
   const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
   const debounceRef                   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { rates, connected, lastCapitalUpdate, lastSheetsSync } = useWebSocket();
-  const { enqueueSnackbar }           = useSnackbar();
   const { branchParams }              = useBranchScope();
 
   // Single fetch function — ONE request per data source per invocation.
   const refresh = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const [capRes, compRes] = await Promise.all([
         api.get('/capital/resumen-capital/', { params: branchParams }),
@@ -86,13 +87,14 @@ export function useCapital(): UseCapitalReturn {
       setCapital(capRes.data);
       setComposicion(compRes.data);
     } catch (e: any) {
+      // 404 = aún sin composición registrada (no es un error de carga)
       if (e.response?.status !== 404) {
-        enqueueSnackbar('Error al cargar capital', { variant: 'error' });
+        setError('No se pudo cargar el capital. Verifica tu conexión e intenta de nuevo.');
       }
     } finally {
       setLoading(false);
     }
-  }, [enqueueSnackbar, branchParams]);
+  }, [branchParams]);
 
   // Initial load.
   useEffect(() => { refresh(); }, [refresh]);
@@ -122,5 +124,5 @@ export function useCapital(): UseCapitalReturn {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [rates, connected, branchParams]);
 
-  return { capital, composicion, loading, connected, refresh };
+  return { capital, composicion, loading, error, connected, refresh };
 }

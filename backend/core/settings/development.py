@@ -21,15 +21,29 @@ CHANNEL_LAYERS = {
 # distribuidos (loop continuo, idempotencia) no cruzaban procesos.
 # DB 2: el broker Celery usa la 0 y Channels la 3.
 import os as _os
+import sys as _sys
 
-CACHES = {
-    'default': {
-        'BACKEND':  'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': _os.environ.get('REDIS_CACHE_URL',
-                                    'redis://kapitalya_redis:6379/2'),
-        'TIMEOUT':  300,
+# Bajo `manage.py test` NO usar el Redis compartido: los tests que tocan la
+# caché (o hacen cache.clear()) vaciarían la caché de forecasts VIVA de
+# producción (misma db 2). En modo test → LocMem aislado por proceso.
+_RUNNING_TESTS = ('test' in _sys.argv) or ('pytest' in _sys.modules)
+
+if _RUNNING_TESTS:
+    CACHES = {
+        'default': {
+            'BACKEND':  'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'kapitalya-test-cache',
+        }
     }
-}
+else:
+    CACHES = {
+        'default': {
+            'BACKEND':  'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': _os.environ.get('REDIS_CACHE_URL',
+                                        'redis://kapitalya_redis:6379/2'),
+            'TIMEOUT':  300,
+        }
+    }
 
 STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 

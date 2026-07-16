@@ -193,7 +193,7 @@ class PredictionViewSet(viewsets.ModelViewSet):
                         'forecast prewarm enqueue failed for %s: %s', currency_pair, exc
                     )
             service = ForexPredictionService()
-            naive = service._predict_naive_fallback(24)
+            naive = service._predict_naive_fallback(24, currency_pair)
             return Response({
                 'currency_pair': currency_pair,
                 'model_status':  'FALLBACK',
@@ -429,7 +429,15 @@ class ForecastView(APIView):
             )
 
         from predictions.market_keys import VALID_MARKETS
-        market = request.query_params.get('market', 'web').lower()
+        pair_norm = currency_pair.replace('-', '/')
+        # Mercado por defecto POR DIVISA: para USD la serie profunda y operativa
+        # es 'web' (paralelo digital / dólar blue); para las demás divisas el
+        # mercado real donde opera la casa es 'competencia' (físico, ~1.300 días).
+        # La serie web de esas divisas es delgada/derivada del internacional y
+        # daba pronósticos bajos con modelos huérfanos. El usuario puede forzar
+        # otro mercado con ?market=.
+        default_market = 'web' if pair_norm == 'USD/BOB' else 'competencia'
+        market = request.query_params.get('market', default_market).lower()
         if market not in VALID_MARKETS:
             return Response(
                 {'error': f'market debe ser uno de: {", ".join(VALID_MARKETS)}'},
@@ -446,17 +454,14 @@ class ForecastView(APIView):
         # y se sirve el fallback naive de inmediato. La clave de cache es identica a la
         # de ForexMLEngine.predict (ml_engine.py). refresh=true (use_cache False) respeta
         # la regeneracion sincrona explicita (opt-in).
-        pair_norm = currency_pair.replace('-', '/')
 
         # ── Cadena de mercados a intentar ────────────────────────────────────
-        # La serie 'web' (paralelo digital) solo tiene historia profunda para
-        # USD; para el resto de divisas la historia real vive en 'competencia'
-        # (~1.300 días) y 'empresa'. Antes la vista solo probaba el mercado
-        # pedido → todos los pares ≠USD servían SIEMPRE el fallback plano
-        # ('inference'). Ahora se sirve el primer mercado con forecast real y
-        # se anota cuál se usó (market / market_fallback).
-        market_chain = [market] + [m for m in ('web', 'competencia', 'empresa')
-                                   if m != market]
+        # Se sirve el primer mercado con forecast real y se anota cuál se usó
+        # (market / market_fallback). El respaldo prioriza competencia (físico
+        # real) sobre web para las divisas ≠USD; para USD, web primero.
+        _rest = (['web', 'competencia', 'empresa'] if pair_norm == 'USD/BOB'
+                 else ['competencia', 'empresa', 'web'])
+        market_chain = [market] + [m for m in _rest if m != market]
 
         from django.core.cache import cache as _cache
 

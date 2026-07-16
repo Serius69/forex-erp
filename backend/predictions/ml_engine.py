@@ -371,7 +371,16 @@ class ForexMLEngine:
         """Recalcula y persiste pesos del ensemble (llamado cada 4h)."""
         weights = self.ensemble.compute_weights(currency_pair, market=market)
         self.ensemble.save_weight_snapshot(currency_pair, weights, market=market)
-        self._invalidate_cache(currency_pair, market)
+        # RE-CACHEAR con los pesos nuevos, no solo invalidar: dejar la caché
+        # vacía hacía que el endpoint sirviera el fallback 'inference' durante
+        # hasta 1h (hasta el próximo cache_forecast_hourly) cada 4h. Si el
+        # re-warm falla, caer al invalidate simple.
+        try:
+            self.cache_all_horizons(currency_pair, market=market)
+        except Exception as exc:
+            logger.warning("weights_refresh_recache_failed pair=%s market=%s: %s",
+                           currency_pair, market, exc)
+            self._invalidate_cache(currency_pair, market)
         logger.info("ensemble.weights_refreshed pair=%s market=%s", currency_pair, market)
         return weights
 

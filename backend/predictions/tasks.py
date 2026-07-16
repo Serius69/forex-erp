@@ -177,8 +177,20 @@ def cache_forecast_hourly(self):
 
 
 def _persist_ensemble_predictions(engine, pair: str, market: str = 'web'):
-    """Guarda las predicciones de las próximas 24h en la BD (para auditoría)."""
+    """Guarda las predicciones de las próximas 24h en la BD (para auditoría).
+
+    A2: además del ENSEMBLE, persiste UNA fila por cada modelo base
+    (XGBOOST/ARIMA/BILSTM/PROPHET) con su ``model_type`` real, tomando el rate
+    individual desde ``components``. Antes solo se guardaba el ENSEMBLE, así que
+    ``evaluate_predictions`` nunca rellenaba ``actual_rate`` de los modelos base
+    → ``EnsembleForecaster.compute_weights`` caía siempre al ``_fallback_weight``
+    (pesos "dinámicos" inertes) y ``train_meta_learner`` no encontraba filas por
+    ``model_type``. Las tasas buy/sell y los CIs de las filas base son derivados
+    (rows de auditoría); lo que importa aguas abajo es ``predicted_rate`` vs
+    ``actual_rate``.
+    """
     try:
+        from decimal import Decimal
         from predictions.models import PredictionModel, Prediction
         from rates.models import RateConfiguration
 
@@ -196,13 +208,21 @@ def _persist_ensemble_predictions(engine, pair: str, market: str = 'web'):
             currency_to__code=pair.split('/')[1],
             is_active=True,
         ).first()
+        margin = Decimal('0.3')
+        if rate_config:
+            margin = rate_config.buy_margin_morning  # simplificado
+
+        # Modelos base activos de ESTA serie, indexados por model_type.
+        base_pms = {
+            m.model_type: m
+            for m in PredictionModel.objects.filter(
+                model_type__in=['XGBOOST', 'ARIMA', 'BILSTM', 'PROPHET'],
+                currency_pair=pair, market=market, is_active=True,
+            )
+        }
 
         for p in preds:
-            from decimal import Decimal
             rate = Decimal(str(p['rate']))
-            margin = Decimal('0.3')
-            if rate_config:
-                margin = rate_config.buy_margin_morning  # simplificado
             buy  = rate * (Decimal('1') - margin / Decimal('100'))
             sell = rate * (Decimal('1') + margin / Decimal('100'))
 
@@ -218,6 +238,25 @@ def _persist_ensemble_predictions(engine, pair: str, market: str = 'web'):
                 confidence_score=0.95,
                 external_factors=p.get('components', {}),
             ))
+
+            # Una fila por modelo base con su rate individual (de components).
+            for mt, base_rate in (p.get('components') or {}).items():
+                base_pm = base_pms.get(mt)
+                if base_pm is None or base_rate is None:
+                    continue
+                brate = Decimal(str(base_rate))
+                records.append(Prediction(
+                    model=base_pm,
+                    currency_pair=pair,
+                    prediction_date=p['datetime'],
+                    predicted_rate=brate,
+                    predicted_buy_rate=brate * (Decimal('1') - margin / Decimal('100')),
+                    predicted_sell_rate=brate * (Decimal('1') + margin / Decimal('100')),
+                    confidence_lower=brate * Decimal('0.995'),
+                    confidence_upper=brate * Decimal('1.005'),
+                    confidence_score=0.90,
+                    external_factors={'model': mt, 'persisted_as_base': True},
+                ))
 
         Prediction.objects.bulk_create(records, batch_size=500, ignore_conflicts=True)
     except Exception as exc:
@@ -263,9 +302,17 @@ def weekly_backtest_report(self):
             # predicciones con actual_rate. Antes NUNCA se entrenaba (código
             # muerto) y predict_with_meta caía siempre al promedio ponderado.
             try:
+                import os
+                from django.conf import settings
                 from predictions.ensemble_forecaster import EnsembleForecaster
                 from predictions.market_keys import VALID_MARKETS
-                ens = EnsembleForecaster()
+                # A1: EnsembleForecaster.__init__ EXIGE models_path posicional; sin
+                # él lanzaba TypeError (atrapado por el except) cada semana → el
+                # .pkl del Ridge nunca se creaba. Se usa la MISMA ruta que
+                # ml_engine/ml_service (MEDIA_ROOT/ml_models) para hallar/guardar
+                # los artefactos meta_ridge_*.pkl junto al resto de modelos.
+                models_path = os.path.join(settings.MEDIA_ROOT, 'ml_models')
+                ens = EnsembleForecaster(models_path)
                 meta = {}
                 for market in VALID_MARKETS:
                     try:

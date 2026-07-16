@@ -10,6 +10,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { TOKENS } from '../../styles/theme';
 import { ratesApi, LiveRate } from '../../services/ratesApi';
+import { formatRate, formatPercent } from '../../utils/finance';
 import RateSourceBadge from './RateSourceBadge';
 import RateVariationChip from './RateVariationChip';
 
@@ -172,7 +173,7 @@ const RateCard: React.FC<RateCardProps> = ({
             </Typography>
             <Box display="flex" alignItems="baseline" gap={0.5}>
               <Typography variant="h4" fontWeight={900} sx={{ color: TOKENS.green, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
-                {rate.buy.toFixed(4)}
+                {formatRate(rate.buy)}
               </Typography>
               {effectivePrevBuy !== null && (
                 <RateVariationChip current={rate.buy} previous={effectivePrevBuy} compact />
@@ -191,7 +192,7 @@ const RateCard: React.FC<RateCardProps> = ({
                 <RateVariationChip current={rate.sell} previous={effectivePrevSell} compact />
               )}
               <Typography variant="h4" fontWeight={900} sx={{ color: TOKENS.red, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
-                {rate.sell.toFixed(4)}
+                {formatRate(rate.sell)}
               </Typography>
             </Box>
           </Box>
@@ -202,7 +203,7 @@ const RateCard: React.FC<RateCardProps> = ({
           <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
             Spread:{' '}
             <strong style={{ color: rate.spread_pct > 3 ? TOKENS.amber : 'inherit' }}>
-              {rate.spread_pct.toFixed(2)}%
+              {formatPercent(rate.spread_pct)}
             </strong>
             {' · '}
             Conf:{' '}

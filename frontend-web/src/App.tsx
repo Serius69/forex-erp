@@ -27,6 +27,7 @@ const Predictions  = lazy(() => import('./components/predictions/Predictions'));
 const Simulator    = lazy(() => import('./components/predictions/Simulator'));
 const MacroPanel   = lazy(() => import('./components/macro/MacroPanel'));
 const AdvisorChat  = lazy(() => import('./components/advisor/AdvisorChat'));
+const AnalistaChat = lazy(() => import('./components/analista/AnalistaChat'));
 const Reports      = lazy(() => import('./components/reports/Reports'));
 const Settings     = lazy(() => import('./components/settings/Settings'));
 const Customers    = lazy(() => import('./components/customers/Customers'));
@@ -147,6 +148,7 @@ function App() {
                         <Route path="simulator"   element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><Simulator /></RoleRoute>} />
                         <Route path="macro"       element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><MacroPanel /></RoleRoute>} />
                         <Route path="advisor"     element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><AdvisorChat /></RoleRoute>} />
+                        <Route path="analista"    element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><AnalistaChat /></RoleRoute>} />
                         <Route path="decisiones"       element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><DecisionesPage /></RoleRoute>} />
                         <Route path="ai-insights"      element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><AIInsights /></RoleRoute>} />
                         <Route path="branch-analytics" element={<RoleRoute roles={['ADMIN','SUPERVISOR']}><BranchAnalytics /></RoleRoute>} />

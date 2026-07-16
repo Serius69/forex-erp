@@ -61,15 +61,20 @@ class ARIMAForecaster:
             n_jobs=1,
         )
 
-        # Actualizar modelo con test set (online update)
-        model.update(test_s)
-
-        # Evaluar en test
+        # A5 — Evaluar en test ANTES del online-update. Antes se hacía
+        # model.update(test_s) y LUEGO model.predict(len(test_s)), con lo que se
+        # comparaba un forecast del período POSTERIOR al test contra test_s →
+        # MAPE sin sentido (normalmente optimista). Ahora se pronostica el test
+        # inmediatamente tras fit(train) — evaluación honesta out-of-sample.
         forecast_test = model.predict(n_periods=len(test_s))
         y_true = test_s.values
         y_pred = np.array(forecast_test)
 
         metrics = _compute_metrics(y_true, y_pred)
+
+        # Recién ahora incorporar el test al modelo servido (online update), para
+        # que las predicciones futuras arranquen desde el último dato conocido.
+        model.update(test_s)
         metrics['arima_order']          = str(model.order)
         metrics['arima_seasonal_order'] = str(model.seasonal_order)
         metrics['aic']                  = round(float(model.aic()), 2)

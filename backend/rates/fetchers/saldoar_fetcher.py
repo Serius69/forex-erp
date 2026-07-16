@@ -30,28 +30,39 @@ def _q(val) -> Decimal:
     return Decimal(str(val)).quantize(_Q4, rounding=ROUND_HALF_UP)
 
 
-def _get_usd_bob_parallel() -> Decimal:
-    """Get current USD/BOB parallel rate from DB."""
+def _get_usd_bob_parallel() -> tuple[Decimal, bool]:
+    """
+    USD/BOB paralelo desde BD para el cross-rate ARS/BOB.
+
+    Devuelve (valor, is_real). is_real=False cuando se cayó al constante
+    _PARALLEL_USD_FALLBACK (BD sin ninguna referencia), para que el llamador
+    DEGRADE la tasa ARS derivada en vez de emitir un hardcode como dato real.
+    Antes de rendirse intenta la última USD/BOB paralela conocida aunque ya
+    esté expirada (dentro de 7 días).
+    """
     try:
+        from datetime import timedelta
+        from django.utils import timezone
         from rates.models import Currency, ExchangeRate
         usd = Currency.objects.get(code='USD')
         bob = Currency.objects.get(code='BOB')
-        rate = (
-            ExchangeRate.objects
-            .filter(
-                currency_from=usd,
-                currency_to=bob,
-                valid_until__isnull=True,
-                market_type__in=('paralelo_digital', 'parallel'),
-            )
-            .order_by('-confidence', '-valid_from')
-            .first()
+        base_q = ExchangeRate.objects.filter(
+            currency_from=usd, currency_to=bob,
+            market_type__in=('paralelo_digital', 'parallel'),
         )
+        # 1) tasa activa vigente
+        rate = base_q.filter(valid_until__isnull=True).order_by(
+            '-confidence', '-valid_from').first()
+        # 2) última conocida (aunque expirada) dentro de 7 días
+        if not (rate and rate.buy_rate > 0):
+            since = timezone.now() - timedelta(days=7)
+            rate = base_q.filter(valid_from__gte=since).order_by(
+                '-valid_from').first()
         if rate and rate.buy_rate > 0:
-            return _q((rate.buy_rate + rate.sell_rate) / 2)
+            return _q((rate.buy_rate + rate.sell_rate) / 2), True
     except Exception as exc:
         log.debug('SALDOAR_USD_BOB_FAIL %s', exc)
-    return _PARALLEL_USD_FALLBACK
+    return _PARALLEL_USD_FALLBACK, False
 
 
 class SaldoARFetcher(BaseFetcher):
@@ -140,7 +151,7 @@ class SaldoARFetcher(BaseFetcher):
             return []
 
         # Cross-rate: ARS/BOB = (1 / ARS_per_USD) * USD_BOB
-        usd_bob = _get_usd_bob_parallel()
+        usd_bob, usd_bob_is_real = _get_usd_bob_parallel()
 
         # Per 1 ARS:
         #   bob_per_ars_buy  = (1 / ars_per_usd_sell) * usd_bob  ← we buy ARS (pay BOB)
@@ -161,6 +172,18 @@ class SaldoARFetcher(BaseFetcher):
             log.error('SALDOAR_CROSSRATE_ERROR %s', exc)
             return []
 
+        # Si la pata USD/BOB fue el constante de fallback (BD sin referencia),
+        # el cross-rate ARS/BOB es una ESTIMACIÓN, no un dato de mercado real:
+        # se emite como INFERENCE con baja confianza para que el compliance lo
+        # bloquee en transacciones (antes se colaba como API/0.82).
+        confidence    = 0.82 if usd_bob_is_real else 0.40
+        source_method = 'API' if usd_bob_is_real else 'INFERENCE'
+        if not usd_bob_is_real:
+            log.warning(
+                'SALDOAR_USD_BOB_FALLBACK usd_bob=%s (constante) — ARS/BOB '
+                'degradada a INFERENCE', usd_bob,
+            )
+
         result = FetchResult(
             currency_code = 'ARS',
             market_type   = self.market_type,
@@ -169,14 +192,15 @@ class SaldoARFetcher(BaseFetcher):
             buy_rate      = buy_scaled,
             sell_rate     = sell_scaled,
             scale_factor  = ARS_SCALE,
-            confidence    = 0.82,
-            source_method = 'API',
+            confidence    = confidence,
+            source_method = source_method,
             source_url    = SALDOAR_URL,
             fetched_at    = fetched_at,
             raw_data      = {
                 'ars_per_usd_buy':  float(ars_per_usd_buy),
                 'ars_per_usd_sell': float(ars_per_usd_sell),
                 'usd_bob_used':     float(usd_bob),
+                'usd_bob_is_real':  usd_bob_is_real,
             },
         )
 

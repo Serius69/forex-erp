@@ -1,16 +1,26 @@
 // utils/formatters.ts
+// Fuente única de formateo monetario / tasas: utils/finance.ts (es-BO, coma decimal).
+// Este módulo reexporta esos helpers y mantiene utilidades de compatibilidad
+// (formatNumber, formatDate, formatPercentage, formatCompactNumber) usadas por ~15 imports.
+import { formatBOB } from './finance';
+export { formatBOB, formatRate, formatPercent } from './finance';
+
 export const formatCurrency = (
   amount: number | string | undefined,
   currency: string | boolean = 'BOB'  // acepta boolean por compatibilidad
 ): string => {
-  if (amount === undefined || amount === null) return 'Bs. 0.00';
-  const num      = typeof amount === 'string' ? parseFloat(amount) : amount;
   const currCode = typeof currency === 'boolean' ? 'BOB' : currency;
+  // BOB (caso mayoritario) → fuente única formatBOB (fallback 'Bs. 0,00' con coma es-BO)
+  if (currCode === 'BOB') return formatBOB(amount);
+  // Otras monedas: mismo locale es-BO (coma decimal), sin duplicar el fallback erróneo
+  const num = amount === undefined || amount === null || amount === ''
+    ? NaN
+    : (typeof amount === 'string' ? parseFloat(amount) : amount);
   return new Intl.NumberFormat('es-BO', {
     style:                 'currency',
     currency:              currCode,
     minimumFractionDigits: 2,
-  }).format(num);
+  }).format(isNaN(num) ? 0 : num);
 };
 
 export const formatNumber = (
@@ -26,8 +36,7 @@ export const formatNumber = (
 };
 
 export const formatDate = (
-  date: string | Date | undefined,
-  formatStr = 'dd/MM/yyyy'
+  date: string | Date | undefined
 ): string => {
   if (!date) return '-';
   return new Date(date).toLocaleDateString('es-BO');

@@ -524,6 +524,60 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=0, minute=0),
         'options':  {'queue': 'default'},
     },
+
+    # ── Tareas que estaban DEFINIDAS pero nunca agendadas (cableadas 2026-07-16).
+    #    Cada una tenía su cadencia prevista en su docstring pero faltaba en el
+    #    beat, así que jamás corría (rate-locks sin expirar, snapshots de capital
+    #    y de apertura/cierre nunca tomados, alertas de capital mudas, caché
+    #    antifraude sin refresco, detección de anomalías solo on-demand).
+    # Expiración de tasas bloqueadas: cada 2 min (impacto operativo inmediato).
+    'transactions-rate-lock-expire': {
+        'task':     'transactions.check_rate_lock_expirations',
+        'schedule': 2 * 60,
+        'options':  {'queue': 'critical'},
+    },
+    # Refresco del caché de reglas antifraude: cada 30 min.
+    'transactions-fraud-rules-refresh': {
+        'task':     'transactions.refresh_fraud_rules_cache',
+        'schedule': 30 * 60,
+        'options':  {'queue': 'critical'},
+    },
+    # Alertas de capital: cada 15 min (según docstring).
+    'capital-check-alerts': {
+        'task':     'capital.check_capital_alerts',
+        'schedule': 15 * 60,
+        'options':  {'queue': 'critical'},
+    },
+    # P&L no realizado: cada hora (según docstring).
+    'capital-update-unrealized-pnl': {
+        'task':     'capital.update_unrealized_pnl',
+        'schedule': 60 * 60,
+        'options':  {'queue': 'default'},
+    },
+    # Snapshot diario de posición de capital por sucursal: cierre 23:15.
+    'capital-daily-snapshots': {
+        'task':     'capital.save_daily_snapshots',
+        'schedule': crontab(hour=23, minute=15),
+        'options':  {'queue': 'default'},
+    },
+    # Snapshot de sistema — apertura del día: 08:00 (según docstring).
+    'snapshots-opening': {
+        'task':     'snapshots.take_opening_snapshot',
+        'schedule': crontab(hour=8, minute=0),
+        'options':  {'queue': 'low'},
+    },
+    # Snapshot de sistema — cierre del día: 23:45 (según docstring).
+    'snapshots-closing': {
+        'task':     'snapshots.take_closing_snapshot',
+        'schedule': crontab(hour=23, minute=45),
+        'options':  {'queue': 'low'},
+    },
+    # Detección automática de anomalías (antes solo on-demand): cada hora.
+    'analytics-detect-anomalies': {
+        'task':     'analytics.detect_anomalies',
+        'schedule': 60 * 60,
+        'options':  {'queue': 'default'},
+    },
 }
 
 # ── Performance settings ──────────────────────────────────────────────────────

@@ -8,7 +8,6 @@
  * Extracted from Capital.tsx to keep that component focused on rendering.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { useSnackbar } from 'notistack';
 import { api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useWebSocket } from '../contexts/WebSocketContext';
@@ -67,6 +66,7 @@ interface UseDashboardReturn {
   resumenIngresos: ResumenIngresos | null;
   snapshots: CapitalSnapshot[];
   loading: boolean;
+  error: string | null;
   canSnapshot: boolean;
   refresh: () => Promise<void>;
 }
@@ -79,8 +79,8 @@ export function useDashboard(dateFrom: string, dateTo: string): UseDashboardRetu
   const [resumenIngresos, setResumenIngresos] = useState<ResumenIngresos | null>(null);
   const [snapshots, setSnapshots]         = useState<CapitalSnapshot[]>([]);
   const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState<string | null>(null);
   const { user }                          = useAuth();
-  const { enqueueSnackbar }               = useSnackbar();
   const { lastSheetsSync }                = useWebSocket();
   const { branchParams }                  = useBranchScope();
 
@@ -88,6 +88,7 @@ export function useDashboard(dateFrom: string, dateTo: string): UseDashboardRetu
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const [capitalRes, gastosRes, resumenRes, ingresosRes, resumenIngRes, snapshotsRes] = await Promise.all([
         api.get('/capital/actual/', { params: branchParams }),
@@ -106,11 +107,11 @@ export function useDashboard(dateFrom: string, dateTo: string): UseDashboardRetu
       setResumenIngresos(resumenIngRes.data);
       setSnapshots(snapshotsRes.data?.results ?? snapshotsRes.data ?? []);
     } catch {
-      enqueueSnackbar('Error al cargar datos de capital', { variant: 'error' });
+      setError('No se pudieron cargar los datos de capital. Verifica tu conexión e intenta de nuevo.');
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, canSnapshot, enqueueSnackbar, branchParams]);
+  }, [dateFrom, dateTo, canSnapshot, branchParams]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -120,5 +121,5 @@ export function useDashboard(dateFrom: string, dateTo: string): UseDashboardRetu
     refresh();
   }, [lastSheetsSync, refresh]);
 
-  return { capital, gastos, resumenGastos, ingresos, resumenIngresos, snapshots, loading, canSnapshot, refresh };
+  return { capital, gastos, resumenGastos, ingresos, resumenIngresos, snapshots, loading, error, canSnapshot, refresh };
 }

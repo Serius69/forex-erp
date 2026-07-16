@@ -4,10 +4,14 @@ from .views import (
     analytics_history, analytics_decision, analytics_evaluar,
     analytics_decision_history, analytics_snapshot,
     analytics_overview, analytics_trends, analytics_anomalies,
+    analytics_assistant,
 )
 from .branch_stats import branch_stats
 
 urlpatterns = [
+    # ── Analista — chat de inteligencia de negocio ────────────────────────────
+    path('assistant/',            analytics_assistant,          name='analytics-assistant'),
+
     # ── Aggregated / dashboard endpoints ─────────────────────────────────────
     path('overview/',             analytics_overview,           name='analytics-overview'),
     path('trends/',               analytics_trends,             name='analytics-trends'),

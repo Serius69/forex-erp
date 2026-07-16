@@ -75,7 +75,12 @@ def _signal_forecast(pair: str) -> dict | None:
     """
     from django.core.cache import cache
 
-    for mkt in ('web', 'competencia', 'empresa'):
+    # Orden por divisa: USD opera en 'web' (dólar blue); las demás en
+    # 'competencia' (físico real) — igual que ForecastView, para no tomar el
+    # forecast web delgado/huérfano de las divisas menores.
+    order = (('web', 'competencia', 'empresa') if pair == 'USD/BOB'
+             else ('competencia', 'empresa', 'web'))
+    for mkt in order:
         data = cache.get(f'ml_forecast:{pair}:{mkt}:24h')
         if isinstance(data, dict) and not data.get('is_inference'):
             cur = _mid_actual(pair.split('/')[0], market=mkt)

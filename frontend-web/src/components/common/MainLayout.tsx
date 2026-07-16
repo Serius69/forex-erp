@@ -43,6 +43,7 @@ import {
   Close,
   Casino,
   Public,
+  Insights,
 } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
@@ -74,6 +75,7 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   simulator:         'Simulador',
   macro:             'Macro Bolivia',
   advisor:           'Asesor',
+  analista:          'Analista',
   analytics:         'Analytics',
   decisiones:        'Motor IA',
   'ai-insights':     'IA Insights',
@@ -169,6 +171,7 @@ const NAV_GROUPS: NavGroup[] = [
     roles: ['ADMIN', 'SUPERVISOR'],
     items: [
       { id: 'predictions',     label: 'Predicciones',       path: '/predictions',      icon: <Psychology fontSize="small" />, roles: ['ADMIN','SUPERVISOR'] },
+      { id: 'analista',        label: 'Analista',            path: '/analista',         icon: <Insights fontSize="small" />,   roles: ['ADMIN','SUPERVISOR'] },
       { id: 'advisor',         label: 'Asesor',              path: '/advisor',          icon: <SmartToy fontSize="small" />,   roles: ['ADMIN','SUPERVISOR'] },
       { id: 'simulator',       label: 'Simulador',           path: '/simulator',        icon: <Casino fontSize="small" />,     roles: ['ADMIN','SUPERVISOR'] },
       { id: 'macro',           label: 'Macro Bolivia',       path: '/macro',            icon: <Public fontSize="small" />,     roles: ['ADMIN','SUPERVISOR'] },

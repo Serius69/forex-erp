@@ -22,6 +22,7 @@ Uso:
     python manage.py sync_sheet_transactions --dry-run    # solo reporta
     python manage.py sync_sheet_transactions --since 2026-07-10
 """
+import hashlib
 import io
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -186,25 +187,51 @@ class Command(BaseCommand):
             from users.models import Branch
             branch = Branch.objects.filter(is_active=True).order_by('id').first()
 
-        # Mapa Responsable (hoja) → usuario real; el usuario unificado SSO
-        # 'sergio' (kapitalyabolivia@gmail.com) es el fallback.
+        # Mapa Responsable (hoja) → usuario real. La columna "Responsable" suele
+        # traer el NOMBRE VISIBLE (no el username), así que indexamos por username,
+        # first_name, last_name y nombre completo. El usuario unificado SSO 'sergio'
+        # (kapitalyabolivia@gmail.com) queda como fallback.
         from django.contrib.auth import get_user_model
         User = get_user_model()
-        cashier_map = {
-            u.username.lower(): u
-            for u in User.objects.filter(is_active=True)
-        }
+        cashier_map: dict[str, object] = {}
+        for u in User.objects.filter(is_active=True):
+            keys = {
+                (u.username or '').strip().lower(),
+                (u.first_name or '').strip().lower(),
+                (u.last_name or '').strip().lower(),
+                f"{(u.first_name or '').strip()} {(u.last_name or '').strip()}".strip().lower(),
+                (u.get_full_name() or '').strip().lower(),
+            }
+            for k in keys:
+                if k and k not in cashier_map:  # el username tiene prioridad (se agrega primero)
+                    cashier_map[k] = u
 
         def _cashier_for(resp: str):
-            return cashier_map.get((resp or '').strip().lower(), cashier)
+            key = (resp or '').strip().lower()
+            if key in cashier_map:
+                return cashier_map[key]
+            # coincidencia por primer token del nombre visible (p.ej. "Sergio T.")
+            first = key.split()[0] if key.split() else ''
+            return cashier_map.get(first, cashier)
+
+        # Marcador estable por fila para deduplicar entre corridas. Con seq usa
+        # el número; SIN seq (filas que no traen correlativo) deriva un hash del
+        # contenido para NO re-insertarlas en cada sync (antes duplicaban).
+        def _row_mark(r) -> str:
+            if r['seq'] is not None:
+                return f"{MARK_PREFIX}{r['seq']}"
+            basis = (f"{r['fecha'].isoformat()}|{r['divisa']}|{r['cantidad']}"
+                     f"|{r['tc']}|{r['resp']}")
+            return f"{MARK_PREFIX}H{hashlib.sha1(basis.encode()).hexdigest()[:12]}"
 
         pendientes, saltadas = [], 0
         for r in rows:
             if r['fecha'].date() <= cutoff:
                 continue
-            mark = f"{MARK_PREFIX}{r['seq']}" if r['seq'] is not None else None
-            if mark and mark in seen:
+            mark = _row_mark(r)
+            if mark in seen:
                 continue
+            seen.add(mark)  # evita duplicar filas idénticas dentro del MISMO batch
 
             code = DIVISA_ALIAS.get(r['divisa'], r['divisa'])
             cur = currencies.get(code)

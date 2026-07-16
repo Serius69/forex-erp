@@ -24,7 +24,7 @@ import { es } from 'date-fns/locale';
 import { api } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWebSocket } from '../../contexts/WebSocketContext';
-import { isScaled, formatScale, formatRate } from '../../utils/finance';
+import { isScaled, formatScale, formatRate, formatPercent } from '../../utils/finance';
 import ArbitrageAlerts from './ArbitrageAlerts';
 import RateHistoryChart from './RateHistoryChart';
 import RateCard from './RateCard';
@@ -172,20 +172,20 @@ const LiveRateCard: React.FC<{ currency?: string }> = ({ currency = 'USD' }) => 
           <Box>
             <Typography variant="overline" sx={{ fontSize: '0.58rem', color: TOKENS.muted }}>Compra</Typography>
             <Typography variant="h4" fontWeight={900} sx={{ color: TOKENS.green, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
-              {rate.buy.toFixed(4)}
+              {formatRate(rate.buy)}
             </Typography>
           </Box>
           <Box textAlign="center" sx={{ color: 'text.disabled' }}><Typography variant="body2">BOB</Typography></Box>
           <Box textAlign="right">
             <Typography variant="overline" sx={{ fontSize: '0.58rem', color: TOKENS.muted }}>Venta</Typography>
             <Typography variant="h4" fontWeight={900} sx={{ color: TOKENS.red, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
-              {rate.sell.toFixed(4)}
+              {formatRate(rate.sell)}
             </Typography>
           </Box>
         </Box>
         <Box display="flex" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={0.5}>
           <Typography variant="caption" color="text.secondary">
-            Spread: <strong>{rate.spread_pct.toFixed(2)}%</strong>
+            Spread: <strong>{formatPercent(rate.spread_pct)}</strong>
             {' · '}Confianza: <strong style={{ color: confidenceColor(rate.confidence) }}>
               {confidenceDot(rate.confidence)} {(rate.confidence * 100).toFixed(0)}%
             </strong>

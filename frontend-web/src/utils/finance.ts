@@ -22,6 +22,20 @@ export function formatRate(value: number | string | null | undefined): string {
   }).format(num);
 }
 
+export function formatPercent(
+  value: number | string | null | undefined,
+  decimals = 2,
+): string {
+  const zero = `${(0).toFixed(decimals).replace('.', ',')}%`;
+  if (value === null || value === undefined || value === '') return zero;
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  if (isNaN(num)) return zero;
+  return `${new Intl.NumberFormat('es-BO', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(num)}%`;
+}
+
 export function isScaled(scaleFactor: number): boolean {
   return scaleFactor > 1;
 }

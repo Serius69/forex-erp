@@ -1,5 +1,5 @@
 // src/components/ganancias/Ganancias.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   Box, Grid, Card, CardContent, Typography, Button,
   Paper, Skeleton, Alert, IconButton, Tooltip, Divider,
@@ -14,10 +14,10 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend,
 } from 'recharts';
-import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
+import { useApiQuery } from '../../hooks/useApiQuery';
 import { useBranchScope } from '../../contexts/BranchScopeContext';
-import { formatCurrency, formatNumber } from '../../utils/formatters';
+import { formatCurrency, formatNumber, formatRate, formatPercent } from '../../utils/formatters';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 // Keys match the actual backend response from GananciaService.resumen_financiero()
@@ -86,30 +86,18 @@ const KPI = ({ label, value, sub, color, icon, loading }: {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 const Ganancias: React.FC = () => {
-  const [resumen, setResumen] = useState<ResumenFinanciero | null>(null);
-  const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
   );
   const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
-  const { enqueueSnackbar } = useSnackbar();
   const { branchParams } = useBranchScope();
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.get('/capital/resumen/', {
-        params: { date_from: dateFrom, date_to: dateTo, ...branchParams },
-      });
-      setResumen(res.data);
-    } catch {
-      enqueueSnackbar('Error al cargar resumen financiero', { variant: 'error' });
-    } finally {
-      setLoading(false);
-    }
-  }, [dateFrom, dateTo, enqueueSnackbar, branchParams]);
-
-  useEffect(() => { load(); }, [load]);
+  const { data: resumen, loading, error, retry: load } = useApiQuery<ResumenFinanciero>(
+    () => api.get('/capital/resumen/', {
+      params: { date_from: dateFrom, date_to: dateTo, ...branchParams },
+    }),
+    [dateFrom, dateTo, branchParams],
+  );
 
   const divisas = resumen?.ganancias_divisas?.detalle ?? [];
   const pieData = divisas
@@ -156,6 +144,17 @@ const Ganancias: React.FC = () => {
           )}
         </Box>
       </Paper>
+
+      {/* Error persistente (distingue "error" de "sin datos") */}
+      {error && !loading && (
+        <Alert
+          severity="error"
+          sx={{ mb: 3 }}
+          action={<Button color="inherit" size="small" onClick={load}>Reintentar</Button>}
+        >
+          {error.message || 'Error al cargar el resumen financiero'}
+        </Alert>
+      )}
 
       {/* KPIs */}
       <Grid container spacing={2} mb={3}>
@@ -239,8 +238,8 @@ const Ganancias: React.FC = () => {
                           </Box>
                         </TableCell>
                         <TableCell align="center">{d.ops_compra + d.ops_venta}</TableCell>
-                        <TableCell align="right">{parseFloat(d.tc_compra_prom).toFixed(4)}</TableCell>
-                        <TableCell align="right">{parseFloat(d.tc_venta_prom).toFixed(4)}</TableCell>
+                        <TableCell align="right">{formatRate(d.tc_compra_prom)}</TableCell>
+                        <TableCell align="right">{formatRate(d.tc_venta_prom)}</TableCell>
                         <TableCell align="right">{formatCurrency(ingresos)}</TableCell>
                         <TableCell align="right">
                           <Typography fontWeight={700}
@@ -249,7 +248,7 @@ const Ganancias: React.FC = () => {
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          <Chip label={`${margen.toFixed(2)}%`} size="small"
+                          <Chip label={formatPercent(margen)} size="small"
                             color={margen > 0 ? 'success' : 'error'} variant="outlined" />
                         </TableCell>
                       </TableRow>

@@ -68,13 +68,27 @@ def load_series(currency_pair: str, market: str = 'web',
         .order_by('date')
         .values_list('date', 'rate')
     )
-    if len(rows) < MIN_HISTORY:
+
+    # A6 — Resamplear a CIERRE DIARIO antes de calcular retornos. La serie 'web'
+    # se persiste con granularidad HORARIA (TruncHour en update_training_data):
+    # tratar cada punto horario como un "día" y anualizar con sqrt(365) inflaba
+    # σ/μ (drift y volatilidad ~sqrt(24)×/×24 mayores) para USD, el par por
+    # defecto del advisor/assistant/simulador. Se colapsa a un valor por día
+    # calendario (el último). 'competencia'/'empresa' ya son diarias → tomar el
+    # último por día es idempotente y no las altera.
+    daily = {}
+    for dt, rate in rows:          # rows viene ordenado asc → se queda el último del día
+        v = float(rate)
+        if v > 0:
+            daily[dt.date()] = v
+    days_sorted = sorted(daily)
+    rates = np.array([daily[d] for d in days_sorted], dtype=np.float64)
+
+    if len(rates) < MIN_HISTORY:
         raise SimulationError(
             f'Historia insuficiente para {currency_pair}/{market}: '
-            f'{len(rows)} días (mínimo {MIN_HISTORY})')
+            f'{len(rates)} días (mínimo {MIN_HISTORY})')
 
-    rates = np.array([float(r[1]) for r in rows], dtype=np.float64)
-    rates = rates[rates > 0]
     lr = np.diff(np.log(rates))
     # descartar retornos absurdos (>25%/día = error de captura, no mercado)
     lr = lr[np.abs(lr) < 0.25]
@@ -88,7 +102,7 @@ def load_series(currency_pair: str, market: str = 'web',
         mu_daily=float(np.mean(lr)),
         sigma_daily=float(np.std(lr, ddof=1)),
         n_days=len(rates),
-        start=str(rows[0][0].date()), end=str(rows[-1][0].date()),
+        start=str(days_sorted[0]), end=str(days_sorted[-1]),
     )
 
 

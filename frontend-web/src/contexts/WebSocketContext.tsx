@@ -2,7 +2,8 @@
 // WebSocket con exponential backoff, polling fallback y estado stale
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { getAccessToken } from '../services/api';
+import { api, getAccessToken } from '../services/api';
+import type { LiveRate } from '../services/ratesApi';
 import { useSnackbar } from 'notistack';
 
 // ── Backoff exponencial ───────────────────────────────────────────────────────
@@ -22,7 +23,7 @@ type WsStatus = 'connected' | 'reconnecting' | 'disconnected' | 'polling';
 
 interface WebSocketContextType {
   socket:             WebSocket | null;
-  rates:              any;
+  rates:              Record<string, LiveRate & { official?: number }>;
   alerts:             any[];
   connected:          boolean;
   wsStatus:           WsStatus;
@@ -46,7 +47,7 @@ export const useWebSocket = () => {
 
 export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [socket,            setSocket]            = useState<WebSocket | null>(null);
-  const [rates,             setRates]             = useState({});
+  const [rates,             setRates]             = useState<Record<string, LiveRate & { official?: number }>>({});
   const [alerts,            setAlerts]            = useState<any[]>([]);
   const [wsStatus,          setWsStatus]          = useState<WsStatus>('disconnected');
   const [ratesUpdatedAt,    setRatesUpdatedAt]    = useState<number>(0);
@@ -70,13 +71,13 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     pollRef.current = setInterval(async () => {
       if (!mountedRef.current) return;
       try {
-        const res = await fetch('/api/rates/live/', { headers: { 'Cache-Control': 'no-cache' } });
-        if (res.ok) {
-          const data = await res.json();
-          if (mountedRef.current) {
-            setRates(data);
-            setRatesUpdatedAt(Date.now());
-          }
+        // Usa la instancia axios `api` (Bearer token + refresh 401 automático) en vez de fetch crudo
+        const res = await api.get<Record<string, LiveRate & { official?: number }>>('/rates/live/', {
+          headers: { 'Cache-Control': 'no-cache' },
+        });
+        if (mountedRef.current) {
+          setRates(res.data);
+          setRatesUpdatedAt(Date.now());
         }
       } catch { /* offline — ignore */ }
     }, WS_POLL_INTERVAL_MS);

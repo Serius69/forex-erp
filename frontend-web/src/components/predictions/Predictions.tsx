@@ -19,7 +19,7 @@ import { es } from 'date-fns/locale';
 import { useSnackbar } from 'notistack';
 import { api } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { formatCurrency, formatNumber } from '../../utils/formatters';
+import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ForecastPoint {
@@ -618,11 +618,11 @@ const Predictions: React.FC = () => {
                       </Box>
                       {[
                         ['Total predicciones',  data.total_predictions],
-                        ['Error promedio',       `${data.average_error?.toFixed(2)}%`],
-                        ['Error máximo',         `${data.max_error?.toFixed(2)}%`],
-                        ['Error mínimo',         `${data.min_error?.toFixed(2)}%`],
+                        ['Error promedio',       formatPercent(data.average_error)],
+                        ['Error máximo',         formatPercent(data.max_error)],
+                        ['Error mínimo',         formatPercent(data.min_error)],
                         ['Dentro del intervalo', data.within_confidence_interval],
-                        ['Precisión confianza',  `${data.confidence_accuracy?.toFixed(1)}%`],
+                        ['Precisión confianza',  formatPercent(data.confidence_accuracy, 1)],
                       ].map(([label, value]) => (
                         <Box key={label as string} display="flex" justifyContent="space-between"
                           py={0.5} borderBottom="1px solid" borderColor="divider">

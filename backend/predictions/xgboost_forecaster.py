@@ -73,10 +73,10 @@ class XGBoostForecaster:
             raise ImportError("xgboost requerido: agregue xgboost==2.0.3 a requirements.txt")
 
         features = [f for f in XGBOOST_FEATURES if f in df.columns]
-        data = df[features + ['rate']].dropna()
 
-        X = data[features].values.astype(np.float32)
-        y = data['rate'].values.astype(np.float32)
+        # A3 — construcción supervisada SIN fuga (target = rate[t+1]); ver
+        # build_supervised para el razonamiento completo.
+        X, y, _ = build_supervised(df, features)
 
         # Split temporal (sin shuffle — es una serie de tiempo)
         split   = int(len(X) * 0.8)
@@ -117,9 +117,15 @@ class XGBoostForecaster:
     def predict(self, currency_pair: str, df_recent: pd.DataFrame, horizon: int, market: str = 'web') -> list:
         """
         Predicción iterativa hora a hora.
-        Actualiza lags y features de calendario en cada paso.
+
+        A3 — consistencia train/serve: en cada paso los indicadores técnicos
+        (lags, ma/ema/macd/rsi/bb, volatilidad, retornos) se RECALCULAN de forma
+        causal sobre la serie acumulada (histórico + filas ya predichas), en vez
+        de congelar los de la última fila real. Como el modelo se entrenó con
+        target = rate[t+1], predecir desde los features de t da rate[t+1].
         """
         from predictions.market_keys import fname_suffix
+        from predictions.data_pipeline import ForexDataPipeline
         pair_safe  = currency_pair.replace('/', '_') + fname_suffix(market)
         model_path = os.path.join(self.models_path, f'xgboost_{pair_safe}.pkl')
         if not os.path.exists(model_path):
@@ -129,36 +135,28 @@ class XGBoostForecaster:
         model    = artifact['model']
         features = artifact['features']
 
+        pipe    = ForexDataPipeline()
         df      = df_recent.copy()
         last_ts = df.index[-1]
 
         # ATR base para CI (proporcional a la incertidumbre del horizonte)
         atr_base = float(df['atr_14'].iloc[-1]) if 'atr_14' in df.columns else float(df['rate'].iloc[-1]) * 0.005
 
+        # Ventana de recálculo: cubre holgadamente el mayor lookback (lag_168 /
+        # ma_90) para que los technicals de la última fila sean exactos, sin
+        # recomputar sobre los 3 años completos en cada uno de los H pasos.
+        TAIL = 320
+
         predictions = []
         for h in range(1, horizon + 1):
             pred_ts = last_ts + pd.Timedelta(hours=h)
-            row     = df.iloc[-1].copy()
 
-            # Actualizar lags usando el histórico acumulado
-            rates = df['rate'].values
-            for lag in (1, 2, 3, 6, 12, 24, 48, 168):
-                key = f'lag_{lag}'
-                if key in features:
-                    row[key] = rates[-lag] if lag <= len(rates) else rates[0]
-
-            # Actualizar features de calendario
-            row['hour']              = pred_ts.hour
-            row['day_of_week']       = pred_ts.dayofweek
-            row['is_weekend']        = int(pred_ts.dayofweek >= 5)
-            row['month']             = pred_ts.month
-            row['quarter']           = (pred_ts.month - 1) // 3 + 1
-            row['is_london_session']   = int(8  <= pred_ts.hour < 16)
-            row['is_new_york_session'] = int(13 <= pred_ts.hour < 22)
-            row['is_overlap_session']  = int(13 <= pred_ts.hour < 16)
-
-            feat_vec   = np.array([[row.get(f, 0.0) for f in features]], dtype=np.float32)
-            rate_pred  = float(model.predict(feat_vec)[0])
+            # La última fila del df YA trae technicals y calendario frescos para
+            # su propio timestamp (recomputados al final de la iteración previa,
+            # o por el pipeline.build en la primera).
+            row      = df.iloc[-1]
+            feat_vec = np.array([[float(row.get(f, 0.0) or 0.0) for f in features]], dtype=np.float32)
+            rate_pred = float(model.predict(feat_vec)[0])
 
             # CI: ±1.96σ donde σ crece con la raíz del horizonte (walk-forward noise)
             sigma = atr_base * np.sqrt(h)
@@ -174,11 +172,21 @@ class XGBoostForecaster:
                 },
             })
 
-            # Añadir fila predicha al DataFrame para que la próxima iteración tenga lags correctos
-            new_row            = row.copy()
-            new_row['rate']    = rate_pred
-            new_row_df         = pd.DataFrame([new_row], index=[pred_ts])
+            # Añadir la fila predicha y RECALCULAR technicals + calendario de
+            # forma causal sobre la cola, para que la próxima iteración lea
+            # indicadores actualizados (no congelados).
+            new_row_df = pd.DataFrame({'rate': [rate_pred]}, index=[pred_ts])
             df = pd.concat([df, new_row_df])
+            # Arrastrar 'rate' + exógenas (macro/volume): _add_macro las ffill de
+            # forma causal (la fila futura hereda el último valor conocido, no 0).
+            carry = ['rate'] + [c for c in ('volume', 'international_rate',
+                     'interest_rate', 'inflation_rate', 'oil_price') if c in df.columns]
+            tail = df[carry].tail(TAIL).copy()
+            tail = pipe._add_technical(tail)
+            tail = pipe._add_calendar(tail, currency_pair)
+            tail = pipe._add_macro(tail)
+            # Volcar los features recomputados sobre las filas correspondientes.
+            df.loc[tail.index, tail.columns] = tail
 
         return predictions
 
@@ -203,6 +211,28 @@ class XGBoostForecaster:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def build_supervised(df: pd.DataFrame, features: list):
+    """Construye (X, y, data) para entrenamiento supervisado SIN data leakage.
+
+    A3 — el target es rate[t+1], NO rate[t]. Los technicals del pipeline
+    (ma_*/ema/macd/rsi/bb_pct/volatility/pct_change) usan ventanas rolling que
+    TERMINAN en t (min_periods=1) → incluyen rate[t]. Si además y = rate[t] de la
+    MISMA fila, el modelo aprende la identidad ma≈rate y el MAPE sale
+    artificialmente bajo, sobre-ponderando a XGBoost en el ensemble. Desplazando
+    el target a t+1, el modelo predice el FUTURO con información conocida en t
+    (causal), consistente con la inferencia iterativa de `predict`.
+
+    Devuelve (X, y, data) donde `data` es el DataFrame alineado (con 'target').
+    Garantiza que ninguna columna de features es el target contemporáneo.
+    """
+    data = df[features + ['rate']].copy()
+    data['target'] = data['rate'].shift(-1)          # y = rate[t+1]
+    data = data.dropna(subset=features + ['target'])
+    X = data[features].values.astype(np.float32)
+    y = data['target'].values.astype(np.float32)
+    return X, y, data
+
 
 def _compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     mae  = mean_absolute_error(y_true, y_pred)

@@ -246,7 +246,7 @@ const EfectivoDialog: React.FC<EfectivoDialogProps> = ({
 
 const CapitalDashboard: React.FC = () => {
   const [editOpen, setEditOpen] = useState(false);
-  const { capital, composicion, loading, connected, refresh } = useCapital();
+  const { capital, composicion, loading, error, connected, refresh } = useCapital();
   const { user } = useAuth();
 
   const canEdit = user?.role === 'ADMIN' || user?.role === 'SUPERVISOR' || user?.role === 'CASHIER';
@@ -278,7 +278,20 @@ const CapitalDashboard: React.FC = () => {
     );
   }
 
-  const cap = capital!;
+  // Error de carga sin datos previos → Alert persistente + Reintentar
+  // (distingue "error" de "sin datos" y evita el crash de capital! === null)
+  if (!capital) {
+    return (
+      <Alert
+        severity={error ? 'error' : 'info'}
+        action={<Button color="inherit" size="small" onClick={refresh}>Reintentar</Button>}
+      >
+        {error ?? 'No hay datos de capital disponibles.'}
+      </Alert>
+    );
+  }
+
+  const cap = capital;
 
   return (
     <Box>
