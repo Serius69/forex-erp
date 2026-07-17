@@ -1,6 +1,6 @@
 # tarjetas/views.py
 import logging
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.generics import GenericAPIView
@@ -10,7 +10,7 @@ from django.db.models import Sum, Count, Q
 from django.utils import timezone
 
 from django.core.cache import cache
-from .models import TipoTarjeta, LoteCompra, VentaTarjeta, MovimientoTarjeta, AlertaInventarioTarjeta
+from .models import TipoTarjeta, LoteCompra, VentaTarjeta, MovimientoTarjeta, AlertaInventarioTarjeta, MONEY_Q
 from .serializers import (
     TipoTarjetaSerializer, LoteCompraSerializer, VentaTarjetaSerializer,
     RegistrarLoteSerializer, RegistrarVentaSerializer,
@@ -407,32 +407,73 @@ class InventarioTarjetaView(GenericAPIView):
         total_stock   = 0
         total_valor   = Decimal('0')
 
-        for t in tipos_qs:
-            stock = t.stock_actual
-            if con_stock and stock == 0:
-                continue
+        # Materializamos los tipos una sola vez (dispara la query + el
+        # prefetch_related('lotes')) para poder calcular stock/costo/valor en
+        # memoria sin re-consultar por fila.
+        tipos = list(tipos_qs)
 
-            # Ganancias del período para este tipo
-            ganancia_periodo = (
+        # Ganancia del período por tipo: UNA sola query agrupada (antes era un
+        # aggregate por iteración). Mismos filtros de fecha que el detalle.
+        ganancia_por_tipo = {
+            row['tipo_tarjeta']: row['g']
+            for row in (
                 VentaTarjeta.objects
                 .filter(
-                    tipo_tarjeta=t,
+                    tipo_tarjeta__in=tipos,
                     created_at__date__gte=date_from,
                     created_at__date__lte=date_to,
                 )
-                .aggregate(g=Sum('ganancia_bob'))['g'] or Decimal('0')
+                .values('tipo_tarjeta')
+                .annotate(g=Sum('ganancia_bob'))
             )
+        }
 
-            # Lotes activos para desglose
-            lotes_activos = list(
-                t.lotes.filter(is_active=True, cantidad_restante__gt=0)
-                .values('id', 'precio_costo', 'cantidad_restante',
-                        'proveedor', 'fecha_compra')
-                .order_by('fecha_compra')
-            )
+        for t in tipos:
+            # Lotes ya prefetchados: iteramos la relación SIN .filter (que
+            # rompería la caché del prefetch) y filtramos en memoria.
+            lotes = list(t.lotes.all())
 
-            costo_prom = t.costo_promedio
-            valor_inv  = t.valor_inventario_bob
+            # stock_actual (models.TipoTarjeta.stock_actual): suma de
+            # cantidad_restante sobre lotes is_active=True.
+            stock = int(sum(l.cantidad_restante for l in lotes if l.is_active))
+            if con_stock and stock == 0:
+                continue
+
+            # Ganancias del período para este tipo (dict precalculado)
+            ganancia_periodo = ganancia_por_tipo.get(t.id) or Decimal('0')
+
+            # costo_promedio (models.TipoTarjeta.costo_promedio) y desglose de
+            # lotes activos (is_active=True AND cantidad_restante>0), en memoria.
+            total_unidades = Decimal('0')
+            total_costo    = Decimal('0')
+            lotes_desglose = []
+            for l in lotes:
+                if l.is_active and l.cantidad_restante > 0:
+                    total_unidades += l.cantidad_restante
+                    total_costo    += l.cantidad_restante * l.precio_costo
+                    lotes_desglose.append(l)
+
+            if total_unidades == 0:
+                costo_prom = Decimal('0')
+            else:
+                costo_prom = (total_costo / total_unidades).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
+
+            # valor_inventario_bob (models.TipoTarjeta.valor_inventario_bob)
+            valor_inv = (costo_prom * stock).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
+
+            # Lotes activos para desglose (ordenados por fecha_compra, mismos
+            # campos y formato que el .values() original).
+            lotes_activos = [
+                {
+                    'id':                l.id,
+                    'precio_costo':      l.precio_costo,
+                    'cantidad_restante': l.cantidad_restante,
+                    'proveedor':         l.proveedor,
+                    'fecha_compra':      l.fecha_compra,
+                }
+                for l in sorted(lotes_desglose, key=lambda x: x.fecha_compra)
+            ]
+
             total_stock += stock
             total_valor += valor_inv
 

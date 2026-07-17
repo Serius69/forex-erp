@@ -110,7 +110,9 @@ class ARIMAForecaster:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"ARIMA no entrenado para {currency_pair}")
 
-        artifact = joblib.load(model_path)
+        # Artefacto cacheado por (ruta, mtime): se re-lee solo tras reentrenar.
+        from predictions.artifact_cache import load_cached
+        artifact = load_cached(model_path, joblib.load)
         model    = artifact['model']
 
         days_needed       = max(1, (horizon + 23) // 24)

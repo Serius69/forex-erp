@@ -291,6 +291,7 @@ class Transaction(models.Model):
             models.Index(fields=['transaction_number']),
             models.Index(fields=['customer', '-created_at']),
             models.Index(fields=['branch', '-created_at']),
+            models.Index(fields=['cashier', '-created_at'], name='tx_cashier_ts_idx'),
             # Índices compuestos para consultas multi-tenant frecuentes
             models.Index(fields=['branch', 'status', '-created_at'],
                          name='tx_branch_status_ts_idx'),

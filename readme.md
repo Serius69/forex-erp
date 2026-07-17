@@ -10,11 +10,12 @@ Sistema ERP integral para casas de cambio bolivianas. Gestión en tiempo real de
 |------|-----------|
 | Backend | Django 4.2 + Django REST Framework |
 | Base de datos | PostgreSQL 15 |
-| Cache / Broker | Redis 7 |
-| Tareas asíncronas | Celery + Celery Beat |
+| Broker de tareas | RabbitMQ (`amqp`) |
+| Cache / result backend | Redis 7 (cache Django + Channels) · `django_celery_results` (result) |
+| Tareas asíncronas | Celery + Celery Beat (`DatabaseScheduler`) |
 | WebSocket | Django Channels |
 | Frontend web | React 18 + TypeScript + Vite 5 + MUI 5 + Redux Toolkit |
-| Mobile | React Native |
+| Mobile | React Native 0.73 (CLI, no Expo) — Android |
 | Machine Learning | Prophet + BiLSTM + XGBoost + ARIMA + Ridge Ensemble |
 | Contenedores | Docker + Docker Compose |
 | Proxy inverso | Nginx |
@@ -37,14 +38,14 @@ Sistema ERP integral para casas de cambio bolivianas. Gestión en tiempo real de
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
 │                    Django REST API                                │
-│  users │ rates │ transactions │ inventory │ predictions          │
-│  reports │ capital │ tarjetas │ alerts │ analytics │ tenants     │
+│  users │ rates │ transactions │ inventory │ predictions │ macro   │
+│  reports │ capital │ tarjetas │ alerts │ analytics │ tenants      │
 └──────┬────────────────────────────────────────┬─────────────────┘
        │                                        │
-┌──────▼──────┐                        ┌────────▼────────┐
-│ PostgreSQL  │                        │  Redis / Celery  │
-│   (datos)   │                        │  (cache + tasks) │
-└─────────────┘                        └─────────────────┘
+┌──────▼──────┐                    ┌────────────▼────────────┐
+│ PostgreSQL  │                    │  Redis (cache/Channels)  │
+│   (datos)   │                    │  RabbitMQ (broker Celery)│
+└─────────────┘                    └─────────────────────────┘
 ```
 
 ---
@@ -57,8 +58,9 @@ Sistema ERP integral para casas de cambio bolivianas. Gestión en tiempo real de
 | `rates` | Tasas de cambio en tiempo real, motor FX, spreads dinámicos |
 | `transactions` | Compra/venta de divisas, clientes KYC, auditoría |
 | `inventory` | Stock por sucursal, costeo WAC, transferencias |
-| `predictions` | Pronósticos ML ensemble 5 modelos |
-| `reports` | Cumplimiento ASFI: RTE, ROUE, PEP, Libro Diario |
+| `predictions` | Pronósticos ML ensemble 5 modelos (3 series de mercado por par) |
+| `macro` | Indicadores macroeconómicos Bolivia (World Bank, USD internacional) + noticias |
+| `reports` | Cumplimiento ASFI: RTE (automático), ROUE, PEP, Libro Diario |
 | `capital` | Gastos, posición de capital, P&L en tiempo real |
 | `tarjetas` | Tarjetas prepago con costeo FIFO |
 | `alerts` | Sistema unificado de alertas cross-módulo |
@@ -193,14 +195,20 @@ El motor consume exclusivamente fuentes P2P en tiempo real:
 
 | Fuente | Tipo |
 |--------|------|
-| Binance P2P | Mercado peer-to-peer |
+| Binance P2P (+ cross-rate multi-fiat) | Mercado peer-to-peer |
 | Bitget P2P | Mercado peer-to-peer |
 | Bybit P2P | Mercado peer-to-peer |
+| OKX P2P | Mercado peer-to-peer |
 | Airtm v2 | Quote API |
 | Eldorado | Exchange online |
 | Wallbit | Exchange online |
 | SaldoAR | Exchange online |
-| DolarBlue Bolivia | Referencia |
+| CriptoYa / DolarAPI / DólaresABolivianos | Agregadores |
+| DolarBlue Bolivia | Referencia digital |
+
+> El conjunto de fuentes es **configurable por base de datos** (`rates.ParallelSource`,
+> tipos: `digital` / `P2P` / `EXCHANGE` / `AGREGADOR` / `WALLET`). La tabla es la foto
+> de fetchers disponibles en `rates/fetchers/`; cuáles se consultan lo decide `_load_active_sources`.
 
 **Algoritmo:** Media Winsorizada ponderada con recorte IQR de outliers. Degradación elegante con fallback histórico.
 
@@ -252,10 +260,20 @@ Stack de 5 modelos con pesos dinámicos recalculados cada 4 horas:
 
 **Objetivos de precisión:** MAPE < 0.5% a 1h, < 1.5% a 24h.
 
+**3 series de mercado independientes por par** (`?market=`), cada una con su propio modelo:
+
+| `market` | Fuente | Cobertura |
+|----------|--------|-----------|
+| `web` | Dólar blue digital (dolarbluebolivia) | solo USD/BOB (profunda) |
+| `competencia` | CSV físico de mercado | 6 pares |
+| `empresa` | Derivada de las transacciones reales de la casa | 6 pares (USD) |
+
+> Default: `web` para USD/BOB, `competencia` para el resto. `market` inválido → 400.
+
 **Endpoints:**
 ```
-GET /api/predictions/forecast/USD-BOB/?horizon=24h&ci=true   # Pronóstico con IC
-GET /api/predictions/health/                                  # Salud de modelos
+GET /api/predictions/forecast/USD-BOB/?horizon=24h&ci=true&market=web   # Pronóstico con IC
+GET /api/predictions/health/                                            # Salud de modelos
 ```
 
 **Beat schedule ML:**
@@ -286,6 +304,8 @@ GET /api/capital/pnl/            # P&L del período
 GET /api/capital/history/        # Historial de snapshots diarios
 GET /api/capital/alerts/         # Alertas activas de capital
 GET /api/capital/metrics/kpis/   # KPIs cacheados en Redis
+    /api/capital/gastos/         # CRUD de gastos (categorías + medio de pago)
+    /api/capital/ingresos/       # CRUD de ingresos extra (+ resumen/ por tipo)
 ```
 
 **KPIs disponibles:** ROE diario/anual, rotación de inventario, días de inventario, WACC divisas, break-even spread.
@@ -313,6 +333,9 @@ Reportes regulatorios bolivianos generados automáticamente:
 - Login con email O username (`EmailOrUsernameBackend`)
 - Bloqueo de cuenta: 5 intentos fallidos → bloqueo 15 minutos
 - OAuth Google disponible en login y signup
+- **Signup con aprobación:** el registro público NO auto-une como CASHIER; la cuenta
+  queda `is_active=False` sin empresa y sin tokens (`pending_approval`) hasta que un
+  ADMIN la apruebe (aplica a email y Google)
 
 **Roles del sistema:**
 
@@ -363,6 +386,7 @@ El sistema soporta múltiples empresas completamente aisladas:
 | Cola | Tareas |
 |------|--------|
 | `critical` | Tasas FX, capital RT, detección de fraude |
+| `high` | Alertas, RTE, cache de pronósticos, tareas sensibles a latencia |
 | `default` | Analytics, inventario |
 | `low` | ML (entrenamiento), reportes, backups |
 
@@ -392,9 +416,10 @@ forex-erp/
 │   │   └── fetchers/       # binance_p2p, airtm_v2, eldorado, wallbit, saldoar...
 │   ├── transactions/       # Transacciones, fraude, auditoría
 │   ├── inventory/          # Stock, WAC, transferencias
-│   ├── predictions/        # ML ensemble, pipeline, monitoring
-│   ├── reports/            # Reportes ASFI
-│   ├── capital/            # Capital, posición, KPIs
+│   ├── predictions/        # ML ensemble, pipeline, monitoring (3 series de mercado)
+│   ├── macro/              # Indicadores macro Bolivia + noticias (World Bank, USD int'l)
+│   ├── reports/            # Reportes ASFI (RTE automático + export CSV)
+│   ├── capital/            # Capital, posición, KPIs, gastos, ingresos extra
 │   ├── tarjetas/           # Tarjetas prepago FIFO
 │   ├── alerts/             # Alertas cross-módulo
 │   ├── analytics/          # Analytics + seed beat schedule

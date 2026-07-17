@@ -581,28 +581,37 @@ class LiveRatesView(viewsets.ViewSet):
         if not bob:
             return Response({'error': 'BOB currency not configured'}, status=500)
 
-        agg    = RateAggregator()
+        # Orden de prioridad de mercado (constante para todas las divisas).
+        # sorted(..., reverse=True) es estable → conserva el orden de inserción
+        # ante empates de prioridad (paralelo_digital antes que _fisico_empresa).
+        market_order = (
+            [market_filter] if market_filter and market_filter in MARKET_PRIORITY
+            else sorted(MARKET_PRIORITY, key=lambda m: MARKET_PRIORITY[m], reverse=True)
+        )
+
+        # Traer TODAS las tasas vigentes de una sola vez y agruparlas en memoria
+        # por (divisa, mercado). El orden -valid_from + setdefault reproduce el
+        # .order_by('-valid_from').first() por combinación (gana la más reciente).
+        rates_by_currency = {}
+        for rate in (
+            ExchangeRate.objects
+            .filter(currency_to=bob, valid_until__isnull=True)
+            .select_related('rate_source')
+            .order_by('-valid_from')
+        ):
+            rates_by_currency.setdefault(rate.currency_from_id, {}).setdefault(
+                rate.market_type, rate
+            )
+
         result = {}
 
         for currency in currencies:
-            market_order = (
-                [market_filter] if market_filter and market_filter in MARKET_PRIORITY
-                else sorted(MARKET_PRIORITY, key=lambda m: MARKET_PRIORITY[m], reverse=True)
-            )
+            market_rates = rates_by_currency.get(currency.id)
+            if not market_rates:
+                continue
 
             for market in market_order:
-                rate = (
-                    ExchangeRate.objects
-                    .filter(
-                        currency_from = currency,
-                        currency_to   = bob,
-                        market_type   = market,
-                        valid_until__isnull = True,
-                    )
-                    .select_related('rate_source')
-                    .order_by('-valid_from')
-                    .first()
-                )
+                rate = market_rates.get(market)
                 if rate:
                     result[currency.code] = {
                         'buy':          float(rate.buy_rate),

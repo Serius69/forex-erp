@@ -121,9 +121,16 @@ class ForexMLEngine:
         force_ensemble: bool = False,
         market: str = 'web',
         df: 'pd.DataFrame | None' = None,
+        _precomputed: 'dict | None' = None,
     ) -> dict:
         """
         Genera pronóstico completo para el endpoint mejorado.
+
+        `_precomputed` (uso interno de cache_all_horizons) trae base_preds+ensemble
+        al horizonte máximo y weights/backtesting/feature-importance ya calculados
+        una sola vez para (par, market); este horizonte solo corta [:horizon_hours]
+        y aplica la conformalización sobre el slice. El path público (sin
+        _precomputed) mantiene el comportamiento anterior intacto.
 
         Retorna:
           predicted_rate, confidence_interval, model_weights,
@@ -145,32 +152,44 @@ class ForexMLEngine:
         if df is None:
             df = self.pipeline.build(currency_pair, market=market)
 
-        # ── Obtener predicciones de cada modelo base ──
-        base_preds = self._collect_base_predictions(currency_pair, df, horizon_hours, market)
+        if _precomputed is not None:
+            # Piezas ya calculadas una sola vez al horizonte máximo; este horizonte
+            # solo corta [:horizon_hours]. El pronóstico base es iterativo y
+            # determinista → los primeros N pasos del pronóstico a 168h son
+            # idénticos al de Nh, así que el slice es byte-idéntico a recalcular.
+            weights         = _precomputed['weights']
+            bt_metrics      = _precomputed['bt_metrics']
+            feat_importance = _precomputed['feat_importance']
+            ensemble_preds  = _precomputed['ensemble_pre'][:horizon_hours]
+        else:
+            # ── Obtener predicciones de cada modelo base ──
+            base_preds = self._collect_base_predictions(currency_pair, df, horizon_hours, market)
 
-        # ── Calcular pesos dinámicos ──
-        weights = self.ensemble.compute_weights(currency_pair, market=market)
+            # ── Calcular pesos dinámicos ──
+            weights = self.ensemble.compute_weights(currency_pair, market=market)
 
-        # ── Combinar (ensemble o meta-learner si existe) ──
-        try:
-            ensemble_preds = self.ensemble.predict_with_meta(base_preds, currency_pair, market=market)
-        except FileNotFoundError:
-            ensemble_preds = self.ensemble.combine(base_preds, weights, horizon_hours)
+            # ── Combinar (ensemble o meta-learner si existe) ──
+            try:
+                ensemble_preds = self.ensemble.predict_with_meta(base_preds, currency_pair, market=market)
+            except FileNotFoundError:
+                ensemble_preds = self.ensemble.combine(base_preds, weights, horizon_hours)
 
-        if not ensemble_preds:
-            raise RuntimeError(f"No se pudieron generar predicciones para {currency_pair}")
+            if not ensemble_preds:
+                raise RuntimeError(f"No se pudieron generar predicciones para {currency_pair}")
+
+            # ── Métricas de backtesting (independientes del horizonte) ──
+            bt_metrics = self._backtesting_metrics(currency_pair, days=30, market=market)
+
+            # ── Feature importance del XGBoost (más explicable) ──
+            feat_importance = self._get_feature_importance(currency_pair, market)
 
         # ── Calibración conformal: CIs con cobertura real, no nominal ──
+        # Se aplica por horizonte sobre el slice (el ensanchado sqrt(h) por paso
+        # se deriva de now(), así que se preserva la salida por-horizonte).
         try:
             ensemble_preds = self.ensemble.conformalize(ensemble_preds, currency_pair, market=market)
         except Exception as exc:
             logger.warning("conformal.skip pair=%s: %s", currency_pair, exc)
-
-        # ── Métricas de backtesting ──
-        bt_metrics = self._backtesting_metrics(currency_pair, days=30, market=market)
-
-        # ── Feature importance del XGBoost (más explicable) ──
-        feat_importance = self._get_feature_importance(currency_pair, market)
 
         # ── Construir respuesta ──
         next_pred = ensemble_preds[0]
@@ -349,6 +368,37 @@ class ForexMLEngine:
         for key in _HORIZON_HOURS:
             cache.delete(f'ml_forecast:{currency_pair}:{market}:{key}')
 
+    def _precompute_forecast(self, currency_pair: str, df: pd.DataFrame,
+                             max_hours: int, market: str = 'web') -> dict:
+        """Computa UNA sola vez las piezas compartidas por los 4 horizontes.
+
+          - base_preds al horizonte MÁXIMO (168h) y el ensemble PRE-conformal:
+            el pronóstico base es iterativo y determinista, así que los primeros N
+            pasos del pronóstico a 168h son idénticos al pronóstico a Nh → cada
+            horizonte corta [:N] en vez de recomputar el fan-out de modelos 4×.
+          - weights / backtesting_metrics / feature_importance: función pura de
+            (par, market), idénticas entre horizontes.
+
+        La conformalización NO se hace aquí: se aplica por horizonte sobre el slice
+        (depende de now() por paso), conservando exactamente la salida por-horizonte.
+        """
+        base_preds = self._collect_base_predictions(currency_pair, df, max_hours, market)
+        weights    = self.ensemble.compute_weights(currency_pair, market=market)
+        try:
+            ensemble_pre = self.ensemble.predict_with_meta(base_preds, currency_pair, market=market)
+        except FileNotFoundError:
+            ensemble_pre = self.ensemble.combine(base_preds, weights, max_hours)
+
+        if not ensemble_pre:
+            raise RuntimeError(f"No se pudieron generar predicciones para {currency_pair}")
+
+        return {
+            'ensemble_pre':    ensemble_pre,
+            'weights':         weights,
+            'bt_metrics':      self._backtesting_metrics(currency_pair, days=30, market=market),
+            'feat_importance': self._get_feature_importance(currency_pair, market),
+        }
+
     def cache_all_horizons(self, currency_pair: str, market: str = 'web'):
         """Pre-calcula y cachea todos los horizontes (llamado por tarea horaria)."""
         # Construir el pipeline UNA vez y reusarlo en los 4 horizontes (antes se
@@ -358,9 +408,24 @@ class ForexMLEngine:
         except Exception as exc:
             logger.warning("cache.prewarm_build_failed pair=%s market=%s: %s", currency_pair, market, exc)
             df = None
+
+        # Calcular base_preds+ensemble (al horizonte máximo) y weights/bt/feat UNA
+        # sola vez; cada horizonte solo corta el slice. Si la precomputación falla,
+        # se cae al path por-horizonte (mismo resultado, sin la optimización).
+        precomputed = None
+        if df is not None:
+            try:
+                precomputed = self._precompute_forecast(
+                    currency_pair, df, max(_HORIZON_HOURS.values()), market,
+                )
+            except Exception as exc:
+                logger.warning("cache.precompute_failed pair=%s market=%s: %s", currency_pair, market, exc)
+                precomputed = None
+
         for key in _HORIZON_HOURS:
             try:
-                self.predict(currency_pair, horizon_key=key, use_cache=False, market=market, df=df)
+                self.predict(currency_pair, horizon_key=key, use_cache=False,
+                             market=market, df=df, _precomputed=precomputed)
                 logger.info("cache.prewarmed pair=%s market=%s horizon=%s", currency_pair, market, key)
             except Exception as exc:
                 logger.warning("cache.prewarm_failed pair=%s market=%s horizon=%s: %s", currency_pair, market, key, exc)

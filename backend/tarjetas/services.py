@@ -328,23 +328,54 @@ class TarjetaService:
         total_costo    = Decimal('0')
         total_venta    = Decimal('0')
 
+        branch_pk = branch.pk if hasattr(branch, 'pk') else branch
+
         for t in tipos:
-            lotes_activos = list(
-                t.lotes.filter(is_active=True, cantidad_restante__gt=0)
-                .order_by('fecha_compra')
+            # Todo se deriva de los lotes/alertas YA prefetchados (t.lotes.all() y
+            # t.alertas_inventario.all() usan la caché del prefetch), replicando en
+            # memoria las properties del modelo TipoTarjeta y el fallback de alerta
+            # para no disparar ~6 queries por tipo (también corre en el camino de
+            # escritura vía _publish_inventario_ws).
+            lotes_activos = sorted(
+                (l for l in t.lotes.all()
+                 if l.is_active and l.cantidad_restante > 0),
+                key=lambda l: l.fecha_compra,
             )
+            # stock == stock_actual de la property: ésta suma cantidad_restante de
+            # TODOS los lotes is_active, pero los que tienen restante == 0 aportan 0,
+            # así que coincide con la suma sobre lotes_activos (restante > 0).
             stock = sum(l.cantidad_restante for l in lotes_activos)
-            costo_prom = t.costo_promedio
-            valor_costo = t.valor_inventario_bob
+
+            # costo_promedio (ponderado sobre is_active + restante > 0):
+            total_unidades = Decimal('0')
+            total_costo    = Decimal('0')
+            for l in lotes_activos:
+                total_unidades += l.cantidad_restante
+                total_costo    += l.cantidad_restante * l.precio_costo
+            if total_unidades == 0:
+                costo_prom = Decimal('0')
+            else:
+                costo_prom = (total_costo / total_unidades).quantize(
+                    MONEY_Q, rounding=ROUND_HALF_UP
+                )
+            # valor_inventario_bob = costo_promedio * stock_actual (== stock):
+            valor_costo = (costo_prom * stock).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
             valor_venta = (t.denominacion * stock).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
             margen_potencial = (valor_venta - valor_costo).quantize(MONEY_Q, rounding=ROUND_HALF_UP)
 
-            alerta = t.alertas_inventario.filter(
-                is_active=True,
-                branch=branch,
-            ).first() or t.alertas_inventario.filter(
-                is_active=True, branch__isnull=True,
-            ).first()
+            # Fallback de alerta: primero la de esta sucursal, si no la global
+            # (branch NULL). unique_together (tipo_tarjeta, branch) garantiza ≤1
+            # candidata por rama → equivalente exacto a los .first() encadenados.
+            alerta = None
+            for a in t.alertas_inventario.all():
+                if a.is_active and a.branch_id == branch_pk:
+                    alerta = a
+                    break
+            if alerta is None:
+                for a in t.alertas_inventario.all():
+                    if a.is_active and a.branch_id is None:
+                        alerta = a
+                        break
 
             estado_stock = 'ok'
             if alerta:
@@ -400,13 +431,36 @@ class TarjetaService:
             tipos = tipos.filter(company_id=company_id)
         result = []
         for t in tipos:
+            # Calcular stock/costo_promedio/valor_inventario EN MEMORIA sobre los
+            # lotes ya prefetchados (t.lotes.all() usa la caché del prefetch),
+            # replicando exactamente las properties del modelo TipoTarjeta sin
+            # disparar queries por fila.
+            stock_actual   = 0           # stock_actual: lotes is_active=True
+            total_unidades = Decimal('0')  # costo_promedio: is_active + restante>0
+            total_costo    = Decimal('0')
+            for lote in t.lotes.all():
+                if not lote.is_active:
+                    continue
+                stock_actual += int(lote.cantidad_restante)
+                if lote.cantidad_restante > 0:
+                    total_unidades += lote.cantidad_restante
+                    total_costo    += lote.cantidad_restante * lote.precio_costo
+            if total_unidades == 0:
+                costo_promedio = Decimal('0')
+            else:
+                costo_promedio = (total_costo / total_unidades).quantize(
+                    MONEY_Q, rounding=ROUND_HALF_UP
+                )
+            valor_inventario = (costo_promedio * stock_actual).quantize(
+                MONEY_Q, rounding=ROUND_HALF_UP
+            )
             result.append({
                 'id':                   t.id,
                 'nombre':               t.nombre,
                 'operadora':            t.operadora,
                 'denominacion':         str(t.denominacion),
-                'stock_actual':         t.stock_actual,
-                'costo_promedio':       str(t.costo_promedio),
-                'valor_inventario_bob': str(t.valor_inventario_bob),
+                'stock_actual':         stock_actual,
+                'costo_promedio':       str(costo_promedio),
+                'valor_inventario_bob': str(valor_inventario),
             })
         return result

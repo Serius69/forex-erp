@@ -18,6 +18,7 @@ import * as yup from 'yup';
 import { api, downloadFile } from '../../services/api';
 import { formatCurrency, formatNumber } from '../../utils/formatters';
 import { useAuth } from '../../contexts/AuthContext';
+import { useDebounce } from '../../hooks/useDebounce';
 
 // ── Tipos alineados con el backend ───────────────────────────────────────────
 interface Currency {
@@ -99,6 +100,7 @@ const TransactionHistory: React.FC = () => {
   const [rowsPerPage,  setRowsPerPage]  = useState(25);
   const [total,        setTotal]        = useState(0);
   const [search,       setSearch]       = useState('');
+  const debouncedSearch                 = useDebounce(search, 350);
   const [dateFrom,     setDateFrom]     = useState(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString().split('T')[0]);
@@ -134,7 +136,7 @@ const TransactionHistory: React.FC = () => {
         params: {
           page:      page + 1,
           page_size: rowsPerPage,
-          search:    search    || undefined,
+          search:    debouncedSearch || undefined,
           date_from: dateFrom  || undefined,
           date_to:   dateTo    || undefined,
           transaction_type:      txType            || undefined,
@@ -151,7 +153,7 @@ const TransactionHistory: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, rowsPerPage, search, dateFrom, dateTo, txType, txStatus, reportableFilter, enqueueSnackbar]);
+  }, [page, rowsPerPage, debouncedSearch, dateFrom, dateTo, txType, txStatus, reportableFilter, enqueueSnackbar]);
 
   useEffect(() => { load(); }, [load]);
 

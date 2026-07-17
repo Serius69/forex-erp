@@ -555,7 +555,9 @@ class ForexPredictionService:
                )
                return self._predict_naive_fallback(horizon, model_record.currency_pair, getattr(model_record, 'market', 'web') or 'web')
 
-           model = joblib.load(model_path)
+           # Artefacto cacheado por (ruta, mtime): se re-lee solo tras reentrenar.
+           from predictions.artifact_cache import load_cached
+           model = load_cached(model_path, joblib.load)
 
            # Crear dataframe futuro
            future = model.make_future_dataframe(periods=horizon, freq='H')

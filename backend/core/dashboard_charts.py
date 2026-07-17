@@ -1,16 +1,36 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.core.cache import cache
 from django.db.models import Sum, Count, F
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from datetime import timedelta
+
+CACHE_TTL = 180  # segundos — datos de dashboard levemente stale son aceptables
+
+# Ventana del histórico de capital que se grafica (evita escanear toda la tabla).
+CAPITAL_TIMELINE_DAYS = 90
 
 
 class DashboardChartsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        # Clave por rol/sucursal (multi-tenant: branch_id es único global; ADMIN='all',
+        # mismo alcance que las agregaciones de _base_qs). `?refresh=true` fuerza recálculo.
+        force = request.query_params.get('refresh', '').lower() == 'true'
+        if request.user.role == 'ADMIN':
+            scope = 'all'
+        else:
+            scope = f'branch:{request.user.branch_id}'
+        cache_key = f'dashboard_charts:{scope}'
+
+        if not force:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return Response(cached)
+
         today = timezone.now().date()
         days_30_ago = today - timedelta(days=30)
         month_start = today.replace(day=1)
@@ -26,13 +46,15 @@ class DashboardChartsView(APIView):
         ]
         alerts = self._inventory_alerts()
 
-        return Response({
+        data = {
             'revenue_30d': revenue_30d,
             'volume_by_currency': volume_by_currency,
             'capital_timeline': capital_timeline,
             'income_distribution': income_distribution,
             'alerts': alerts,
-        })
+        }
+        cache.set(cache_key, data, CACHE_TTL)
+        return Response(data)
 
     # ── private helpers ───────────────────────────────────────────────────────
 
@@ -128,8 +150,11 @@ class DashboardChartsView(APIView):
             # silencioso → el gráfico salía siempre "Sin datos"). Puede haber
             # varios snapshots por fecha → quedarse con el ÚLTIMO de cada día,
             # no sumarlos (doble conteo).
+            # Acotado a los últimos N días para no escanear todo el histórico.
+            cutoff = timezone.now().date() - timedelta(days=CAPITAL_TIMELINE_DAYS)
             rows = (
                 CapitalSnapshot.objects
+                .filter(fecha__gte=cutoff)
                 .order_by('fecha', 'created_at')
                 .values('fecha', 'total_bob')
             )

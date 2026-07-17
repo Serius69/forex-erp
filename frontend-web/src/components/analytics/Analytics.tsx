@@ -8,7 +8,7 @@
  *   2) Spread — Spreads actuales y series históricas
  *   3) Decisiones — Motor de recomendaciones BUY/SELL/HOLD
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Grid, Card, CardContent, Typography, Tabs, Tab, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -777,10 +777,34 @@ const Analytics: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
-  // Actualizar cuando cambia el capital (transacción procesada)
+  // Actualizar cuando cambia el capital (transacción procesada).
+  // Coalescer los ticks WS a lo sumo un refetch cada 20s: en ráfagas de alto
+  // volumen cada transacción emite `lastCapitalUpdate` y disparar los ~9 requests
+  // por evento saturaría el backend. Refresco inmediato si ya pasó el intervalo;
+  // si no, se agenda un refetch de cola (trailing) con los datos más recientes.
+  const lastRefetchRef = useRef(0);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!lastCapitalUpdate) return;
-    load();
+    const MIN_INTERVAL = 20000;
+    const elapsed = Date.now() - lastRefetchRef.current;
+    if (elapsed >= MIN_INTERVAL) {
+      lastRefetchRef.current = Date.now();
+      load();
+    } else if (pendingTimerRef.current === null) {
+      pendingTimerRef.current = setTimeout(() => {
+        pendingTimerRef.current = null;
+        lastRefetchRef.current = Date.now();
+        load();
+      }, MIN_INTERVAL - elapsed);
+    }
+    return () => {
+      if (pendingTimerRef.current !== null) {
+        clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
+    };
   }, [lastCapitalUpdate, load]);
 
   const TABS = [

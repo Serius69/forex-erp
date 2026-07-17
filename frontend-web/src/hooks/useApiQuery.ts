@@ -3,7 +3,7 @@
  *
  * Uso:
  *   const { data, loading, error, retry, isStale } = useApiQuery(
- *     () => apiClient.get('/api/rates/live/'),
+ *     () => api.get('/api/rates/live/'),
  *     [dependency]
  *   );
  */

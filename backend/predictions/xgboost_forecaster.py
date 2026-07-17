@@ -131,7 +131,9 @@ class XGBoostForecaster:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"XGBoost no entrenado para {currency_pair}")
 
-        artifact = joblib.load(model_path)
+        # Artefacto cacheado por (ruta, mtime): se re-lee solo tras reentrenar.
+        from predictions.artifact_cache import load_cached
+        artifact = load_cached(model_path, joblib.load)
         model    = artifact['model']
         features = artifact['features']
 
@@ -146,6 +148,16 @@ class XGBoostForecaster:
         # ma_90) para que los technicals de la última fila sean exactos, sin
         # recomputar sobre los 3 años completos en cada uno de los H pasos.
         TAIL = 320
+
+        # Las features de calendario (hora/día/mes/sesiones/festivo) son función
+        # PURA del timestamp — no dependen de la tasa predicha. Se precalculan
+        # para todos los timestamps futuros de una vez (antes _add_calendar
+        # reconstruía el objeto holidays y escaneaba TAIL=320 fechas en CADA uno
+        # de los H pasos). El resultado por timestamp es byte-idéntico.
+        future_index = pd.DatetimeIndex(
+            [last_ts + pd.Timedelta(hours=h) for h in range(1, horizon + 1)]
+        )
+        cal_future = pipe._add_calendar(pd.DataFrame(index=future_index), currency_pair)
 
         predictions = []
         for h in range(1, horizon + 1):
@@ -172,18 +184,19 @@ class XGBoostForecaster:
                 },
             })
 
-            # Añadir la fila predicha y RECALCULAR technicals + calendario de
-            # forma causal sobre la cola, para que la próxima iteración lea
+            # Añadir la fila predicha para que la próxima iteración lea
             # indicadores actualizados (no congelados).
             new_row_df = pd.DataFrame({'rate': [rate_pred]}, index=[pred_ts])
             df = pd.concat([df, new_row_df])
-            # Arrastrar 'rate' + exógenas (macro/volume): _add_macro las ffill de
-            # forma causal (la fila futura hereda el último valor conocido, no 0).
+            # Calendario del nuevo timestamp: precalculado (no depende del rate).
+            df.loc[pred_ts, cal_future.columns] = cal_future.loc[pred_ts]
+            # Technicals + macro SÍ dependen de la serie acumulada → recalcular de
+            # forma causal sobre la cola. Arrastrar 'rate' + exógenas (macro/volume):
+            # _add_macro las ffill (la fila futura hereda el último valor, no 0).
             carry = ['rate'] + [c for c in ('volume', 'international_rate',
                      'interest_rate', 'inflation_rate', 'oil_price') if c in df.columns]
             tail = df[carry].tail(TAIL).copy()
             tail = pipe._add_technical(tail)
-            tail = pipe._add_calendar(tail, currency_pair)
             tail = pipe._add_macro(tail)
             # Volcar los features recomputados sobre las filas correspondientes.
             df.loc[tail.index, tail.columns] = tail

@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q, F
 from django.utils import timezone
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from django.utils.dateparse import parse_date
 from django.http import HttpResponse
 from .models import Transaction, Customer, TransactionDocument
@@ -66,14 +66,26 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
         if customer_id:
             queryset = queryset.filter(customer_id=customer_id)
+        # Filtro de fecha SARGABLE: se convierte el rango de días locales
+        # (America/La_Paz) a límites datetime absolutos para que el índice btree
+        # sobre -created_at haga seek en vez de un DATE(created_at AT TIME ZONE ...)
+        # no sargable (full scan). Rango [inicio de date_from local, inicio del día
+        # siguiente a date_to local) — mismos días que __date__gte/__lte inclusivos.
+        tz_local = timezone.get_current_timezone()
         if date_from:
             d = parse_date(str(date_from))
             if d:
-                queryset = queryset.filter(created_at__date__gte=d)
+                queryset = queryset.filter(
+                    created_at__gte=timezone.make_aware(datetime.combine(d, time.min), tz_local)
+                )
         if date_to:
             d = parse_date(str(date_to))
             if d:
-                queryset = queryset.filter(created_at__date__lte=d)
+                queryset = queryset.filter(
+                    created_at__lt=timezone.make_aware(
+                        datetime.combine(d + timedelta(days=1), time.min), tz_local
+                    )
+                )
         if tx_status:
             queryset = queryset.filter(status=tx_status)
         if transaction_type:
@@ -574,7 +586,16 @@ class TransactionViewSet(viewsets.ModelViewSet):
         else:
             target_date = timezone.localdate()
         
-        transactions = self.get_queryset().filter(created_at__date=target_date)
+        # Límites datetime sargables (usan el índice -created_at) equivalentes a
+        # created_at__date == target_date en zona local America/La_Paz.
+        tz_local = timezone.get_current_timezone()
+        day_start = timezone.make_aware(datetime.combine(target_date, time.min), tz_local)
+        day_end = timezone.make_aware(
+            datetime.combine(target_date + timedelta(days=1), time.min), tz_local
+        )
+        transactions = self.get_queryset().filter(
+            created_at__gte=day_start, created_at__lt=day_end
+        )
 
         # 5 consultas agrupadas en total (antes: ~50+ — un count/aggregate por
         # divisa×lado + 24 pares count/aggregate horarios → N+1 severo).

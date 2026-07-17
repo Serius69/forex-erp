@@ -345,7 +345,8 @@ class AlertGenerator:
     # ═════════════════════════════════════════════════════════════════════════
 
     @classmethod
-    def generar_alertas(cls, branch, currency: str = None) -> list[dict]:
+    def generar_alertas(cls, branch, currency: str = None,
+                        skip_operativo: bool = False) -> list[dict]:
         """
         Evalúa todas las categorías y retorna lista de alertas accionables.
         También persiste y emite cada alerta vía GlobalAlertService (BD + WebSocket).
@@ -353,6 +354,10 @@ class AlertGenerator:
         Args:
             branch:   Branch instance — requerido para inventario/capital
             currency: código de divisa específica, o None para todas las activas
+            skip_operativo: si True, NO evalúa las alertas operativas (independientes
+                de divisa). Útil para el barrido por (sucursal × divisa): las operativas
+                se corren UNA vez por sucursal vía `generar_alertas_operativo`, en vez
+                de repetirse una vez por cada divisa.
 
         Returns:
             list[dict] con keys: tipo, nivel, mensaje, accion_sugerida, moneda, timestamp
@@ -367,13 +372,25 @@ class AlertGenerator:
             resultado.extend(cls._alertas_riesgo(branch, cur))
             resultado.extend(cls._alertas_oportunidad(branch, cur))
 
-        resultado.extend(cls._alertas_operativo(branch))
+        if not skip_operativo:
+            resultado.extend(cls._alertas_operativo(branch))
 
         # Ordenar: CRITICAL primero, INFO último
         _ord = {'CRITICAL': 0, 'WARNING': 1, 'INFO': 2}
         resultado.sort(key=lambda a: _ord.get(a.get('nivel', 'INFO'), 2))
 
         return resultado
+
+    @classmethod
+    def generar_alertas_operativo(cls, branch) -> list[dict]:
+        """
+        Evalúa SOLO las alertas operativas de la sucursal (independientes de divisa).
+        Se llama una vez por sucursal para evitar el trabajo repetido que provocaba
+        invocar `generar_alertas` una vez por divisa (cada llamada re-ejecutaba
+        `_alertas_operativo`, con sus ~4 queries branch-level). Mismos side-effects
+        de emisión/persistencia que la evaluación operativa embebida en `generar_alertas`.
+        """
+        return cls._alertas_operativo(branch)
 
     # ═════════════════════════════════════════════════════════════════════════
     # Infraestructura interna

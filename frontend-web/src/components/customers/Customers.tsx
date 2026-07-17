@@ -18,6 +18,7 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { api } from '../../services/api';
 import { formatCurrency } from '../../utils/formatters';
+import { useDebounce } from '../../hooks/useDebounce';
 
 interface Customer {
   id:              number;
@@ -50,6 +51,7 @@ const Customers: React.FC = () => {
   const [rowsPerPage,  setRowsPerPage]  = useState(10);
   const [total,        setTotal]        = useState(0);
   const [search,       setSearch]       = useState('');
+  const debouncedSearch                 = useDebounce(search, 350);
   const [formOpen,     setFormOpen]     = useState(false);
   const [historyOpen,  setHistoryOpen]  = useState(false);
   const [selected,     setSelected]     = useState<Customer | null>(null);
@@ -60,7 +62,7 @@ const Customers: React.FC = () => {
     setLoading(true);
     try {
       const res = await api.get('/customers/', {
-        params: { page: page + 1, page_size: rowsPerPage, search: search || undefined },
+        params: { page: page + 1, page_size: rowsPerPage, search: debouncedSearch || undefined },
       });
       setCustomers(res.data.results ?? res.data);
       setTotal(res.data.count ?? res.data.length);
@@ -69,7 +71,7 @@ const Customers: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, rowsPerPage, search, enqueueSnackbar]);
+  }, [page, rowsPerPage, debouncedSearch, enqueueSnackbar]);
 
   useEffect(() => { loadCustomers(); }, [loadCustomers]);
 

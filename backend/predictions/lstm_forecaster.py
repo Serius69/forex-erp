@@ -161,8 +161,12 @@ class LSTMForecaster:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"BiLSTM no entrenado para {currency_pair}")
 
-        model    = tf.keras.models.load_model(model_path)
-        artifact = joblib.load(scaler_path)
+        # Artefactos cacheados en memoria por (ruta, mtime): se re-leen de disco
+        # solo tras reentrenar (mtime nuevo). load_model de Keras es de orden
+        # segundos y antes se repetía en cada predict()/horizonte.
+        from predictions.artifact_cache import load_cached
+        model    = load_cached(model_path, tf.keras.models.load_model)
+        artifact = load_cached(scaler_path, joblib.load)
         scaler   = artifact['scaler']
         features = artifact['features']
         seq_len  = artifact['seq_len']

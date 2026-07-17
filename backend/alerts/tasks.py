@@ -91,11 +91,21 @@ def evaluate_all_alerts(self):
     for branch in branches:
         for code in currencies:
             try:
-                AlertGenerator.generar_alertas(branch, currency=code)
+                # Las alertas operativas (independientes de divisa) NO se evalúan aquí:
+                # se corren UNA sola vez por sucursal más abajo, no una vez por divisa.
+                AlertGenerator.generar_alertas(branch, currency=code, skip_operativo=True)
                 evaluated += 1
             except Exception as exc:
                 log.debug('EVALUATE_ALL_SKIP branch=%s currency=%s err=%s',
                           branch, code, exc)
+        # Alertas operativas de la sucursal: una vez por branch (O(branches) en vez de
+        # O(branches × divisas)). Solo si hubo divisas que evaluar, para no cambiar qué
+        # alertas se generaban antes (cuando no había divisas, no se corría nada).
+        if currencies:
+            try:
+                AlertGenerator.generar_alertas_operativo(branch)
+            except Exception as exc:
+                log.debug('EVALUATE_ALL_OPERATIVO_SKIP branch=%s err=%s', branch, exc)
 
     log.info(
         'TASK_DONE alerts.evaluate_all branches=%d currencies=%d pairs=%d',

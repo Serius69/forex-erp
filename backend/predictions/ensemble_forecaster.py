@@ -43,23 +43,31 @@ class EnsembleForecaster:
         cutoff  = timezone.now() - pd.Timedelta(days=window_days)
         weights = {}
 
-        for model_type in BASE_MODELS:
-            result = (
-                Prediction.objects
-                .filter(
-                    currency_pair=currency_pair,
-                    model__model_type=model_type,
-                    model__market=market,
-                    actual_rate__isnull=False,
-                    created_at__gte=cutoff,
-                )
-                .aggregate(avg_mape=Avg('error_percentage'))
+        # MAPE promedio por tipo de modelo en UNA sola query agrupada (antes: 4
+        # aggregates, uno por model_type). `.order_by()` limpia el ordering por
+        # defecto del modelo (-created_at), que si no contaminaría el GROUP BY.
+        rows = (
+            Prediction.objects
+            .filter(
+                currency_pair=currency_pair,
+                model__market=market,
+                actual_rate__isnull=False,
+                created_at__gte=cutoff,
             )
-            mape = result['avg_mape']
+            .values('model__model_type')
+            .order_by()
+            .annotate(avg_mape=Avg('error_percentage'))
+        )
+        mape_by_type = {r['model__model_type']: r['avg_mape'] for r in rows}
+
+        for model_type in BASE_MODELS:
+            mape = mape_by_type.get(model_type)
 
             if mape and mape > 0:
                 weights[model_type] = 1.0 / mape
             else:
+                # Modelo ausente en la ventana o MAPE nulo/≤0 → fallback a MAPE de
+                # entrenamiento (se preserva el comportamiento del bucle original).
                 weights[model_type] = self._fallback_weight(currency_pair, model_type, market)
 
         # Normalizar
@@ -323,7 +331,9 @@ class EnsembleForecaster:
         if not os.path.exists(meta_path):
             raise FileNotFoundError("Meta-learner no entrenado")
 
-        artifact = joblib.load(meta_path)
+        # Artefacto cacheado por (ruta, mtime): se re-lee solo tras reentrenar.
+        from predictions.artifact_cache import load_cached
+        artifact = load_cached(meta_path, joblib.load)
         ridge    = artifact['model']
         features = artifact['features']
 

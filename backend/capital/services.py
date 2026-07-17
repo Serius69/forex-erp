@@ -410,35 +410,60 @@ class GananciaService:
         if currency_code:
             codes = {currency_code} & codes
 
+        # Ambas orientaciones conviven en los datos: el formulario web y las
+        # cargas históricas registran SIEMPRE divisa→BOB (amount_from=divisa,
+        # amount_to=BOB) tanto para BUY como para SELL; datos antiguos/tests
+        # usan BOB→divisa en SELL. Se agregan las dos. En vez de 4 aggregates
+        # por divisa, dos pasadas agrupadas con condicionales (Django 4.2 soporta
+        # filter= en Sum/Count). order_by() explícito evita que el ordering default
+        # del modelo contamine el GROUP BY (1 grupo por fila).
+        #  (a) divisa→BOB: la divisa es currency_from__code (excluyendo BOB).
+        #      Réplica exacta de compras_dv/ventas_dv (from=code, sin filtrar el destino).
+        dv = {
+            row['currency_from__code']: row
+            for row in qs.exclude(currency_from__code='BOB')
+                         .values('currency_from__code')
+                         .annotate(
+                             compras_ops=Count('id', filter=Q(transaction_type='BUY')),
+                             compras_unidades=Sum('amount_from', filter=Q(transaction_type='BUY')),
+                             compras_costo_bob=Sum('amount_to', filter=Q(transaction_type='BUY')),
+                             ventas_ops=Count('id', filter=Q(transaction_type='SELL')),
+                             ventas_unidades=Sum('amount_from', filter=Q(transaction_type='SELL')),
+                             ventas_ingreso_bob=Sum('amount_to', filter=Q(transaction_type='SELL')),
+                         )
+                         .order_by()
+        }
+        #  (b) BOB→divisa: la divisa es currency_to__code (from=BOB, to≠BOB).
+        #      Réplica exacta de compras_bob/ventas_bob (unidades/costo/ingreso cruzados).
+        bob = {
+            row['currency_to__code']: row
+            for row in qs.filter(currency_from__code='BOB')
+                         .exclude(currency_to__code='BOB')
+                         .values('currency_to__code')
+                         .annotate(
+                             compras_ops=Count('id', filter=Q(transaction_type='BUY')),
+                             compras_unidades=Sum('amount_to', filter=Q(transaction_type='BUY')),
+                             compras_costo_bob=Sum('amount_from', filter=Q(transaction_type='BUY')),
+                             ventas_ops=Count('id', filter=Q(transaction_type='SELL')),
+                             ventas_unidades=Sum('amount_to', filter=Q(transaction_type='SELL')),
+                             ventas_ingreso_bob=Sum('amount_from', filter=Q(transaction_type='SELL')),
+                         )
+                         .order_by()
+        }
+
         resultado = []
         for code in sorted(codes):
-            # Ambas orientaciones conviven en los datos: el formulario web y las
-            # cargas históricas registran SIEMPRE divisa→BOB (amount_from=divisa,
-            # amount_to=BOB) tanto para BUY como para SELL; datos antiguos/tests
-            # usan BOB→divisa en SELL. Se agregan las dos.
-            compras_dv = qs.filter(
-                transaction_type='BUY', currency_from__code=code,
-            ).aggregate(ops=Count('id'), unidades=Sum('amount_from'), costo_bob=Sum('amount_to'))
-            compras_bob = qs.filter(
-                transaction_type='BUY', currency_from__code='BOB', currency_to__code=code,
-            ).aggregate(ops=Count('id'), unidades=Sum('amount_to'), costo_bob=Sum('amount_from'))
-
-            ventas_dv = qs.filter(
-                transaction_type='SELL', currency_from__code=code,
-            ).aggregate(ops=Count('id'), unidades=Sum('amount_from'), ingreso_bob=Sum('amount_to'))
-            ventas_bob = qs.filter(
-                transaction_type='SELL', currency_from__code='BOB', currency_to__code=code,
-            ).aggregate(ops=Count('id'), unidades=Sum('amount_to'), ingreso_bob=Sum('amount_from'))
-
+            a = dv.get(code, {})
+            b = bob.get(code, {})
             compras = {
-                'ops':       (compras_dv['ops'] or 0)      + (compras_bob['ops'] or 0),
-                'unidades':  (compras_dv['unidades'] or 0) + (compras_bob['unidades'] or 0),
-                'costo_bob': (compras_dv['costo_bob'] or 0) + (compras_bob['costo_bob'] or 0),
+                'ops':       (a.get('compras_ops') or 0)       + (b.get('compras_ops') or 0),
+                'unidades':  (a.get('compras_unidades') or 0)  + (b.get('compras_unidades') or 0),
+                'costo_bob': (a.get('compras_costo_bob') or 0) + (b.get('compras_costo_bob') or 0),
             }
             ventas = {
-                'ops':         (ventas_dv['ops'] or 0)      + (ventas_bob['ops'] or 0),
-                'unidades':    (ventas_dv['unidades'] or 0) + (ventas_bob['unidades'] or 0),
-                'ingreso_bob': (ventas_dv['ingreso_bob'] or 0) + (ventas_bob['ingreso_bob'] or 0),
+                'ops':         (a.get('ventas_ops') or 0)         + (b.get('ventas_ops') or 0),
+                'unidades':    (a.get('ventas_unidades') or 0)    + (b.get('ventas_unidades') or 0),
+                'ingreso_bob': (a.get('ventas_ingreso_bob') or 0) + (b.get('ventas_ingreso_bob') or 0),
             }
 
             costo_bob   = _q(compras['costo_bob']  or 0)

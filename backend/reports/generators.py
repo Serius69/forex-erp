@@ -17,6 +17,7 @@ from reportlab.graphics.charts.lineplots import LinePlot
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from django.core.files.base import ContentFile
 from django.db.models import Sum, Count, Avg, Q, F
+from django.db.models.functions import ExtractHour
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
@@ -82,7 +83,9 @@ class ReportGenerator:
             'by_currency': transactions.values('currency_from__code').order_by('currency_from__code').annotate(
                 count=Count('id'),
                 volume=Sum('amount_from'),
-                volume_bob=Sum('amount_to')
+                volume_bob=Sum('amount_to'),
+                buy_count=Count('id', filter=Q(transaction_type='BUY')),
+                sell_count=Count('id', filter=Q(transaction_type='SELL'))
             ),
             'by_payment': transactions.values('payment_method').order_by('payment_method').annotate(
                 count=Count('id'),
@@ -343,19 +346,10 @@ class ReportGenerator:
         # Datos
         row = 2
         for item in stats['by_currency']:
-            # Obtener compras y ventas por separado
-            buy_count = transactions.filter(
-                currency_from__code=item['currency_from__code'],
-                transaction_type='BUY'
-            ).count()
-            sell_count = transactions.filter(
-                currency_from__code=item['currency_from__code'],
-                transaction_type='SELL'
-            ).count()
-            
+            # Compras y ventas ya vienen anotadas en el aggregate de by_currency
             ws_currency.cell(row=row, column=1, value=item['currency_from__code'])
-            ws_currency.cell(row=row, column=2, value=buy_count)
-            ws_currency.cell(row=row, column=3, value=sell_count)
+            ws_currency.cell(row=row, column=2, value=item['buy_count'])
+            ws_currency.cell(row=row, column=3, value=item['sell_count'])
             ws_currency.cell(row=row, column=4, value=item['count'])
             ws_currency.cell(row=row, column=5, value=float(item['volume']))
             ws_currency.cell(row=row, column=6, value=float(item['volume_bob']))
@@ -383,18 +377,27 @@ class ReportGenerator:
     
     def _get_hourly_distribution(self, transactions):
         """Obtiene distribución horaria de transacciones"""
+        # Una sola query agrupada por hora (ExtractHour respeta TZ La_Paz igual
+        # que el lookup __hour); el order_by explícito evita que el ordering
+        # default (-created_at) contamine el GROUP BY.
+        grouped = (
+            transactions
+            .annotate(hour=ExtractHour('created_at'))
+            .values('hour')
+            .order_by('hour')
+            .annotate(count=Count('id'), volume=Sum('amount_to'))
+        )
+        by_hour = {row['hour']: row for row in grouped}
+
         hourly_data = []
-        
         for hour in range(24):
-            hour_trans = transactions.filter(created_at__hour=hour)
+            row = by_hour.get(hour)
             hourly_data.append({
                 'hour': hour,
-                'count': hour_trans.count(),
-                'volume': hour_trans.aggregate(
-                    total=Sum('amount_to')
-                )['total'] or 0
+                'count': row['count'] if row else 0,
+                'volume': (row['volume'] if row and row['volume'] is not None else 0),
             })
-        
+
         return hourly_data
     
     def _get_top_customers(self, transactions):

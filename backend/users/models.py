@@ -187,3 +187,7 @@ class UserActivity(models.Model):
         ordering = ['-timestamp']
         verbose_name = 'Actividad de Usuario'
         verbose_name_plural = 'Actividades de Usuario'
+        indexes = [
+            models.Index(fields=['user', '-timestamp'], name='useract_user_ts_idx'),
+            models.Index(fields=['-timestamp'], name='useract_ts_idx'),
+        ]
