@@ -15,7 +15,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Tabs, Tab, Alert, IconButton, Tooltip, Divider,
   CircularProgress, Badge, Dialog, DialogTitle, DialogContent,
-  DialogActions, LinearProgress,
+  DialogActions, LinearProgress, TablePagination,
 } from '@mui/material';
 import {
   Warning, Error as ErrorIcon, Info, CheckCircle,
