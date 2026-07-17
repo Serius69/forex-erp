@@ -82,7 +82,7 @@ class ParallelMarketFetcher(BaseFetcher):
       3. Estimación con spread histórico (confidence=0.60)
     """
     source_name = 'PARALELO'
-    market_type = 'parallel'
+    market_type = 'paralelo_digital'
 
     def _fetch(self) -> list[FetchResult]:
         results = self._scrape_reference_sites()
@@ -387,7 +387,7 @@ class CasaDeCambioFetcher(BaseFetcher):
     aunque son ligeramente inferiores al mercado paralelo informal.
     """
     source_name = 'CASA_CAMBIO'
-    market_type = 'parallel'
+    market_type = 'paralelo_digital'
 
     def _fetch(self) -> list[FetchResult]:
         """Usa ParallelMarketFetcher como base y ajusta source_name."""

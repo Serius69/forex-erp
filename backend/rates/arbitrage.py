@@ -470,14 +470,14 @@ class ArbitrageDetector:
 
     @staticmethod
     def _best_source(sources: list[dict]) -> dict:
-        """Selecciona la fuente con mayor confidence (preferir paralelo_digital > digital)."""
-        priority = {'paralelo_digital': 5, 'paralelo_fisico_empresa': 5, 'parallel': 4, 'digital': 3}
+        """Selecciona la fuente con mayor confidence (preferir paralelo_digital > físico)."""
+        priority = {'paralelo_digital': 5, 'paralelo_fisico_empresa': 5, 'paralelo_fisico_competencia': 4}
         return max(sources, key=lambda s: (priority.get(s['market_type'], 0), s['confidence']))
 
     @staticmethod
     def _risk_for_markets(market_buy: str, market_sell: str) -> RiskLevel:
         """Estima el nivel de riesgo basado en los tipos de mercado involucrados."""
-        if market_buy == 'digital' and 'paralelo' in market_sell:
+        if market_buy == 'paralelo_digital' and 'paralelo_fisico' in market_sell:
             return 'MEDIUM'
         if market_buy == market_sell:
             return 'LOW'

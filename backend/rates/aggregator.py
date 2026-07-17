@@ -26,8 +26,6 @@ MARKET_PRIORITY = {
     'paralelo_digital':            5,
     'paralelo_fisico_empresa':     5,
     'paralelo_fisico_competencia': 4,
-    'parallel':                    4,
-    'digital':                     3,
 }
 
 
@@ -179,13 +177,9 @@ class RateAggregator:
         from .fetchers.airtm_v2_fetcher   import AirtmQuoteFetcher
 
         fetcher_map = {
-            'digital':          [TakenosFetcher, AirtmFetcher, AirtmQuoteFetcher],
+            # 'digital'/'parallel' se consolidaron en 'paralelo_digital' (migración 0024).
             'paralelo_digital': [
-                ParallelMarketFetcher, BinanceP2PFetcher,
-                BitgetP2PFetcher, BybitP2PFetcher,
-                EldoradoFetcher, WallbitFetcher, SaldoARFetcher,
-            ],
-            'parallel': [
+                TakenosFetcher, AirtmFetcher, AirtmQuoteFetcher,
                 ParallelMarketFetcher, BinanceP2PFetcher,
                 BitgetP2PFetcher, BybitP2PFetcher,
                 EldoradoFetcher, WallbitFetcher, SaldoARFetcher,

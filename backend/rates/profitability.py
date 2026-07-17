@@ -168,7 +168,7 @@ class ProfitabilityAnalyzer:
                         .filter(
                             currency_from__code=tx.currency_from.code,
                             currency_to__is_base_currency=True,
-                            market_type__in=('paralelo_digital', 'paralelo_fisico_empresa', 'parallel'),
+                            market_type__in=('paralelo_digital', 'paralelo_fisico_empresa'),
                             valid_from__lte=tx.created_at,
                         )
                         .order_by('-valid_from')

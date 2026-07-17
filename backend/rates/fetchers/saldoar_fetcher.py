@@ -48,7 +48,7 @@ def _get_usd_bob_parallel() -> tuple[Decimal, bool]:
         bob = Currency.objects.get(code='BOB')
         base_q = ExchangeRate.objects.filter(
             currency_from=usd, currency_to=bob,
-            market_type__in=('paralelo_digital', 'parallel'),
+            market_type='paralelo_digital',
         )
         # 1) tasa activa vigente
         rate = base_q.filter(valid_until__isnull=True).order_by(

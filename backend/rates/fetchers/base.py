@@ -132,7 +132,7 @@ class FetchResult:
       fetched_at    → datetime UTC de cuando se realizó la consulta
     """
     currency_code:  str
-    market_type:    str           # 'official' | 'bcb' | 'digital' | 'parallel'
+    market_type:    str           # 'official' | 'paralelo_digital' | 'paralelo_fisico_*'
     source_name:    str
     official_rate:  Decimal
     buy_rate:       Decimal
@@ -198,7 +198,7 @@ class BaseFetcher:
     Implementa Circuit Breaker (Redis), manejo de errores y logging.
     """
     source_name: str = 'unknown'
-    market_type: str = 'parallel'
+    market_type: str = 'paralelo_digital'
 
     def fetch(self) -> list[FetchResult]:
         """

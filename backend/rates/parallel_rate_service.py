@@ -72,7 +72,7 @@ class ParallelRateService:
                     currency_to__is_base_currency=True,
                     valid_until__isnull=True,
                     market_type__in=('paralelo_digital', 'paralelo_fisico_empresa',
-                                     'paralelo_fisico_competencia', 'parallel', 'digital'),
+                                     'paralelo_fisico_competencia'),
                 )
                 .order_by('-valid_from')[:20]
             )
@@ -153,7 +153,7 @@ class ParallelRateService:
                 .filter(
                     currency_from__code=currency,
                     currency_to__is_base_currency=True,
-                    market_type__in=('paralelo_digital', 'paralelo_fisico_empresa', 'parallel'),
+                    market_type__in=('paralelo_digital', 'paralelo_fisico_empresa'),
                 )
                 .order_by('-valid_from')
                 .first()

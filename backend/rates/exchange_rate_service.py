@@ -60,8 +60,6 @@ MIN_CONFIDENCE_FOR_TX: float = 0.70
 # El objetivo es cortar "fetchers caídos por días", no la frescura fina.
 STALE_RATE_MAX_AGE_HOURS: dict[str, float] = {
     'paralelo_digital':             24,
-    'digital':                      24,
-    'parallel':                     24,
     'official':                     48,
     'paralelo_fisico_competencia':  48,
     'paralelo_fisico_empresa':      48,

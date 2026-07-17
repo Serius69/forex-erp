@@ -45,7 +45,7 @@ class TakenosFetcher(BaseFetcher):
     Scraping de la página pública de cotizaciones.
     """
     source_name = 'TAKENOS'
-    market_type = 'digital'
+    market_type = 'paralelo_digital'
 
     def _fetch(self) -> list[FetchResult]:
         """Intenta scraping de Takenos, fallback a estimación de mercado digital."""
@@ -227,7 +227,7 @@ class AirtmFetcher(BaseFetcher):
     Usa el mismo mecanismo de estimación que Takenos cuando el scraping falla.
     """
     source_name = 'AIRTM'
-    market_type = 'digital'
+    market_type = 'paralelo_digital'
 
     def _fetch(self) -> list[FetchResult]:
         results = self._scrape_airtm()

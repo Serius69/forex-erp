@@ -110,7 +110,7 @@ class AIPricingEngine:
             cutoff = timezone.now() - timedelta(minutes=STALE_MINUTES)
             rate = (ExchangeRate.objects
                     .filter(currency_from=cur, currency_to=bob,
-                            market_type__in=('paralelo_digital', 'parallel'),
+                            market_type='paralelo_digital',
                             valid_from__gte=cutoff)
                     .order_by('-valid_from')
                     .first())
@@ -129,7 +129,7 @@ class AIPricingEngine:
             cutoff = timezone.now() - timedelta(minutes=STALE_MINUTES)
             rate = (ExchangeRate.objects
                     .filter(currency_from=cur, currency_to=bob,
-                            market_type__in=('paralelo_digital', 'digital'),
+                            market_type='paralelo_digital',
                             valid_from__gte=cutoff)
                     .order_by('-valid_from')
                     .first())
@@ -148,7 +148,7 @@ class AIPricingEngine:
             cutoff = timezone.now() - timedelta(days=days)
             avg = (ExchangeRate.objects
                    .filter(currency_from=cur, currency_to=bob,
-                           market_type__in=('paralelo_fisico_empresa', 'parallel'),
+                           market_type='paralelo_fisico_empresa',
                            valid_from__gte=cutoff)
                    .aggregate(avg=Avg('sell_rate'))['avg'])
             if avg:

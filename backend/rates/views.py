@@ -546,10 +546,10 @@ class LiveRatesView(viewsets.ViewSet):
     """
     GET /api/rates/live/
     Devuelve las mejores tasas disponibles por divisa desde la DB,
-    priorizando: paralelo_digital > parallel > digital > competencia.
+    priorizando: paralelo_digital > paralelo_fisico_empresa > competencia.
 
-    Opcionalmente acepta ?market=paralelo_digital|parallel|digital para filtrar
-    por tipo de mercado.
+    Opcionalmente acepta ?market=paralelo_digital|paralelo_fisico_empresa|paralelo_fisico_competencia
+    para filtrar por tipo de mercado.
 
     Formato de respuesta:
       {

@@ -225,8 +225,8 @@ class RateEngine:
             cur = Currency.objects.get(code=currency)
             bob = Currency.objects.get(code='BOB')
 
-            # Preferir paralelo_digital, luego cualquier paralelo
-            for market in ('paralelo_digital', 'parallel', 'digital'):
+            # Preferir paralelo_digital, luego físico
+            for market in ('paralelo_digital', 'paralelo_fisico_empresa', 'paralelo_fisico_competencia'):
                 rate = (
                     ExchangeRate.objects
                     .filter(

@@ -15,8 +15,6 @@ _PARALLEL_MARKETS = [
     'paralelo_digital',
     'paralelo_fisico_empresa',
     'paralelo_fisico_competencia',
-    'parallel',
-    'digital',
 ]
 
 

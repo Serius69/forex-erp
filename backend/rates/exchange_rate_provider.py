@@ -311,7 +311,7 @@ class ExchangeRateProvider:
             fetched_at     = timezone.now(),
             confidence     = 0.50,
             sources        = ['INFERRED_FROM_TRANSACTION'],
-            market_type    = 'parallel',
+            market_type    = 'paralelo_digital',
             is_validated   = False,
             requires_warning = True,
         )

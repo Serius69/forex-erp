@@ -1,5 +1,6 @@
 # rates/models.py
 from django.db import models
+from django.db.models import Q
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from decimal import Decimal
@@ -143,9 +144,9 @@ class ExchangeRate(models.Model):
         # ── Paralelo físico ───────────────────────────────────────────────────
         ('paralelo_fisico_empresa',     'Paralelo Físico — Empresa'),
         ('paralelo_fisico_competencia', 'Paralelo Físico — Competencia'),
-        # ── Legacy aliases (no romper datos históricos) ───────────────────────
-        ('parallel', 'Mercado Paralelo (legacy)'),
-        ('digital',  'Plataforma Digital (legacy)'),
+        # NOTA: los alias legacy 'parallel'/'digital' fueron consolidados en
+        # 'paralelo_digital' (data migration 0024). No re-agregar: los fetchers
+        # deben escribir el valor canónico.
     ]
 
     # ── Método de obtención del dato (trazabilidad regulatoria) ───────────────
@@ -253,6 +254,15 @@ class ExchangeRate(models.Model):
             models.Index(fields=['valid_until', 'currency_from', 'currency_to']),
             models.Index(fields=['source_method', 'currency_from', '-valid_from']),
             models.Index(fields=['is_validated', 'source_method']),
+        ]
+        constraints = [
+            # D2: a lo sumo UNA tasa primaria activa (valid_until IS NULL) por par.
+            # NULLs distintos en Postgres ⇒ solo aplica a filas vigentes con is_primary=True.
+            models.UniqueConstraint(
+                fields=['currency_from', 'currency_to'],
+                condition=Q(is_primary=True, valid_until__isnull=True),
+                name='uniq_active_primary_rate_per_pair',
+            ),
         ]
 
     @property
