@@ -61,12 +61,12 @@ Sistema ERP integral para casas de cambio bolivianas. Gestión en tiempo real de
 | `predictions` | Pronósticos ML ensemble 5 modelos (3 series de mercado por par) |
 | `macro` | Indicadores macroeconómicos Bolivia (World Bank, USD internacional) + noticias |
 | `reports` | Cumplimiento ASFI: RTE (automático), ROUE, PEP, Libro Diario |
-| `capital` | Gastos, posición de capital, P&L en tiempo real |
+| `capital` | Posición de capital, P&L RT, gastos, ingresos extra, cuentas por pagar, caja chica |
 | `tarjetas` | Tarjetas prepago con costeo FIFO |
 | `alerts` | Sistema unificado de alertas cross-módulo |
 | `analytics` | Analytics por sucursal + seed del schedule de Celery Beat (`0007`) |
 | `snapshots` | Snapshots P&L, exposición, spread |
-| `data_migration` | Importación/sincronización de datos (Google Sheets) |
+| `data_migration` | Importación/sincronización desde Google Sheets (auto-sync + backfill del sistema legado) |
 | `tenants` | Multi-tenant SaaS: Company + Subscription |
 
 ---
@@ -306,7 +306,14 @@ GET /api/capital/alerts/         # Alertas activas de capital
 GET /api/capital/metrics/kpis/   # KPIs cacheados en Redis
     /api/capital/gastos/         # CRUD de gastos (categorías + medio de pago)
     /api/capital/ingresos/       # CRUD de ingresos extra (+ resumen/ por tipo)
+    /api/capital/acreedores/     # Cuentas por pagar (+ resumen/ total adeudado); saldo por acreedor
+    /api/capital/acreedores-movimientos/   # Ledger de cargos/abonos por acreedor
+    /api/capital/caja-chica/     # Ledger de caja chica (+ saldo/ vigente)
 ```
+
+**Cuentas por pagar (`Acreedor`) y caja chica (`MovimientoCajaChica`):** ledgers propios.
+El saldo del acreedor se deriva de sus movimientos (CARGO − ABONO, anotado sin N+1); la
+caja chica es apertura + ingresos − egresos. Ambos migrados del sistema legado en Sheets.
 
 **KPIs disponibles:** ROE diario/anual, rotación de inventario, días de inventario, WACC divisas, break-even spread.
 
