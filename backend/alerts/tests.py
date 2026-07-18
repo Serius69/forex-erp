@@ -63,7 +63,7 @@ def test_evaluate_all_cubre_union_divisas_activas_por_sucursal(_clean_cache):
     calls = []
     with patch(
         'alerts.services.AlertGenerator.generar_alertas',
-        side_effect=lambda branch, currency=None: calls.append((branch.code, currency)) or [],
+        side_effect=lambda branch, currency=None, **kw: calls.append((branch.code, currency)) or [],
     ):
         result = evaluate_all_alerts.apply().get()
 

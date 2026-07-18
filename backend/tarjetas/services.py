@@ -347,15 +347,17 @@ class TarjetaService:
             stock = sum(l.cantidad_restante for l in lotes_activos)
 
             # costo_promedio (ponderado sobre is_active + restante > 0):
-            total_unidades = Decimal('0')
-            total_costo    = Decimal('0')
+            # OJO: acumuladores LOCALES del tipo — NO reusar total_unidades/
+            # total_costo (son los del resumen, se acumulan más abajo).
+            _u_tipo = Decimal('0')
+            _c_tipo = Decimal('0')
             for l in lotes_activos:
-                total_unidades += l.cantidad_restante
-                total_costo    += l.cantidad_restante * l.precio_costo
-            if total_unidades == 0:
+                _u_tipo += l.cantidad_restante
+                _c_tipo += l.cantidad_restante * l.precio_costo
+            if _u_tipo == 0:
                 costo_prom = Decimal('0')
             else:
-                costo_prom = (total_costo / total_unidades).quantize(
+                costo_prom = (_c_tipo / _u_tipo).quantize(
                     MONEY_Q, rounding=ROUND_HALF_UP
                 )
             # valor_inventario_bob = costo_promedio * stock_actual (== stock):
