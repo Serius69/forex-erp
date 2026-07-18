@@ -2,7 +2,8 @@
 from rest_framework import serializers
 from .models import (Gasto, IngresoExtra, CapitalSnapshot, CapitalManualEntry,
                      CapitalEntryHistory, CapitalComposicion,
-                     CapitalComposicionHistory, CashBOB)
+                     CapitalComposicionHistory, CashBOB,
+                     Acreedor, MovimientoAcreedor, MovimientoCajaChica)
 from users.serializers import BranchSerializer, UserSerializer
 
 
@@ -275,3 +276,91 @@ class UpsertComposicionSerializer(serializers.Serializer):
     pasivos              = serializers.DecimalField(**_D)
     notas                = serializers.CharField(required=False, allow_blank=True, default='')
     motivo               = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+# ── Acreedores (cuentas por pagar) ──────────────────────────────────────────
+
+class AcreedorSerializer(serializers.ModelSerializer):
+    branch_nombre = serializers.CharField(source='branch.name', read_only=True)
+    # saldo_bob lo anota el viewset (Σ cargos − Σ abonos); read-only.
+    saldo_bob     = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = Acreedor
+        fields = ['id', 'nombre', 'moneda', 'documento', 'is_active', 'notas',
+                  'branch', 'branch_nombre', 'saldo_bob', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_saldo_bob(self, obj):
+        val = getattr(obj, 'saldo_bob', None)
+        return str(val) if val is not None else None
+
+
+class CrearAcreedorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = Acreedor
+        fields = ['nombre', 'moneda', 'documento', 'is_active', 'notas']
+
+    def create(self, validated_data):
+        request = self.context['request']
+        validated_data['branch']         = _branch_para_registro(request.user)
+        validated_data['registrado_por'] = request.user
+        return super().create(validated_data)
+
+
+class MovimientoAcreedorSerializer(serializers.ModelSerializer):
+    acreedor_nombre       = serializers.CharField(source='acreedor.nombre', read_only=True)
+    registrado_por_nombre = serializers.CharField(
+        source='registrado_por.get_full_name', read_only=True)
+
+    class Meta:
+        model  = MovimientoAcreedor
+        fields = ['id', 'acreedor', 'acreedor_nombre', 'fecha', 'tipo',
+                  'monto_bob', 'monto_divisa', 'concepto', 'notas',
+                  'registrado_por_nombre', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class CrearMovimientoAcreedorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = MovimientoAcreedor
+        fields = ['acreedor', 'fecha', 'tipo', 'monto_bob', 'monto_divisa',
+                  'concepto', 'notas']
+
+    def validate_acreedor(self, acreedor):
+        # El acreedor debe pertenecer a la empresa del usuario (aislamiento multi-tenant).
+        user = self.context['request'].user
+        if getattr(user, 'company_id', None) and acreedor.branch.company_id != user.company_id:
+            raise serializers.ValidationError('Acreedor de otra empresa.')
+        return acreedor
+
+    def create(self, validated_data):
+        validated_data['registrado_por'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+# ── Caja chica ──────────────────────────────────────────────────────────────
+
+class MovimientoCajaChicaSerializer(serializers.ModelSerializer):
+    branch_nombre         = serializers.CharField(source='branch.name', read_only=True)
+    registrado_por_nombre = serializers.CharField(
+        source='registrado_por.get_full_name', read_only=True)
+
+    class Meta:
+        model  = MovimientoCajaChica
+        fields = ['id', 'fecha', 'tipo', 'monto_bob', 'concepto', 'notas',
+                  'branch', 'branch_nombre', 'registrado_por_nombre',
+                  'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class CrearMovimientoCajaChicaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = MovimientoCajaChica
+        fields = ['fecha', 'tipo', 'monto_bob', 'concepto', 'notas']
+
+    def create(self, validated_data):
+        request = self.context['request']
+        validated_data['branch']         = _branch_para_registro(request.user)
+        validated_data['registrado_por'] = request.user
+        return super().create(validated_data)

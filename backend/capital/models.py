@@ -691,3 +691,108 @@ class CashFlowLog(models.Model):
     def __str__(self) -> str:
         sign = '+' if self.tipo == 'IN' else '-'
         return f"{self.fecha} | {sign}Bs.{self.monto_bob} | {self.concepto}"
+
+
+# ── Cuentas por pagar (acreedores) ──────────────────────────────────────────
+# Migrado del sheet legado: ledger "Fecha | Acreedor | Monto Acreditado Bs" +
+# bloque de pasivos de la composición de capital. El saldo NO se guarda: se deriva
+# de los MovimientoAcreedor (cargos − abonos) para evitar denormalización que drifte.
+
+class Acreedor(models.Model):
+    """Acreedor / proveedor al que se le debe (cuenta por pagar). Un acreedor puede
+    llevarse en BOB o en divisa (p.ej. 'Acreedor 2 dolar' del sheet)."""
+    MONEDA_CHOICES = [('BOB', 'Bolivianos'), ('USD', 'Dólares')]
+
+    nombre     = models.CharField(max_length=200)
+    moneda     = models.CharField(max_length=3, choices=MONEDA_CHOICES, default='BOB',
+                                  help_text='Moneda en que se lleva la deuda con este acreedor.')
+    documento  = models.CharField(max_length=50, blank=True, help_text='NIT/CI (opcional).')
+    is_active  = models.BooleanField(default=True, db_index=True)
+    notas      = models.TextField(blank=True)
+    branch     = models.ForeignKey('users.Branch', on_delete=models.PROTECT,
+                                   related_name='acreedores')
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                       null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = 'Acreedor'
+        verbose_name_plural = 'Acreedores'
+        ordering            = ['nombre']
+        indexes = [models.Index(fields=['branch', 'is_active'], name='capital_acr_branch__b3f6d1_idx')]
+
+    def __str__(self) -> str:
+        return f"{self.nombre} ({self.moneda})"
+
+
+class MovimientoAcreedor(models.Model):
+    """Movimiento del ledger de un acreedor: CARGO aumenta la deuda, ABONO la paga."""
+    TIPO_CHOICES = [
+        ('CARGO', 'Cargo — nueva deuda'),
+        ('ABONO', 'Abono — pago al acreedor'),
+    ]
+    acreedor     = models.ForeignKey(Acreedor, on_delete=models.CASCADE, related_name='movimientos')
+    fecha        = models.DateField(default=timezone.localdate)
+    tipo         = models.CharField(max_length=6, choices=TIPO_CHOICES)
+    monto_bob    = models.DecimalField(max_digits=18, decimal_places=2,
+                                       validators=[MinValueValidator(Decimal('0.01'))])
+    monto_divisa = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True,
+                                       help_text='Monto en la moneda del acreedor si es ≠ BOB.')
+    concepto     = models.CharField(max_length=300, blank=True)
+    notas        = models.TextField(blank=True)
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                       null=True, blank=True, related_name='+')
+    created_at   = models.DateTimeField(auto_now_add=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = 'Movimiento de acreedor'
+        verbose_name_plural = 'Movimientos de acreedores'
+        ordering            = ['-fecha', '-created_at']
+        indexes = [
+            models.Index(fields=['acreedor', '-fecha'], name='capital_mov_acreed_e7a8b9_idx'),
+            models.Index(fields=['tipo', '-fecha'], name='capital_mov_tipo_fe_c1d2e3_idx'),
+        ]
+
+    def __str__(self) -> str:
+        sign = '+' if self.tipo == 'CARGO' else '-'
+        return f"{self.fecha} | {self.acreedor.nombre} | {sign}Bs.{self.monto_bob}"
+
+
+# ── Caja chica (ledger de fondo fijo) ───────────────────────────────────────
+# En el sheet era una LÍNEA de saldo con drift (11.640 / 22.549 corte / 16.510).
+# Acá se vuelve un ledger real: APERTURA fija el corte, INGRESO/EGRESO lo mueven.
+
+class MovimientoCajaChica(models.Model):
+    """Ledger de caja chica. Saldo = Σ(APERTURA+INGRESO) − Σ(EGRESO) por sucursal."""
+    TIPO_CHOICES = [
+        ('APERTURA', 'Apertura / corte inicial'),
+        ('INGRESO',  'Ingreso / reposición'),
+        ('EGRESO',   'Egreso / gasto'),
+    ]
+    fecha       = models.DateField(default=timezone.localdate)
+    tipo        = models.CharField(max_length=8, choices=TIPO_CHOICES, default='EGRESO')
+    monto_bob   = models.DecimalField(max_digits=18, decimal_places=2,
+                                      validators=[MinValueValidator(Decimal('0.01'))])
+    concepto    = models.CharField(max_length=300)
+    notas       = models.TextField(blank=True)
+    branch      = models.ForeignKey('users.Branch', on_delete=models.PROTECT,
+                                    related_name='movimientos_caja_chica')
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                       null=True, blank=True, related_name='+')
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = 'Movimiento de caja chica'
+        verbose_name_plural = 'Movimientos de caja chica'
+        ordering            = ['-fecha', '-created_at']
+        indexes = [
+            models.Index(fields=['branch', '-fecha'], name='capital_ccc_branch__a1e2c3_idx'),
+            models.Index(fields=['tipo', '-fecha'], name='capital_ccc_tipo_fe_d4f5a6_idx'),
+        ]
+
+    def __str__(self) -> str:
+        sign = '-' if self.tipo == 'EGRESO' else '+'
+        return f"{self.fecha} | caja chica | {sign}Bs.{self.monto_bob} | {self.concepto}"

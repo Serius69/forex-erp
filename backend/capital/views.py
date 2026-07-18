@@ -26,6 +26,16 @@ from .services import CapitalService, GananciaService, CashBOBService, Insuffici
 from users.permissions import IsAdminOrSupervisor
 from tenants.permissions import IsCompanyMember
 from core.ratelimit import rate_limit
+from django.db.models import Case, When, F, Value, DecimalField
+from django.db.models.functions import Coalesce
+from .models import Acreedor, MovimientoAcreedor, MovimientoCajaChica
+from .serializers import (
+    AcreedorSerializer, CrearAcreedorSerializer,
+    MovimientoAcreedorSerializer, CrearMovimientoAcreedorSerializer,
+    MovimientoCajaChicaSerializer, CrearMovimientoCajaChicaSerializer,
+)
+
+_SALDO_DF = DecimalField(max_digits=18, decimal_places=2)
 
 log = logging.getLogger('capital')
 
@@ -1095,5 +1105,102 @@ def capital_kpis_view(request):
     except Exception as exc:
         log.error('CAPITAL_KPIS_ERR err=%s', exc, exc_info=True)
         return Response({'error': 'Error calculando KPIs'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ── Acreedores (cuentas por pagar) ──────────────────────────────────────────
+
+# saldo por acreedor = Σ(CARGO) − Σ(ABONO), calculado por annotate (sin N+1).
+_SALDO_ANNOT = Coalesce(
+    Sum(Case(
+        When(movimientos__tipo='CARGO', then=F('movimientos__monto_bob')),
+        When(movimientos__tipo='ABONO', then=-F('movimientos__monto_bob')),
+        output_field=_SALDO_DF,
+    )),
+    Value(Decimal('0'), output_field=_SALDO_DF),
+)
+
+
+class AcreedorViewSet(viewsets.ModelViewSet):
+    """CRUD de acreedores (cuentas por pagar). El saldo se anota, no se guarda."""
+    queryset           = Acreedor.objects.select_related('branch').all()
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return CrearAcreedorSerializer
+        return AcreedorSerializer
+
+    def get_queryset(self):
+        qs = _company_branch_filter(super().get_queryset(), self.request.user)
+        if self.request.query_params.get('activos') == 'true':
+            qs = qs.filter(is_active=True)
+        return qs.annotate(saldo_bob=_SALDO_ANNOT).order_by('nombre')
+
+    @action(detail=False, methods=['GET'], url_path='resumen')
+    def resumen(self, request):
+        """Total adeudado (Σ saldos) y cantidad de acreedores con saldo > 0."""
+        qs = self.get_queryset()
+        con_saldo = [a for a in qs if (a.saldo_bob or 0) > 0]
+        total = sum((a.saldo_bob or Decimal('0')) for a in con_saldo)
+        return Response({
+            'total_adeudado_bob': str(total),
+            'acreedores_con_saldo': len(con_saldo),
+            'acreedores_total': qs.count(),
+        })
+
+
+class MovimientoAcreedorViewSet(viewsets.ModelViewSet):
+    """Ledger de cargos/abonos por acreedor."""
+    queryset           = MovimientoAcreedor.objects.select_related(
+        'acreedor', 'registrado_por').all()
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return CrearMovimientoAcreedorSerializer
+        return MovimientoAcreedorSerializer
+
+    def get_queryset(self):
+        qs = _company_branch_filter(super().get_queryset(), self.request.user,
+                                    branch_field='acreedor__branch')
+        acreedor_id = self.request.query_params.get('acreedor')
+        if acreedor_id:
+            qs = qs.filter(acreedor_id=acreedor_id)
+        return qs.order_by('-fecha', '-created_at')
+
+
+# ── Caja chica ──────────────────────────────────────────────────────────────
+
+class MovimientoCajaChicaViewSet(viewsets.ModelViewSet):
+    """Ledger de caja chica. Saldo = Σ(APERTURA+INGRESO) − Σ(EGRESO)."""
+    queryset           = MovimientoCajaChica.objects.select_related(
+        'branch', 'registrado_por').all()
+    permission_classes = [IsAuthenticated, IsCompanyMember]
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return CrearMovimientoCajaChicaSerializer
+        return MovimientoCajaChicaSerializer
+
+    def get_queryset(self):
+        qs = _company_branch_filter(super().get_queryset(), self.request.user)
+        date_from = self.request.query_params.get('date_from')
+        date_to   = self.request.query_params.get('date_to')
+        if date_from:
+            qs = qs.filter(fecha__gte=date_from)
+        if date_to:
+            qs = qs.filter(fecha__lte=date_to)
+        return qs.order_by('-fecha', '-created_at')
+
+    @action(detail=False, methods=['GET'], url_path='saldo')
+    def saldo(self, request):
+        """Saldo vigente de caja chica del ámbito del usuario."""
+        agg = self.get_queryset().aggregate(
+            saldo=Coalesce(Sum(Case(
+                When(tipo='EGRESO', then=-F('monto_bob')),
+                default=F('monto_bob'),
+                output_field=_SALDO_DF,
+            )), Value(Decimal('0'), output_field=_SALDO_DF)))
+        return Response({'saldo_bob': str(agg['saldo'])})
 
 

@@ -8,6 +8,8 @@ from .views import (
     # Nuevos endpoints C3/C4/C6
     capital_position_view, capital_pnl_view, capital_history_view,
     capital_alerts_view, capital_kpis_view,
+    # Migración legado: cuentas por pagar + caja chica
+    AcreedorViewSet, MovimientoAcreedorViewSet, MovimientoCajaChicaViewSet,
 )
 
 router = DefaultRouter()
@@ -17,6 +19,9 @@ router.register(r'snapshots',    CapitalSnapshotViewSet,    basename='snapshots'
 router.register(r'caja',         CapitalManualEntryViewSet, basename='capital-caja')
 router.register(r'composicion',  CapitalComposicionViewSet, basename='composicion')
 router.register(r'cash-bob',     CashBOBViewSet,            basename='cash-bob')
+router.register(r'acreedores',            AcreedorViewSet,            basename='acreedores')
+router.register(r'acreedores-movimientos', MovimientoAcreedorViewSet, basename='acreedor-mov')
+router.register(r'caja-chica',            MovimientoCajaChicaViewSet, basename='caja-chica')
 
 urlpatterns = [
     path('', include(router.urls)),
