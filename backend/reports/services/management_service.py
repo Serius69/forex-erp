@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 import openpyxl
@@ -18,8 +18,20 @@ from reportlab.lib.enums import TA_CENTER
 
 from django.conf import settings
 from django.db.models import Sum, Count, Avg, Q
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _day_bounds(date_from, date_to):
+    """Rango [date_from, date_to] inclusivo (TZ local) → límites datetime sargables
+    (lo, hi) con lo <= created_at < hi. Evita el DATE(created_at AT TIME ZONE ...)
+    no-sargable de created_at__date__gte/__lte, para que el planner use el índice
+    (status,-created_at) / tx_branch_completed_idx con seek de rango."""
+    tz = timezone.get_current_timezone()
+    lo = timezone.make_aware(datetime.combine(date_from, time.min), tz)
+    hi = timezone.make_aware(datetime.combine(date_to + timedelta(days=1), time.min), tz)
+    return lo, hi
 
 CORP_DARK  = colors.HexColor('#1E3A5F')
 CORP_LIGHT = colors.HexColor('#EBF3FB')
@@ -87,9 +99,9 @@ class ManagementReportService:
         from reports.models import GeneratedReport
         from django.db.models.functions import TruncDate
 
+        _lo, _hi = _day_bounds(date_from, date_to)
         txs = Transaction.objects.filter(
-            created_at__date__gte=date_from,
-            created_at__date__lte=date_to,
+            created_at__gte=_lo, created_at__lt=_hi,
             status='COMPLETED')
         daily = list(txs.annotate(day=TruncDate('created_at'))
                         .values('day')
@@ -206,9 +218,9 @@ class ManagementReportService:
         from transactions.models import Transaction
         from reports.models import GeneratedReport
 
+        _lo,_hi=_day_bounds(date_from,date_to)
         txs=Transaction.objects.filter(
-            created_at__date__gte=date_from,
-            created_at__date__lte=date_to,status='COMPLETED')
+            created_at__gte=_lo,created_at__lt=_hi,status='COMPLETED')
 
         by_currency=[]
         for cur in txs.values_list('currency_from__code',flat=True).distinct():
@@ -305,9 +317,9 @@ class ManagementReportService:
         from transactions.models import Transaction
         from reports.models import GeneratedReport
 
+        _lo,_hi=_day_bounds(date_from,date_to)
         data=list(Transaction.objects
-                  .filter(created_at__date__gte=date_from,
-                          created_at__date__lte=date_to,status='COMPLETED')
+                  .filter(created_at__gte=_lo,created_at__lt=_hi,status='COMPLETED')
                   .values('customer__full_name','customer__document_number',
                           'customer__is_pep','customer_id')
                   .annotate(total_volume=Sum('amount_to'),
@@ -390,8 +402,9 @@ class ManagementReportService:
         pf=date_from-(delta+timedelta(days=1)); pt=date_from-timedelta(days=1)
 
         def _t(df,dt):
+            _lo,_hi=_day_bounds(df,dt)
             qs=Transaction.objects.filter(
-                created_at__date__gte=df,created_at__date__lte=dt,status='COMPLETED')
+                created_at__gte=_lo,created_at__lt=_hi,status='COMPLETED')
             buy=float(qs.filter(transaction_type='BUY').aggregate(s=Sum('amount_to'))['s'] or 0)
             sell=float(qs.filter(transaction_type='SELL').aggregate(s=Sum('amount_to'))['s'] or 0)
             return dict(buy=buy,sell=sell,profit=sell-buy,count=qs.count())
@@ -481,9 +494,9 @@ class ManagementReportService:
         from django.db.models.functions import TruncDate
         from reports.models import GeneratedReport
 
+        _lo,_hi=_day_bounds(base_date-timedelta(days=60),base_date)
         hist=list(Transaction.objects
-                  .filter(created_at__date__gte=base_date-timedelta(days=60),
-                          created_at__date__lte=base_date,status='COMPLETED')
+                  .filter(created_at__gte=_lo,created_at__lt=_hi,status='COMPLETED')
                   .annotate(day=TruncDate('created_at')).values('day')
                   .annotate(buy=Sum('amount_to',filter=Q(transaction_type='BUY')),
                             sell=Sum('amount_to',filter=Q(transaction_type='SELL')))

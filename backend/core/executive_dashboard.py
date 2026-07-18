@@ -15,8 +15,10 @@ Agrega en una sola respuesta cacheada (TTL=60s):
 """
 from __future__ import annotations
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+
+from django.utils import timezone
 
 from django.core.cache import cache
 from django.utils import timezone
@@ -164,10 +166,18 @@ def _get_transaction_stats(today: date, week_start: date, month_start: date, bra
                 'sells':        sells,
             }
 
+        # Límites datetime sargables en TZ local (usan el índice (status,-created_at)
+        # / tx_branch_completed_idx; created_at__date fuerza DATE(...) no-sargable).
+        tz = timezone.get_current_timezone()
+        day_start   = timezone.make_aware(datetime.combine(today, time.min), tz)
+        day_end     = timezone.make_aware(datetime.combine(today + timedelta(days=1), time.min), tz)
+        week_lo     = timezone.make_aware(datetime.combine(week_start, time.min), tz)
+        month_lo    = timezone.make_aware(datetime.combine(month_start, time.min), tz)
+
         return {
-            'today': _stats(qs.filter(created_at__date=today)),
-            'week':  _stats(qs.filter(created_at__date__gte=week_start)),
-            'month': _stats(qs.filter(created_at__date__gte=month_start)),
+            'today': _stats(qs.filter(created_at__gte=day_start, created_at__lt=day_end)),
+            'week':  _stats(qs.filter(created_at__gte=week_lo)),
+            'month': _stats(qs.filter(created_at__gte=month_lo)),
         }
     except Exception as exc:
         log.debug('Transaction stats failed: %s', exc)

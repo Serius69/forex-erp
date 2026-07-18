@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 # Logger separado para auditoría de filtrado ASFI — va a kapitalya.asfi_audit
@@ -21,8 +21,19 @@ from reportlab.lib.enums import TA_CENTER
 from django.conf import settings
 from django.db import models
 from django.db.models import Sum, Count, Q
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _day_bounds(log_date):
+    """Un día (TZ local) → límites datetime sargables (lo, hi) con lo <= created_at < hi.
+    Evita el DATE(created_at AT TIME ZONE ...) no-sargable de created_at__date=, para que
+    el planner use el índice parcial tx_branch_completed_idx=(branch,-created_at) con seek."""
+    tz = timezone.get_current_timezone()
+    lo = timezone.make_aware(datetime.combine(log_date, time.min), tz)
+    hi = timezone.make_aware(datetime.combine(log_date + timedelta(days=1), time.min), tz)
+    return lo, hi
 
 ASFI_DARK  = colors.HexColor('#003366')
 ASFI_LIGHT = colors.HexColor('#CCE0FF')
@@ -523,8 +534,9 @@ class ASFIReportService:
             log_date=log_date, branch_id=branch_id)
 
         # ── Conteo total completadas (sin filtro ASFI) para calcular excluidas ─
+        _lo, _hi = _day_bounds(log_date)
         base_qs = Transaction.objects.filter(
-            created_at__date=log_date,
+            created_at__gte=_lo, created_at__lt=_hi,
             branch_id=branch_id,
             status='COMPLETED',
         )
@@ -779,8 +791,9 @@ class ASFIReportService:
         from transactions.models import Transaction
         import csv
 
+        _lo, _hi = _day_bounds(log_date)
         txs = (Transaction.objects
-               .filter(created_at__date=log_date, branch_id=branch_id,
+               .filter(created_at__gte=_lo, created_at__lt=_hi, branch_id=branch_id,
                        status='COMPLETED', visible_asfi=True)
                .select_related('customer', 'currency_from', 'currency_to',
                                'cashier')

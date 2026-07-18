@@ -1,7 +1,7 @@
 # backend/reports/generators.py
 import io
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -18,10 +18,21 @@ from reportlab.graphics.charts.barcharts import VerticalBarChart
 from django.core.files.base import ContentFile
 from django.db.models import Sum, Count, Avg, Q, F
 from django.db.models.functions import ExtractHour
+from django.utils import timezone
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, LineChart, Reference
+
+
+def _day_bounds(day):
+    """Un día (TZ local) → límites datetime sargables (lo, hi) con lo <= created_at < hi.
+    Evita el DATE(created_at AT TIME ZONE ...) no-sargable de created_at__date=."""
+    tz = timezone.get_current_timezone()
+    lo = timezone.make_aware(datetime.combine(day, time.min), tz)
+    hi = timezone.make_aware(datetime.combine(day + timedelta(days=1), time.min), tz)
+    return lo, hi
+
 
 class ReportGenerator:
     """Generador principal de reportes"""
@@ -60,8 +71,9 @@ class ReportGenerator:
         from rates.models import ExchangeRate
         
         # Recopilar datos
+        _lo, _hi = _day_bounds(self.start_date)
         transactions = Transaction.objects.filter(
-            created_at__date=self.start_date
+            created_at__gte=_lo, created_at__lt=_hi
         )
         
         if self.branch:
@@ -446,11 +458,13 @@ class ReportGenerator:
         
         status_data = []
         
+        _lo, _hi = _day_bounds(self.start_date)
         for inv in inventories:
-            # Movimientos del día
+            # Movimientos del día (límites sargables; el N+1 por inventario queda
+            # como follow-up: podría precomputarse con values('inventory').annotate(...))
             movements = InventoryMovement.objects.filter(
                 inventory=inv,
-                created_at__date=self.start_date
+                created_at__gte=_lo, created_at__lt=_hi
             )
             
             # Calcular saldo inicial (primer movimiento del día)
