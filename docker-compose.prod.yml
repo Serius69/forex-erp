@@ -67,6 +67,7 @@ services:
     <<: *backend-base
     command: >
       sh -c "python manage.py migrate --noinput &&
+             python manage.py ensure_superuser &&
              python manage.py collectstatic --noinput &&
              daphne -b 0.0.0.0 -p 8007 core.asgi:application"
     volumes:

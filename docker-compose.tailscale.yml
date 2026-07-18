@@ -81,6 +81,7 @@ services:
     command: >
       sh -c "
         python manage.py migrate --noinput &&
+        python manage.py ensure_superuser &&
         python manage.py collectstatic --noinput --clear &&
         daphne -b 0.0.0.0 -p 8007 core.asgi:application
       "
