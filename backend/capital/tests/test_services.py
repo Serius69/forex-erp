@@ -69,7 +69,7 @@ def _make_currency(code='USD', scale_factor=1):
 
 
 def _make_exchange_rate(currency_from, currency_to, buy=6.85, sell=6.95,
-                        market_type='parallel'):
+                        market_type='paralelo_digital'):
     from rates.models import ExchangeRate
     return ExchangeRate.objects.create(
         currency_from=currency_from,

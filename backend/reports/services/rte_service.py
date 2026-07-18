@@ -124,7 +124,7 @@ class RTEService:
     def _tasa_usd_bob():
         """Tasa USD→BOB vigente: mid del mercado paralelo (fallback físico)."""
         from rates.models import ExchangeRate
-        for market in ('parallel', 'paralelo_fisico_empresa'):
+        for market in ('paralelo_digital', 'paralelo_fisico_empresa'):
             r = (ExchangeRate.objects
                  .filter(currency_from__code='USD', currency_to__code='BOB',
                          valid_until__isnull=True, market_type=market)

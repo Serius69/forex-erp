@@ -189,7 +189,7 @@ for code, buy, sell in TASAS:
     ExchangeRate.objects.create(
         currency_from=cur, currency_to=bob,
         official_rate=(buy + sell) / Decimal('2'), buy_rate=buy, sell_rate=sell,
-        market_type='parallel',   # Tasas reales del negocio (mercado paralelo boliviano)
+        market_type='paralelo_digital',   # Tasas reales del negocio (mercado paralelo boliviano)
         valid_from=now, source='KAPITALYA',
     )
     p(f"{code}/BOB — Compra: {buy} | Venta: {sell} [paralelo]")
@@ -234,7 +234,7 @@ for row in HISTORIAL_TC:
                     'official_rate': (Decimal(str(row[buy_i])) + Decimal(str(row[sell_i]))) / Decimal('2'),
                     'buy_rate':  Decimal(str(row[buy_i])),
                     'sell_rate': Decimal(str(row[sell_i])),
-                    'market_type': 'parallel',
+                    'market_type': 'paralelo_digital',
                     'valid_until': dt.replace(hour=20, minute=0),
                     'source': 'KAPITALYA',
                 }

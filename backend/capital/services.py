@@ -111,11 +111,11 @@ class CapitalService:
         rates_activas = {}
         for r in (ExchangeRate.objects
                   .filter(currency_to=bob, valid_until__isnull=True,
-                          market_type='parallel')
+                          market_type='paralelo_digital')
                   .select_related('currency_from')):
             rates_activas[r.currency_from.id] = r
 
-        # Fallback a paralelo_fisico_empresa si no hay parallel
+        # Fallback a paralelo_fisico_empresa si no hay paralelo_digital
         rates_fallback = {}
         for r in (ExchangeRate.objects
                   .filter(currency_to=bob, valid_until__isnull=True,

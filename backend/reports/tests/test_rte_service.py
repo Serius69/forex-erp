@@ -53,7 +53,7 @@ def _make_currency(code):
     return cur
 
 
-def _make_rate(cfrom, cto, buy, sell, market='parallel'):
+def _make_rate(cfrom, cto, buy, sell, market='paralelo_digital'):
     from rates.models import ExchangeRate
     return ExchangeRate.objects.create(
         currency_from=cfrom, currency_to=cto,

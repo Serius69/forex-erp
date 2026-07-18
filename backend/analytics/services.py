@@ -392,7 +392,7 @@ class ExposureService:
                   .filter(currency_to=bob, valid_until__isnull=True)
                   .filter(
                       Q(market_type='paralelo_fisico_empresa') |
-                      Q(market_type='parallel')
+                      Q(market_type='paralelo_digital')
                   )
                   .select_related('currency_from')
                   .order_by('currency_from__code', 'market_type')):

@@ -233,7 +233,7 @@ def _persist_rate(data: dict, dry_run: bool) -> dict:
         'buy_rate':      data.get('buy_rate', Decimal('0')),
         'sell_rate':     data.get('sell_rate', Decimal('0')),
         'official_rate': data.get('official_rate'),
-        'market_type':   data.get('market_type', 'PARALLEL').upper() or 'PARALLEL',
+        'market_type':   data.get('market_type') or 'paralelo_digital',
     }
     if data.get('fecha'):
         rate_data['date'] = data['fecha']

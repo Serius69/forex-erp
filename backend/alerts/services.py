@@ -943,7 +943,7 @@ class AlertGenerator:
                 .filter(
                     currency_from__code=currency,
                     valid_until__isnull=True,
-                    market_type='digital',
+                    market_type='paralelo_digital',
                 )
                 .first()
             )
