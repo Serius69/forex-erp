@@ -344,8 +344,11 @@ class UserViewSet(viewsets.ModelViewSet):
         current_pin = request.data.get('current_pin')
         if not pin or len(pin) < 4:
             return Response({'error': 'PIN mínimo 4 dígitos'}, status=status.HTTP_400_BAD_REQUEST)
-        if request.user.pin and current_pin and not request.user.check_pin(current_pin):
-            return Response({'error': 'PIN actual incorrecto'}, status=status.HTTP_400_BAD_REQUEST)
+        # Si ya existe un PIN, current_pin es OBLIGATORIO y debe ser válido — el PIN
+        # es control secundario (override de supervisor); sin esto una sesión JWT
+        # activa podría reescribirlo sin conocer el anterior.
+        if request.user.pin and not (current_pin and request.user.check_pin(current_pin)):
+            return Response({'error': 'PIN actual requerido'}, status=status.HTTP_400_BAD_REQUEST)
         request.user.set_pin(pin)
         return Response({'success': True})
 
@@ -405,7 +408,16 @@ class BranchViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(company=self.request.user.company)
+        # company se fija acá (no es campo escribible del serializer) → DRF NO
+        # autogenera el validador de unicidad; capturamos el IntegrityError del
+        # UniqueConstraint(company, code) y lo devolvemos como 400 legible.
+        from django.db import IntegrityError
+        from rest_framework.exceptions import ValidationError
+        try:
+            serializer.save(company=self.request.user.company)
+        except IntegrityError:
+            raise ValidationError(
+                {'code': 'Ya existe una sucursal con ese código en la empresa.'})
 
     def get_permissions(self):
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
@@ -514,8 +526,13 @@ def dashboard_stats(request):
     daily_cash_flow   = today_volume
     try:
         from capital.models import CapitalSnapshot
+        # Tenant + branch isolation (mismo patrón que pending_qs arriba): un ADMIN
+        # suele tener branch=None, así que sin el filtro por company vería el capital
+        # de TODAS las empresas. CapitalSnapshot llega al tenant vía branch__company.
         snap_qs = CapitalSnapshot.objects.all()
-        if request.user.branch:
+        if getattr(request.user, 'company_id', None):
+            snap_qs = snap_qs.filter(branch__company_id=request.user.company_id)
+        if request.user.role != 'ADMIN' and request.user.branch_id:
             snap_qs = snap_qs.filter(branch=request.user.branch)
         latest = snap_qs.order_by('-fecha', '-created_at').first()
         if latest:

@@ -21,7 +21,7 @@ class Branch(models.Model):
         blank=True,
     )
     name       = models.CharField(max_length=100)
-    code       = models.CharField(max_length=10, unique=True)
+    code       = models.CharField(max_length=10)   # único POR empresa (ver Meta.constraints)
     city       = models.CharField(max_length=100, blank=True)
     address    = models.TextField()
     phone      = models.CharField(max_length=20)
@@ -34,6 +34,12 @@ class Branch(models.Model):
         verbose_name_plural = 'Sucursales'
         ordering            = ['-created_at']
         indexes             = [models.Index(fields=['company', 'is_active'])]
+        constraints         = [
+            # Código único DENTRO de cada empresa (no global) — SaaS multi-tenant:
+            # la empresa B puede usar 'MAT'/'001' aunque la empresa A ya lo tenga.
+            models.UniqueConstraint(fields=['company', 'code'],
+                                    name='uniq_branch_company_code'),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.company.name if self.company_id else '—'})"
