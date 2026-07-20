@@ -88,37 +88,50 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(
                     f'  ✓ caja chica: APERTURA Bs {monto} @ {fecha} creada.'))
 
-        # ── Acreedores: Acreedor + movimiento CARGO idempotente ─────────────
+        # ── Acreedores: maestro + movimientos (CARGO/ABONO) idempotentes ────
+        # CSV "Fecha,Acreedor,Monto[,Tipo[,Moneda]]". El maestro se registra SIEMPRE
+        # (aunque su única fila esté en 0), para que los acreedores nominados existan
+        # con saldo 0. Solo se crea movimiento cuando Monto > 0. Tipo default CARGO;
+        # ABONO paga la deuda (Acreedor 1: CARGO 15.000 + ABONO 15.000 → saldo 0).
         if opts['acreedores_csv']:
             creados_a = creados_m = saltados = 0
             with open(opts['acreedores_csv'], newline='', encoding='utf-8-sig') as fh:
                 for row in csv.reader(fh):
-                    if not row or len(row) < 3:
+                    if not row or len(row) < 2:
                         continue
                     fecha = _parse_date(row[0])
                     nombre = (row[1] or '').strip()
-                    monto = _parse_dec(row[2])
-                    if not nombre or nombre.lower() in ('acreedor', 'detalle') or fecha is None:
+                    monto = _parse_dec(row[2]) if len(row) > 2 else None
+                    tipo = (row[3].strip().upper() if len(row) > 3 and row[3].strip()
+                            else 'CARGO')
+                    if tipo not in ('CARGO', 'ABONO'):
+                        tipo = 'CARGO'
+                    if not nombre or nombre.lower() in ('acreedor', 'detalle'):
                         continue
-                    if monto is None or monto <= 0:
-                        saltados += 1   # filas en 0 (deuda saldada) — sin movimiento
-                        continue
-                    moneda = 'USD' if 'dolar' in nombre.lower() else 'BOB'
+                    moneda = ((row[4].strip().upper() if len(row) > 4 and row[4].strip()
+                               else None)
+                              or ('USD' if 'dolar' in nombre.lower() else 'BOB'))
                     if dry:
-                        creados_m += 1
+                        if monto is not None and monto > 0 and fecha is not None:
+                            creados_m += 1
                         continue
                     acreedor, was_new = Acreedor.objects.get_or_create(
                         nombre=nombre, branch=branch,
                         defaults={'moneda': moneda, 'notas': MARK})
                     creados_a += was_new
+                    if monto is None or monto <= 0 or fecha is None:
+                        saltados += 1   # maestro registrado, sin movimiento (deuda en 0)
+                        continue
+                    concepto = ('Deuda histórica' if tipo == 'CARGO'
+                                else 'Pago al acreedor')
                     _, mov_new = MovimientoAcreedor.objects.get_or_create(
-                        acreedor=acreedor, fecha=fecha, tipo='CARGO', monto_bob=monto,
-                        defaults={'concepto': f'Deuda histórica ({MARK})'})
+                        acreedor=acreedor, fecha=fecha, tipo=tipo, monto_bob=monto,
+                        defaults={'concepto': f'{concepto} ({MARK})'})
                     creados_m += mov_new
             verb = '[dry] simularía' if dry else 'creados'
             self.stdout.write(self.style.SUCCESS(
                 f'  ✓ acreedores: {verb} — acreedores nuevos={creados_a} · '
-                f'movimientos={creados_m} · filas en 0 saltadas={saltados}'))
+                f'movimientos={creados_m} · filas sin movimiento={saltados}'))
 
         if not opts['caja_apertura'] and not opts['acreedores_csv']:
             self.stdout.write(self.style.WARNING(
