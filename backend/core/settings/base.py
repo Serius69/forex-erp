@@ -22,6 +22,13 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1', '0.
 # Dejar vacíos para deshabilitar notificaciones Telegram en dev/CI.
 TELEGRAM_BOT_TOKEN = env('TELEGRAM_BOT_TOKEN', default='')
 TELEGRAM_CHAT_ID   = env('TELEGRAM_CHAT_ID',   default='')
+# Firehose: avisar por Telegram CUALQUIER cambio de tasa (no solo variaciones >5%).
+# Poner en False para recibir solo las alertas de variación significativa.
+TELEGRAM_RATE_FIREHOSE = env.bool('TELEGRAM_RATE_FIREHOSE', default=True)
+# Movimiento mínimo (%) para avisar un cambio de tasa por Telegram. Evita el ruido
+# de micro-ticks: solo se avisa cuando un buy/sell se desvía ≥ este % del último
+# valor notificado. Subir para menos avisos, bajar para más sensibilidad.
+TELEGRAM_RATE_MIN_PCT = env.float('TELEGRAM_RATE_MIN_PCT', default=0.5)
 
 # ── FX Engine — External API Keys ────────────────────────────────────
 # Eldorado.io: Bearer token for GET https://api.eldorado.io/api/v1/rates
@@ -470,6 +477,12 @@ CELERY_BEAT_SCHEDULE = {
         'task':     'rates.cleanup_old_rates',
         'schedule': crontab(hour=3, minute=30),
         'options':  {'queue': 'low'},
+    },
+    # ── Backup diario de PostgreSQL (dinero real: no puede faltar) ────────────
+    'backup-database-daily': {
+        'task':     'core.tasks.backup_database',
+        'schedule': crontab(hour=3, minute=0),
+        'options':  {'queue': 'default'},
     },
     # ── ETL Google Sheet operativo ───────────────────────────────────────────
     'transactions-sheet-sync': {

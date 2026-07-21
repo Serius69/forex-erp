@@ -215,6 +215,7 @@ class FraudDetectionEngine:
                     customer=kwargs['customer'],
                     amount=kwargs['amount_from'],
                     sigma_threshold=float(rule['threshold']),
+                    currency_from=kwargs.get('currency_from'),
                 )
                 if anomaly:
                     flags.append(f"AMOUNT_ANOMALY:{rule.get('name','anomaly')}")
@@ -306,19 +307,21 @@ class FraudDetectionEngine:
             log.debug('FRAUD_VELOCITY_ERR %s', exc)
             return False, {}
 
-    def _check_amount_anomaly(self, customer, amount: int, sigma_threshold: float) -> tuple[bool, dict]:
+    def _check_amount_anomaly(self, customer, amount: int, sigma_threshold: float,
+                              currency_from: str = None) -> tuple[bool, dict]:
         """
         Compara `amount` con la media histórica del cliente ± sigma_threshold σ.
         Requiere al menos 10 transacciones previas para calcular estadísticas fiables.
+
+        Se acota a la MISMA divisa: mezclar montos de distintas divisas (p.ej. 100
+        USD y 700 BOB) hace la media/desviación —y el z-score— sin sentido.
         """
         try:
             from .models import Transaction
-            amounts = list(
-                Transaction.objects.filter(
-                    customer=customer,
-                    status='COMPLETED',
-                ).values_list('amount_from', flat=True)[:200]
-            )
+            qs = Transaction.objects.filter(customer=customer, status='COMPLETED')
+            if currency_from:
+                qs = qs.filter(currency_from__code=currency_from)
+            amounts = list(qs.values_list('amount_from', flat=True)[:200])
             if len(amounts) < 10:
                 return False, {'reason': 'insufficient_history'}
 
@@ -366,16 +369,19 @@ class FraudDetectionEngine:
         try:
             from .models import Transaction
             since = timezone.now() - timezone.timedelta(minutes=window_minutes)
+            # Sin cliente real no se puede detectar un duplicado del MISMO cliente:
+            # agrupar por cajero bloquearía operaciones idénticas de clientes
+            # distintos (falsos positivos → 403). Se salta la regla.
+            if not customer:
+                return False, {'reason': 'no_customer'}
+
             qs = Transaction.objects.filter(
+                customer=customer,
                 currency_from__code=currency_from,
                 amount_from=amount_from,
                 created_at__gte=since,
                 status__in=('COMPLETED', 'PROCESSING', 'APPROVED', 'PENDING'),
             )
-            if customer:
-                qs = qs.filter(customer=customer)
-            elif cashier:
-                qs = qs.filter(cashier=cashier)
 
             count = qs.count()
             detail = {'duplicate_count': count, 'window_minutes': window_minutes}

@@ -29,13 +29,16 @@ class BackupManager:
             raise RuntimeError(f'pg_dump error: {result.stderr}')
 
         s3_key = f'backups/{filename}'
-        if settings.AWS_ACCESS_KEY_ID:
+        # getattr: sin credenciales AWS definidas cae al backup local, en vez de
+        # lanzar AttributeError (que el task tragaba como 'no implementado').
+        aws_key = getattr(settings, 'AWS_ACCESS_KEY_ID', None)
+        if aws_key:
             s3 = boto3.client(
                 's3',
-                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                aws_access_key_id=aws_key,
+                aws_secret_access_key=getattr(settings, 'AWS_SECRET_ACCESS_KEY', None),
             )
-            s3.upload_file(filepath, settings.AWS_STORAGE_BUCKET_NAME, s3_key)
+            s3.upload_file(filepath, getattr(settings, 'AWS_STORAGE_BUCKET_NAME', None), s3_key)
             os.remove(filepath)
             return {'status': 'ok', 'file': s3_key, 'storage': 's3'}
 

@@ -319,10 +319,6 @@ def backup_database(self):
         result = BackupManager.create_and_upload()
         log.info("TASK_SUCCESS name=backup_database result=%s", result)
         return result
-    except AttributeError:
-        # BackupManager no implementado completamente — skip silencioso
-        log.info("TASK_SKIP name=backup_database reason=BackupManager_not_implemented")
-        return {'status': 'skipped', 'reason': 'BackupManager not implemented'}
     except Exception as exc:
         countdown = _retry_countdown(self.request.retries)
         log.error("TASK_RETRY name=backup_database error=%s countdown=%ds", exc, countdown)

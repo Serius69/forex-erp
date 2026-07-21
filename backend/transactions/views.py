@@ -287,6 +287,11 @@ class TransactionViewSet(viewsets.ModelViewSet):
                          'fraud_score': str(fraud.score)},
                         status=status.HTTP_403_FORBIDDEN,
                     )
+                # REQUIRE_APPROVAL: la operación NO se completa ni mueve
+                # inventario/caja hasta que un supervisor la apruebe (approve()).
+                # Antes se creaba COMPLETED con efectos aplicados y approve() la
+                # rechazaba por estar COMPLETED → la decisión era inefectiva.
+                requires_approval = (fraud.decision == 'REQUIRE_APPROVAL')
 
                 # Cuantizar montos con precisión financiera
                 from core.finance import quantize_amount, quantize_money, quantize_rate
@@ -294,7 +299,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
                     transaction_number    = tx_num,
                     transaction_type      = vd['transaction_type'],
                     transaction_category  = vd.get('transaction_category', 'REPORTABLE'),
-                    status                = 'COMPLETED',
+                    status                = 'PENDING' if requires_approval else 'COMPLETED',
                     customer              = customer,
                     nombre_cliente        = vd.get('nombre_cliente') or None,
                     carnet_identidad      = vd.get('carnet_identidad') or None,
@@ -310,24 +315,23 @@ class TransactionViewSet(viewsets.ModelViewSet):
                     cashier               = request.user,
                     branch                = branch,
                     supervisor            = supervisor_instance,
-                    completed_at          = now,
+                    completed_at          = None if requires_approval else now,
                     # Resultado del motor antifraude (persistido para auditoría/ML)
                     fraud_score           = fraud.score,
                     fraud_flags           = fraud.flags,
-                    approval_required     = (fraud.decision == 'REQUIRE_APPROVAL'),
+                    approval_required     = requires_approval,
                 )
 
-                # Actualizar inventario de divisas.
-                # NO envuelto en try/except: si falla, el atomic block hace rollback
-                # completo y los efectos de capital también se deshacen.
-                service = TransactionService()
-                service._update_inventory(tx)
-
-                # ── Efectos BOB: CapitalComposicion + CashFlowLog ─────────────
-                # BUY  → BOB disminuye (empresa paga bolivianos)
-                # SELL → BOB aumenta  (empresa recibe bolivianos)
-                from .services import apply_transaction_effects
-                apply_transaction_effects(tx)   # raises ValidationError si saldo negativo
+                # Inventario + efectos BOB: SOLO si no requiere aprobación. Las
+                # que la requieren quedan PENDING sin mover inventario/caja; sus
+                # efectos se aplican en approve(). NO envuelto en try/except: si
+                # falla, el atomic block hace rollback completo.
+                if not requires_approval:
+                    service = TransactionService()
+                    service._update_inventory(tx)
+                    # BUY → BOB disminuye · SELL → BOB aumenta
+                    from .services import apply_transaction_effects
+                    apply_transaction_effects(tx)   # raises ValidationError si saldo negativo
 
                 # Audit log — obligatorio, se registra dentro del atomic
                 from users.models import UserActivity
@@ -761,14 +765,34 @@ class TransactionViewSet(viewsets.ModelViewSet):
             return Response({'error': f'No se puede aprobar una transacción en estado {tx.status}.'}, status=status.HTTP_400_BAD_REQUEST)
 
         from django.utils import timezone as tz
+        from django.core.exceptions import ValidationError
         from .audit import create_audit_log, snapshot_transaction
 
         prev = snapshot_transaction(tx)
-        tx.approval_required = False
-        tx.approved_by = request.user
-        tx.approved_at = tz.now()
-        tx.status = 'APPROVED'
-        tx.save(update_fields=['approval_required', 'approved_by', 'approved_at', 'status', 'updated_at'])
+        # Al aprobar se aplican por PRIMERA vez los efectos (inventario + caja):
+        # la tx se creó PENDING sin moverlos. Atómico: si el inventario/caja ya
+        # no alcanzan (cambiaron desde la creación), se revierte y responde 409.
+        try:
+            with db_transaction.atomic():
+                service = TransactionService()
+                service._update_inventory(tx)
+                from .services import apply_transaction_effects
+                apply_transaction_effects(tx)
+                tx.approval_required = False
+                tx.approved_by = request.user
+                tx.approved_at = tz.now()
+                tx.status = 'COMPLETED'
+                tx.completed_at = tz.now()
+                tx.save(update_fields=[
+                    'approval_required', 'approved_by', 'approved_at',
+                    'status', 'completed_at', 'updated_at',
+                ])
+        except ValidationError as exc:
+            return Response(
+                {'error': 'No se pudo aprobar: inventario o caja insuficientes.',
+                 'detail': exc.messages if hasattr(exc, 'messages') else str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         create_audit_log(
             transaction=tx,
