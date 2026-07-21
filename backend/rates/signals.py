@@ -48,6 +48,64 @@ def _collect_active_rates() -> dict:
     return rates
 
 
+_TELEGRAM_SNAPSHOT_KEY = 'rates:telegram:last_snapshot'
+
+
+def _maybe_telegram_rate_firehose(rates: dict) -> None:
+    """Avisa por Telegram SOLO los movimientos de tasa que importan.
+
+    Para tener señal y no ruido (las tasas se recalculan cada 2–5 min y hacen
+    micro-ticks constantes), un cambio se avisa únicamente cuando un buy/sell se
+    desvía ≥ ``TELEGRAM_RATE_MIN_PCT`` (%) respecto del último valor NOTIFICADO
+    (no del último observado) — así captura tanto un salto brusco como el drift
+    acumulado, pero suprime el ruido de centavos. La base de cada tasa se reancla
+    solo cuando se avisa. Best-effort; se apaga con TELEGRAM_RATE_FIREHOSE=False.
+    """
+    try:
+        from django.conf import settings
+        if not getattr(settings, 'TELEGRAM_RATE_FIREHOSE', True):
+            return
+
+        from services.notifications.telegram import telegram_configured, alert_rate_changes
+        if not telegram_configured():
+            return
+
+        min_pct = float(getattr(settings, 'TELEGRAM_RATE_MIN_PCT', 0.5))
+
+        from django.core.cache import cache
+        prev = cache.get(_TELEGRAM_SNAPSHOT_KEY) or {}
+
+        changes = []
+        new_snapshot = {}
+        for key, meta in rates.items():
+            cur = (meta['buy'], meta['sell'])
+            old = prev.get(key)
+            if old is None:
+                new_snapshot[key] = cur   # base nueva: no notifica todavía
+                continue
+            old_buy, old_sell = old
+            notified = False
+            for field, new_val, old_val in (('buy', meta['buy'], old_buy),
+                                            ('sell', meta['sell'], old_sell)):
+                pct = abs(new_val - old_val) / old_val * 100 if old_val else float('inf')
+                if pct >= min_pct:
+                    changes.append({
+                        'code': meta['code'], 'market': meta['market_type'],
+                        'field': field, 'old': float(old_val), 'new': float(new_val),
+                    })
+                    notified = True
+            # Reancla la base SOLO si se avisó; si no, conserva la vieja para
+            # acumular el drift hasta que cruce el umbral.
+            new_snapshot[key] = cur if notified else old
+
+        cache.set(_TELEGRAM_SNAPSHOT_KEY, new_snapshot, timeout=None)
+
+        if changes:
+            alert_rate_changes(changes)
+    except Exception as exc:
+        log.debug('TELEGRAM_FIREHOSE_SKIP error=%s', exc)
+
+
 def _do_broadcast_rates():
     """
     Emite UN broadcast WS con el estado final de todas las tasas activas.
@@ -61,11 +119,16 @@ def _do_broadcast_rates():
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
 
+        rates = _collect_active_rates()
+
+        # Firehose Telegram (control total de cambios de tasa) — antes del WS,
+        # que puede no tener channel layer configurado.
+        _maybe_telegram_rate_firehose(rates)
+
         layer = get_channel_layer()
         if layer is None:
             return
 
-        rates = _collect_active_rates()
         async_to_sync(layer.group_send)(
             'rates_updates',
             {'type': 'rates_update', 'rates': rates},
