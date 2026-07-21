@@ -80,7 +80,6 @@ htmlcov/
 *.h5
 *.pkl
 *.joblib
-/backend/snapshots/
 
 # ─── Celery ───────────────────────────────────────────────
 celerybeat-schedule*
