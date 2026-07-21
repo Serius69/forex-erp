@@ -138,7 +138,7 @@ TRANSFORM_FUNCTIONS = {
 
 # ── Persistidores por modelo ───────────────────────────────────────────────────
 
-def _persist_transaction(data: dict, dry_run: bool) -> dict:
+def _persist_transaction(data: dict, dry_run: bool, migration=None) -> dict:
     """Crea/obtiene Customer y Transaction."""
     from transactions.models import Customer, Transaction
     from rates.models import Currency
@@ -170,7 +170,14 @@ def _persist_transaction(data: dict, dry_run: bool) -> dict:
     tx_type = data.get('transaction_type', 'BUY').upper()
     rate    = data.get('exchange_rate') or Decimal('1')
     amount_to   = data.get('amount_to') or Decimal('0')
-    amount_from = data.get('amount_from') or (amount_to * rate)
+    amount_from = data.get('amount_from')
+    if not amount_from:
+        # Convención: currency_to==BOB ⇒ SELL (amount_to en BOB, amount_from en divisa);
+        # de lo contrario BUY (amount_to en divisa, amount_from en BOB).
+        if currency_to.code == 'BOB':
+            amount_from = amount_to / rate
+        else:
+            amount_from = amount_to * rate
 
     # Validate imported exchange_rate against system primary rate
     if rate and rate > Decimal('0') and currency_from.code != 'BOB':
@@ -220,34 +227,76 @@ def _persist_transaction(data: dict, dry_run: bool) -> dict:
     return {'action': 'created', 'id': str(tx.id), 'number': tx.transaction_number}
 
 
-def _persist_rate(data: dict, dry_run: bool) -> dict:
+def _persist_rate(data: dict, dry_run: bool, migration=None) -> dict:
     from rates.models import ExchangeRate, Currency
 
     try:
-        currency = Currency.objects.get(code=data.get('currency_code', ''))
+        cur = Currency.objects.get(code=data.get('currency_code', ''))
     except Currency.DoesNotExist as e:
         raise ValueError(str(e))
+    try:
+        bob = Currency.objects.get(code='BOB')
+    except Currency.DoesNotExist as e:
+        raise ValueError(f'Moneda base BOB no encontrada: {e}')
+
+    # Convención real del sistema: currency_from=<divisa>, currency_to=BOB.
+    buy  = data.get('buy_rate') or Decimal('0')
+    sell = data.get('sell_rate') or Decimal('0')
+    if buy > sell:                       # el modelo exige buy <= sell (clean())
+        buy, sell = sell, buy
+    mid = (buy + sell) / Decimal('2')
+
+    # valid_from es NOT NULL y sin default: siempre setear.
+    if data.get('fecha'):
+        valid_from = timezone.make_aware(
+            datetime.combine(data['fecha'], datetime.min.time())
+        )
+    else:
+        valid_from = timezone.now()
+
+    market_type = data.get('market_type') or 'paralelo_digital'
+    valid_markets = {c[0] for c in ExchangeRate.MARKET_TYPE_CHOICES}
+    if market_type not in valid_markets:
+        market_type = 'paralelo_digital'
+
+    official_rate = data.get('official_rate') or mid
 
     rate_data = {
-        'currency':      currency,
-        'buy_rate':      data.get('buy_rate', Decimal('0')),
-        'sell_rate':     data.get('sell_rate', Decimal('0')),
-        'official_rate': data.get('official_rate'),
-        'market_type':   data.get('market_type') or 'paralelo_digital',
+        'currency_from': cur,
+        'currency_to':   bob,
+        'buy_rate':      buy,
+        'sell_rate':     sell,
+        'official_rate': official_rate,
+        'avg_rate':      mid,
+        'market_type':   market_type,
+        'valid_from':    valid_from,
     }
-    if data.get('fecha'):
-        rate_data['date'] = data['fecha']
 
     if dry_run:
         return {'action': 'dry_run', 'data': {k: str(v) for k, v in rate_data.items()}}
 
     with db_transaction.atomic():
-        obj = ExchangeRate(**rate_data)
-        obj.save()
-    return {'action': 'created', 'id': obj.pk}
+        # update_or_create con rate_source=None es idempotente (ORM → WHERE rate_source IS NULL),
+        # igual que los loaders existentes (load_competition_rates).
+        obj, was_created = ExchangeRate.objects.update_or_create(
+            currency_from=cur,
+            currency_to=bob,
+            valid_from=valid_from,
+            market_type=market_type,
+            rate_source=None,
+            defaults={
+                'official_rate': official_rate,
+                'buy_rate':      buy,
+                'sell_rate':     sell,
+                'avg_rate':      mid,
+                'source_method': 'MANUAL',
+                'source':        'import',
+            },
+        )
+    return {'action': 'created' if was_created else 'updated', 'id': obj.pk}
 
 
-def _persist_customer(data: dict, dry_run: bool) -> dict:
+def _persist_customer(data: dict, dry_run: bool, migration=None) -> dict:
     from transactions.models import Customer
 
     doc = data.get('document_number', '').strip()
@@ -271,17 +320,50 @@ def _persist_customer(data: dict, dry_run: bool) -> dict:
     return {'action': 'created' if created else 'updated', 'id': obj.pk}
 
 
-def _persist_capital(data: dict, dry_run: bool) -> dict:
+def _persist_capital(data: dict, dry_run: bool, migration=None) -> dict:
     from capital.models import Gasto
+    from users.models import Branch
+
+    user = getattr(migration, 'created_by', None)
+
+    # ── Resolver branch (FK NOT NULL) ────────────────────────────────────────
+    # 1) el resuelto en _apply_lookups (Branch), 2) principal activa de la
+    # empresa del usuario, 3) principal activa global. Nunca None.
+    branch = data.get('branch')
+    if not isinstance(branch, Branch):
+        branch = None
+    if branch is None and user is not None and getattr(user, 'company_id', None):
+        branch = (Branch.objects
+                  .filter(company_id=user.company_id, is_active=True)
+                  .order_by('-is_main', 'id').first())
+    if branch is None:
+        branch = (Branch.objects
+                  .filter(is_active=True)
+                  .order_by('-is_main', 'id').first())
+    if branch is None:
+        raise ValueError('No hay ninguna sucursal activa para registrar el gasto.')
+
+    # ── registrado_por (FK NOT NULL, sin default) ────────────────────────────
+    if user is None:
+        raise ValueError(
+            'No se puede registrar el gasto: la migración no tiene usuario '
+            '(created_by) para asignar a registrado_por.'
+        )
+
+    # ── categoria: validar contra choices reales ─────────────────────────────
+    categoria = (data.get('categoria') or 'OTROS').upper() or 'OTROS'
+    valid_categorias = {c[0] for c in Gasto.CATEGORIAS}
+    if categoria not in valid_categorias:
+        categoria = 'OTROS'
 
     gasto_data = {
-        'concepto':  data.get('concepto', ''),
-        'monto':     data.get('monto', Decimal('0')),
-        'categoria': data.get('categoria', 'OTROS').upper() or 'OTROS',
-        'fecha':     data.get('fecha') or date.today(),
+        'descripcion':    data.get('concepto', '') or 'Importado',
+        'monto_bob':      data.get('monto') or Decimal('0'),
+        'categoria':      categoria,
+        'fecha':          data.get('fecha') or date.today(),
+        'branch':         branch,
+        'registrado_por': user,
     }
-    if data.get('branch'):
-        gasto_data['branch'] = data['branch']
 
     if dry_run:
         return {'action': 'dry_run', 'data': {k: str(v) for k, v in gasto_data.items()}}
@@ -412,7 +494,7 @@ class RowImporter:
 
             try:
                 data = self.transform_row(raw_row, header_index)
-                result = persister(data, self.migration.dry_run)
+                result = persister(data, self.migration.dry_run, self.migration)
                 success += 1
                 logger.debug('Row %d OK: %s', row_num, result)
 

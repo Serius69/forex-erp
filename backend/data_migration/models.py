@@ -31,13 +31,14 @@ class MigrationLog(models.Model):
         (STATUS_VALIDATED, 'Validado'),
     ]
 
+    # Solo targets con persistidor en data_migration.services.importer.PERSISTERS.
+    # 'inventory'/'users' se retiraron: no tenían persistidor y abortaban el batch
+    # entero con NotImplementedError (ver serializers.VALID_TARGET_MODELS).
     TARGET_CHOICES = [
         ('transactions', 'Transacciones'),
         ('rates',        'Tasas de cambio'),
-        ('inventory',    'Inventario'),
         ('customers',    'Clientes'),
         ('capital',      'Capital / Gastos'),
-        ('users',        'Usuarios'),
     ]
 
     id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

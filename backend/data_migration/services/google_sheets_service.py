@@ -259,6 +259,7 @@ def _sync_inventory(parsed: list[dict], dry_run: bool, user=None) -> tuple[int, 
     Actualiza CurrencyInventory (physical_balance, digital_balance, wac).
     Requiere que exista al menos una sucursal.
     """
+    from django.conf import settings
     from rates.models import Currency
     from inventory.models import CurrencyInventory
     from users.models import Branch
@@ -266,10 +267,34 @@ def _sync_inventory(parsed: list[dict], dry_run: bool, user=None) -> tuple[int, 
     synced = 0
     errors: list[str] = []
 
-    # Obtener sucursal por defecto (la primera disponible)
-    default_branch = Branch.objects.order_by('id').first()
-    if not default_branch:
-        return 0, ['No existe ninguna sucursal configurada para sincronizar inventario.']
+    # ── Resolver sucursal destino con aislamiento multi-tenant ────────────────
+    # Con usuario: SIEMPRE la sucursal de SU empresa (nunca la global de otro tenant).
+    # Sin usuario (tarea Celery auto_sync_sheets): fallback explícito y confiable.
+    default_branch = None
+    if user is not None and getattr(user, 'company_id', None):
+        default_branch = (Branch.objects
+                          .filter(company_id=user.company_id, is_active=True)
+                          .order_by('-is_main', 'id').first())
+        if not default_branch:
+            return 0, ['No existe una sucursal activa para la empresa del usuario '
+                       'para sincronizar inventario.']
+    else:
+        branch_id = getattr(settings, 'GOOGLE_SHEETS_AUTO_SYNC_BRANCH', None)
+        if branch_id:
+            default_branch = Branch.objects.filter(id=branch_id, is_active=True).first()
+        else:
+            # Solo caer a la sucursal global si existe UNA sola empresa (multi-tenant seguro).
+            company_ids = {
+                cid for cid in Branch.objects.filter(is_active=True)
+                .values_list('company_id', flat=True).distinct()
+            }
+            if len(company_ids) <= 1:
+                default_branch = (Branch.objects
+                                  .filter(is_active=True)
+                                  .order_by('-is_main', 'id').first())
+        if not default_branch:
+            return 0, ['No hay una sucursal por defecto configurada '
+                       '(GOOGLE_SHEETS_AUTO_SYNC_BRANCH) para sincronizar inventario sin usuario.']
 
     for item in parsed:
         try:
@@ -311,10 +336,23 @@ def _sync_rates(parsed: list[dict], dry_run: bool, user=None) -> tuple[int, list
     synced = 0
     errors: list[str] = []
 
+    # Mapear el mercado libre del sheet a los valores canónicos de MARKET_TYPE_CHOICES.
+    MARKET_MAP = {
+        'PARALLEL': 'paralelo_fisico_competencia',
+        'BCB':      'official',
+        'OFFICIAL': 'official',
+        'DIGITAL':  'paralelo_digital',
+    }
+
+    try:
+        bob = Currency.objects.get(code='BOB')
+    except Currency.DoesNotExist:
+        return 0, ['Moneda base BOB no encontrada; no se pueden sincronizar tasas.']
+
     for item in parsed:
         try:
             try:
-                currency = Currency.objects.get(code=item['currency'])
+                cur = Currency.objects.get(code=item['currency'])
             except Currency.DoesNotExist:
                 errors.append(f"Fila {item['row_num']}: Divisa '{item['currency']}' no encontrada.")
                 continue
@@ -327,29 +365,44 @@ def _sync_rates(parsed: list[dict], dry_run: bool, user=None) -> tuple[int, list
                 synced += 1
                 continue
 
-            rate_data = {
-                'buy_rate':  item['buy_rate'],
-                'sell_rate': item['sell_rate'],
-            }
-            if item['bcb_rate']:
-                rate_data['official_rate'] = item['bcb_rate']
+            # Convención del sistema: currency_from=<divisa>, currency_to=BOB, buy<=sell.
+            buy  = item['buy_rate']
+            sell = item['sell_rate']
+            if buy > sell:
+                buy, sell = sell, buy
+            mid = (buy + sell) / Decimal('2')
 
-            market = item['market']
-            valid_markets = {'PARALLEL', 'BCB', 'DIGITAL', 'OFFICIAL'}
-            if market not in valid_markets:
-                market = 'PARALLEL'
-            rate_data['market_type'] = market
+            # official_rate es NOT NULL: usar tasa BCB del sheet o el mid como fallback.
+            official_rate = item['bcb_rate'] or mid
 
+            market_type = MARKET_MAP.get(item['market'], 'paralelo_fisico_competencia')
+
+            # valid_from es NOT NULL y sin default: siempre setear.
             if item['fecha']:
-                # update_or_create por fecha + currency + market
-                ExchangeRate.objects.update_or_create(
-                    currency=currency,
-                    date=item['fecha'],
-                    market_type=market,
-                    defaults=rate_data,
+                valid_from = timezone.make_aware(
+                    datetime.combine(item['fecha'], datetime.min.time())
                 )
             else:
-                ExchangeRate.objects.create(currency=currency, **rate_data)
+                valid_from = timezone.now()
+
+            # update_or_create con rate_source=None es idempotente (ORM → IS NULL),
+            # espejando la unique_together real (currency_from, currency_to,
+            # valid_from, market_type, rate_source).
+            ExchangeRate.objects.update_or_create(
+                currency_from=cur,
+                currency_to=bob,
+                valid_from=valid_from,
+                market_type=market_type,
+                rate_source=None,
+                defaults={
+                    'official_rate': official_rate,
+                    'buy_rate':      buy,
+                    'sell_rate':     sell,
+                    'avg_rate':      mid,
+                    'source_method': 'MANUAL',
+                    'source':        'google_sheets_sync',
+                },
+            )
 
             synced += 1
 

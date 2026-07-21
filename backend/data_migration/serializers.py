@@ -2,6 +2,10 @@
 from rest_framework import serializers
 from .models import MigrationLog, MigrationCheckpoint, ColumnMapping
 
+# Únicos targets con persistidor implementado (data_migration.services.importer.PERSISTERS).
+# 'inventory'/'users' no tienen persistidor → se excluyen para no abortar el batch entero.
+VALID_TARGET_MODELS = ['transactions', 'rates', 'customers', 'capital']
+
 
 class ColumnMappingSerializer(serializers.ModelSerializer):
     class Meta:
@@ -51,28 +55,32 @@ class StartMigrationSerializer(serializers.Serializer):
     name           = serializers.CharField(max_length=200)
     spreadsheet_id = serializers.CharField(max_length=200)
     sheet_name     = serializers.CharField(max_length=200)
-    target_model   = serializers.ChoiceField(choices=[
-        'transactions', 'rates', 'inventory', 'customers', 'capital', 'users'
-    ])
+    target_model   = serializers.ChoiceField(choices=VALID_TARGET_MODELS)
     dry_run        = serializers.BooleanField(default=False)
     skip_errors    = serializers.BooleanField(default=False)
     batch_size     = serializers.IntegerField(default=100, min_value=10, max_value=1000)
     column_mappings = ColumnMappingSerializer(many=True, required=False)
+
+    def validate_target_model(self, value):
+        # Rechazar al crear (no al ejecutar) si no hay persistidor para el target.
+        from data_migration.services.importer import PERSISTERS
+        if value not in PERSISTERS:
+            raise serializers.ValidationError(
+                f'target_model "{value}" no tiene persistidor implementado. '
+                f'Opciones válidas: {sorted(PERSISTERS)}'
+            )
+        return value
 
 
 class SuggestMappingSerializer(serializers.Serializer):
     """Payload para sugerencia de mapeo."""
     spreadsheet_id = serializers.CharField(max_length=200)
     sheet_name     = serializers.CharField(max_length=200)
-    target_model   = serializers.ChoiceField(choices=[
-        'transactions', 'rates', 'inventory', 'customers', 'capital', 'users'
-    ])
+    target_model   = serializers.ChoiceField(choices=VALID_TARGET_MODELS)
     sample_rows    = serializers.IntegerField(default=10, min_value=1, max_value=50)
 
 
 class ValidateMappingSerializer(serializers.Serializer):
     """Payload para validar un mapeo antes de migrar."""
-    target_model    = serializers.ChoiceField(choices=[
-        'transactions', 'rates', 'inventory', 'customers', 'capital', 'users'
-    ])
+    target_model    = serializers.ChoiceField(choices=VALID_TARGET_MODELS)
     column_mappings = ColumnMappingSerializer(many=True)

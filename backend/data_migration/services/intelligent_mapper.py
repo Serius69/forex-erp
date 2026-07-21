@@ -227,7 +227,7 @@ class IntelligentMapper:
                     'model_field':   best_field,
                     'transform':     best_transform,
                     'confidence':    round(best_confidence, 3),
-                    'is_required':   self.schema[best_field]['is_required'],
+                    'is_required':   self.schema[best_field]['required'],
                     'matched_by':    best_match_by,
                     'default_value': '',
                 })
@@ -249,7 +249,7 @@ class IntelligentMapper:
         mapped_fields = {s['model_field'] for s in suggestions if s['model_field']}
         missing_required = [
             f for f, d in self.schema.items()
-            if d['is_required'] and f not in mapped_fields
+            if d['required'] and f not in mapped_fields
         ]
         if missing_required:
             logger.warning(
@@ -260,7 +260,7 @@ class IntelligentMapper:
         return suggestions
 
     def get_required_fields(self) -> list[str]:
-        return [f for f, d in self.schema.items() if d['is_required']]
+        return [f for f, d in self.schema.items() if d['required']]
 
     def validate_mapping_completeness(self, mappings: list[dict]) -> dict:
         """Verifica que todos los campos requeridos estén mapeados."""
