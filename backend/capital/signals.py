@@ -106,7 +106,8 @@ def _apply_position_update(tx) -> None:
                     rate_bob=tx.exchange_rate,
                 )
                 pos.save(update_fields=[
-                    'net_position', 'total_sold', 'last_tx_at', 'updated_at',
+                    'net_position', 'total_sold', 'total_cost_bob',
+                    'last_tx_at', 'updated_at',
                 ])
 
     # Invalidar caché de posición y KPIs

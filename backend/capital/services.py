@@ -207,7 +207,7 @@ class CapitalService:
             total_pasivos += _q(comp.pasivos       or 0)
 
         total_efectivo = _q(fuertes + caja_chica + monedas + rotos + sueltos)
-        total_digital  = _q(qr + tarjetas_tel)
+        total_digital  = _q(qr + tarjetas_tel)   # desglose informativo (display)
 
         resultado['efectivo'] = {
             'fuertes':    str(_q(fuertes)),
@@ -254,8 +254,14 @@ class CapitalService:
         resultado['totales']['tarjetas_bob'] = str(_q(total_tarjetas))
 
         # ── TOTALES ───────────────────────────────────────────────────────────
+        # Tarjetas telefónicas: contar UNA sola vez. El bloque D (inventario real
+        # FIFO) es la fuente de verdad; el campo manual tarjetas_telefonicas de la
+        # composición solo cuenta si el módulo no aportó valor (total_tarjetas==0).
+        # Antes se sumaban ambos (total_digital incluía tarjetas_tel Y total_tarjetas)
+        # → doble-conteo del mismo activo.
+        tarjetas_valor = total_tarjetas if total_tarjetas > 0 else _q(tarjetas_tel)
         total_activos = _q(
-            total_divisas + total_efectivo + total_digital + total_tarjetas
+            total_divisas + total_efectivo + _q(qr) + tarjetas_valor
         )
         capital_neto  = _q(total_activos - total_pasivos)
 

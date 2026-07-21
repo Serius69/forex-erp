@@ -198,7 +198,7 @@ class ProfitEngine:
             transaction_type     = 'REVERSAL',
             currency_code        = original_ledger.currency_code,
             branch               = original_ledger.branch,
-            fecha                = timezone.localdate(),
+            fecha                = original_ledger.fecha,   # el día del original: netea su snapshot
             amount_foreign       = original_ledger.amount_foreign,
             exchange_rate        = original_ledger.exchange_rate,
             amount_bob           = -original_ledger.amount_bob,
@@ -210,7 +210,8 @@ class ProfitEngine:
             spread_bob           = original_ledger.spread_bob,
         )
 
-        PnLService.recalcular_snapshot_hoy(original_transaction.branch)
+        PnLService.recalcular_snapshot_hoy(original_transaction.branch,
+                                           fecha=original_ledger.fecha)
         return reversal
 
 
@@ -221,33 +222,48 @@ class ProfitEngine:
 class PnLService:
 
     @staticmethod
-    def recalcular_snapshot_hoy(branch) -> 'PnLDailySnapshot':
+    def recalcular_snapshot_hoy(branch, fecha=None) -> 'PnLDailySnapshot':
         """
-        Recalcula el snapshot P&L del día para una sucursal.
+        Recalcula el snapshot P&L de un día para una sucursal (hoy por defecto).
         Atómico: update_or_create con select_for_update.
+
+        Las filas REVERSAL (montos negados que apuntan a la tx original) se
+        enrutan al bucket del tipo ORIGINAL (SELL/BUY) para que neteen
+        ingreso/costo/ganancia/inversión; el conteo se firma (+1 original,
+        −1 reversa) para no sobre-contar operaciones revertidas.
         """
         from .models import TransactionProfitLedger, PnLDailySnapshot
         from capital.models import Gasto
+        from django.db.models import Case, When, IntegerField
 
-        hoy = timezone.localdate()
+        hoy = fecha or timezone.localdate()
 
         with db_transaction.atomic():
-            # Ventas del día
+            # Ventas del día: SELL + REVERSAL de un SELL
             ventas_agg = (
                 TransactionProfitLedger.objects
-                .filter(branch=branch, fecha=hoy, transaction_type='SELL')
+                .filter(branch=branch, fecha=hoy)
+                .filter(Q(transaction_type='SELL') |
+                        Q(transaction_type='REVERSAL', transaction__transaction_type='SELL'))
                 .aggregate(
-                    count=Count('id'),
+                    count=Sum(Case(When(transaction_type='SELL', then=1),
+                                   default=-1, output_field=IntegerField())),
                     ingreso=Sum('amount_bob'),
                     costo=Sum('cost_bob'),
                     ganancia=Sum('profit_bob'),
                 )
             )
-            # Compras del día
+            # Compras del día: BUY + REVERSAL de un BUY
             compras_agg = (
                 TransactionProfitLedger.objects
-                .filter(branch=branch, fecha=hoy, transaction_type='BUY')
-                .aggregate(count=Count('id'), inversion=Sum('amount_bob'))
+                .filter(branch=branch, fecha=hoy)
+                .filter(Q(transaction_type='BUY') |
+                        Q(transaction_type='REVERSAL', transaction__transaction_type='BUY'))
+                .aggregate(
+                    count=Sum(Case(When(transaction_type='BUY', then=1),
+                                   default=-1, output_field=IntegerField())),
+                    inversion=Sum('amount_bob'),
+                )
             )
             # Gastos operativos del día
             gastos_total = (
@@ -269,11 +285,11 @@ class PnLService:
             snap, _ = PnLDailySnapshot.objects.update_or_create(
                 fecha=hoy, branch=branch,
                 defaults={
-                    'num_ventas':             ventas_agg['count'] or 0,
+                    'num_ventas':             max(0, ventas_agg['count'] or 0),
                     'ingreso_ventas_bob':      ingreso_ventas,
                     'costo_ventas_bob':        costo_ventas,
                     'ganancia_bruta_bob':      ganancia_bruta,
-                    'num_compras':             compras_agg['count'] or 0,
+                    'num_compras':             max(0, compras_agg['count'] or 0),
                     'inversion_compras_bob':   _q(compras_agg['inversion'] or 0),
                     'gastos_operativos_bob':   gastos_op,
                     'ganancia_neta_bob':       ganancia_neta,
@@ -386,8 +402,12 @@ class ExposureService:
         if not bob:
             return {'error': 'BOB no encontrado'}
 
-        # Cargar tasas activas (paralelo físico empresa como benchmark de exposición)
+        # Cargar tasas activas (paralelo físico empresa como benchmark de exposición).
+        # Si la expiración de tasas no corrió puede haber varias filas activas
+        # (valid_until NULL) por (divisa, market_type): quedarse con la MÁS RECIENTE
+        # de cada una (-valid_from) vía `seen`, y preferir empresa sobre digital.
         rates = {}
+        seen = set()
         for r in (ExchangeRate.objects
                   .filter(currency_to=bob, valid_until__isnull=True)
                   .filter(
@@ -395,8 +415,11 @@ class ExposureService:
                       Q(market_type='paralelo_digital')
                   )
                   .select_related('currency_from')
-                  .order_by('currency_from__code', 'market_type')):
-            # Priorizar paralelo_fisico_empresa sobre parallel
+                  .order_by('currency_from__code', 'market_type', '-valid_from')):
+            key = (r.currency_from_id, r.market_type)
+            if key in seen:
+                continue                      # ya tomamos la más reciente de este par
+            seen.add(key)
             if r.currency_from_id not in rates or r.market_type == 'paralelo_fisico_empresa':
                 rates[r.currency_from_id] = r
 

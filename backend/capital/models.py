@@ -566,10 +566,19 @@ class CurrencyPosition(models.Model):
         self.last_tx_at = timezone.now()
 
     def apply_sell(self, amount: Decimal, rate_bob: Decimal) -> None:
-        """Empresa vende divisa: reduce posición."""
-        self.total_sold   += amount
-        self.net_position -= amount
-        self.last_tx_at    = timezone.now()
+        """Empresa vende divisa: reduce posición.
+
+        La venta consume costo al WAC vigente (COGS) — reduce total_cost_bob sin
+        tocar avg_acquisition_cost (bajo WAC el costo unitario no cambia al vender).
+        Antes no reducía total_cost_bob → se rompía la invariante
+        total_cost_bob == net_position * avg_acquisition_cost y una compra
+        posterior inflaba el WAC de forma permanente.
+        """
+        cogs = min(amount * self.avg_acquisition_cost, self.total_cost_bob)
+        self.total_sold    += amount
+        self.net_position  -= amount
+        self.total_cost_bob -= cogs
+        self.last_tx_at     = timezone.now()
 
     def update_unrealized_pnl(self, parallel_rate: Decimal, official_rate: Decimal = None) -> None:
         """Recalcula el P&L no realizado a tasa paralela. official_rate ignorado (BCB eliminado)."""

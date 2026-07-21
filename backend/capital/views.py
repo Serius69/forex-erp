@@ -1203,7 +1203,15 @@ class MovimientoCajaChicaViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['GET'], url_path='saldo')
     def saldo(self, request):
         """Saldo vigente de caja chica del ámbito del usuario."""
-        agg = self.get_queryset().aggregate(
+        # El saldo de un fondo fijo es acumulativo desde la APERTURA: NO reusar
+        # get_queryset() (hereda date_from → dejaría fuera la apertura y daría un
+        # saldo parcial). Se mantiene el aislamiento company/branch; date_to
+        # opcional permite el saldo "a una fecha".
+        qs = _company_branch_filter(MovimientoCajaChica.objects.all(), request.user)
+        date_to = request.query_params.get('date_to')
+        if date_to:
+            qs = qs.filter(fecha__lte=date_to)
+        agg = qs.aggregate(
             saldo=Coalesce(Sum(Case(
                 When(tipo='EGRESO', then=-F('monto_bob')),
                 default=F('monto_bob'),

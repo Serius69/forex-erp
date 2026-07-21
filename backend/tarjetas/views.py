@@ -225,10 +225,13 @@ class VentaTarjetaViewSet(viewsets.GenericViewSet,
         date_from = request.query_params.get('date_from', str(timezone.localdate()))
         date_to   = request.query_params.get('date_to',   str(timezone.localdate()))
 
+        # Excluir ANULADAS: anular_venta solo cambia estado, no pone en cero
+        # ganancia_bob/total_bob → sin este filtro el resumen sobre-reporta P&L
+        # e ingresos de ventas ya anuladas (mismo patrón que capital/services).
         qs = self.get_queryset().filter(
             created_at__date__gte=date_from,
             created_at__date__lte=date_to,
-        )
+        ).exclude(estado='ANULADA')
 
         agg = qs.aggregate(
             total_ventas    = Count('id'),
