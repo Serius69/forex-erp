@@ -154,6 +154,7 @@ class LSTMForecaster:
         import tensorflow as tf
 
         from predictions.market_keys import fname_suffix
+        from predictions.data_pipeline import ForexDataPipeline
         pair_safe   = currency_pair.replace('/', '_') + fname_suffix(market)
         model_path  = os.path.join(self.models_path, f'bilstm_{pair_safe}.keras')
         scaler_path = os.path.join(self.models_path, f'scaler_bilstm_{pair_safe}.pkl')
@@ -171,24 +172,50 @@ class LSTMForecaster:
         features = artifact['features']
         seq_len  = artifact['seq_len']
 
-        data    = df_recent[features].dropna().values
-        scaled  = scaler.transform(data)
-        cur_seq = scaled[-seq_len:].copy()
+        # Predicción iterativa CAUSAL (consistente con XGBoost): en vez de congelar
+        # todos los features salvo 'rate', se mantiene un df acumulado en espacio
+        # CRUDO y en cada paso se recomputan technicals + macro + calendario sobre
+        # la cola; luego se re-escala con el scaler ENTRENADO antes de la siguiente
+        # ventana. El BiLSTM opera en espacio escalado (RobustScaler conjunto), por
+        # eso el crudo se mantiene aparte y el escalado ocurre en `_cur_seq`.
+        pipe    = ForexDataPipeline()
+        df      = df_recent.copy()
+        last_ts = df.index[-1]
+        n_feat  = len(features)
 
-        # ATR para CI
-        atr_idx  = features.index('atr_14') if 'atr_14' in features else None
-        atr_base = float(scaler.inverse_transform(cur_seq[-1:])[0][atr_idx]) if atr_idx else float(df_recent['rate'].iloc[-1]) * 0.005
+        def _cur_seq() -> np.ndarray:
+            # Últimas seq_len filas en crudo → escaladas. ffill/bfill cubre algún
+            # NaN esporádico (p.ej. bb_pct en ventanas planas) SIN descartar la
+            # fila recién predicha (dropna la habría eliminado).
+            window = df[features].tail(seq_len).ffill().bfill().fillna(0.0)
+            return scaler.transform(window.values).astype(np.float32)
 
-        now = timezone.now()
+        cur_seq = _cur_seq()
+
+        # ATR base para CI, leído de la última fila REAL (espacio crudo).
+        atr_base = float(df['atr_14'].iloc[-1]) if 'atr_14' in df.columns \
+            else float(df['rate'].iloc[-1]) * 0.005
+
+        # Ventana de recálculo causal: cubre holgadamente el mayor lookback de los
+        # features del BiLSTM (lag_24 / ma_30) sin recomputar toda la serie.
+        TAIL = 320
+
+        # Calendario de los timestamps futuros: función PURA del timestamp, no
+        # depende de la tasa predicha → se precalcula de una vez.
+        future_index = pd.DatetimeIndex(
+            [last_ts + pd.Timedelta(hours=h) for h in range(1, horizon + 1)]
+        )
+        cal_future = pipe._add_calendar(pd.DataFrame(index=future_index), currency_pair)
+
         predictions = []
-
         for h in range(1, horizon + 1):
-            pred_scaled = float(model.predict(cur_seq.reshape(1, seq_len, len(features)), verbose=0)[0, 0])
-            rate_pred   = _denorm(np.array([pred_scaled]), scaler, len(features))[0]
+            pred_ts     = last_ts + pd.Timedelta(hours=h)
+            pred_scaled = float(model.predict(cur_seq.reshape(1, seq_len, n_feat), verbose=0)[0, 0])
+            rate_pred   = _denorm(np.array([pred_scaled]), scaler, n_feat)[0]
 
             sigma = atr_base * np.sqrt(h)
             predictions.append({
-                'prediction_date': (now + pd.Timedelta(hours=h)).to_pydatetime(),
+                'prediction_date': pred_ts.to_pydatetime(),
                 'rate':            rate_pred,
                 'lower':           rate_pred - 1.96 * sigma,
                 'upper':           rate_pred + 1.96 * sigma,
@@ -196,10 +223,21 @@ class LSTMForecaster:
                 'external_factors': {'model': 'BILSTM'},
             })
 
-            # Hacer avanzar la secuencia con el valor predicho
-            new_row    = cur_seq[-1].copy()
-            new_row[0] = pred_scaled   # columna 0 = 'rate' en el scaler
-            cur_seq    = np.vstack([cur_seq[1:], new_row])
+            # ── Avanzar la serie: añadir la fila predicha y RECOMPUTAR los features
+            # (technicals + macro + calendario) de forma causal sobre la cola, en
+            # vez de congelarlos. Se arrastra 'rate' + exógenas macro (ffill).
+            new_row_df = pd.DataFrame({'rate': [rate_pred]}, index=[pred_ts])
+            df = pd.concat([df, new_row_df])
+            df.loc[pred_ts, cal_future.columns] = cal_future.loc[pred_ts]
+            carry = ['rate'] + [c for c in ('volume', 'international_rate',
+                     'interest_rate', 'inflation_rate', 'oil_price') if c in df.columns]
+            tail = df[carry].tail(TAIL).copy()
+            tail = pipe._add_technical(tail)
+            tail = pipe._add_macro(tail)
+            df.loc[tail.index, tail.columns] = tail
+
+            # Re-escalar la nueva cola para la siguiente ventana.
+            cur_seq = _cur_seq()
 
         return predictions
 

@@ -297,7 +297,13 @@ class EnsembleForecaster:
         if len(aligned) < 20:
             raise ValueError("Insuficientes timestamps comunes entre modelos para meta-learner")
 
-        X = aligned[BASE_MODELS].values
+        # Solo los modelos base que SÍ tienen predicciones históricas (columnas
+        # presentes en el pivot). Antes `aligned[BASE_MODELS]` lanzaba KeyError si
+        # un modelo (p.ej. ARIMA sin pmdarima) no tenía filas → abortaba el meta de
+        # todos los pares/mercados restantes. El guard `if not rows` (arriba)
+        # garantiza que `present` no queda vacío.
+        present = [m for m in BASE_MODELS if m in pivot.columns]
+        X = aligned[present].values
         y = aligned['actual'].values
 
         split   = int(len(X) * 0.8)
@@ -310,7 +316,10 @@ class EnsembleForecaster:
         from predictions.market_keys import fname_suffix
         pair_safe     = currency_pair.replace('/', '_') + fname_suffix(market)
         meta_path     = os.path.join(self.models_path, f'meta_ridge_{pair_safe}.pkl')
-        joblib.dump({'model': ridge, 'features': BASE_MODELS}, meta_path)
+        # Se guardan SOLO los features realmente usados (present) para que
+        # predict_with_meta arme el vector en el mismo orden/dimensión. Artifacts
+        # viejos con features=BASE_MODELS completo siguen siendo compatibles.
+        joblib.dump({'model': ridge, 'features': present}, meta_path)
 
         logger.info("meta_learner pair=%s mae=%.4f mape=%.4f%%", currency_pair, mae, mape)
         return {'mae': float(mae), 'mape': mape, 'model_path': meta_path}
@@ -336,6 +345,21 @@ class EnsembleForecaster:
         artifact = load_cached(meta_path, joblib.load)
         ridge    = artifact['model']
         features = artifact['features']
+
+        # Cobertura incompleta de modelos base en serving: si algún modelo con el
+        # que se entrenó el Ridge falta (o vino vacío) en base_preds, imputar 0.0
+        # para su feature haría que el Ridge EXTRAPOLARA una tasa sesgada servida
+        # por la API. En ese caso NO usamos el meta-learner: señalizamos con
+        # FileNotFoundError —la excepción que AMBOS call sites de ml_engine.py
+        # (:174 y :389) ya capturan— para caer al promedio ponderado (self.combine)
+        # con los pesos dinámicos vigentes. Elegimos relanzar la excepción existente
+        # en vez de replicar el fallback aquí para no duplicar la lógica de pesos.
+        missing = [mt for mt in features if not base_preds.get(mt)]
+        if missing:
+            raise FileNotFoundError(
+                f"Meta-learner omitido (cobertura incompleta): modelos base "
+                f"ausentes en serving {missing}"
+            )
 
         horizon     = min(len(v) for v in base_preds.values() if v)
         predictions = []
