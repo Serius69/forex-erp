@@ -151,6 +151,20 @@ class QueryCountMiddleware:
         return response
 
 
+def _idempotency_scope(request):
+    """Deriva un scope por-usuario del Bearer JWT (request.user aún no está
+    resuelto en el middleware). Sin scope, dos empresas que usen la misma
+    Idempotency-Key compartirían la respuesta cacheada → fuga cross-tenant."""
+    auth = request.META.get('HTTP_AUTHORIZATION', '')
+    if auth.startswith('Bearer '):
+        try:
+            from rest_framework_simplejwt.tokens import AccessToken
+            return str(AccessToken(auth.split(' ', 1)[1]).get('user_id') or 'anon')
+        except Exception:
+            return 'anon'
+    return 'anon'
+
+
 class IdempotencyMiddleware:
     """
     Previene transacciones duplicadas usando un Idempotency-Key en el header.
@@ -168,7 +182,9 @@ class IdempotencyMiddleware:
         ):
             key_header = request.META.get('HTTP_IDEMPOTENCY_KEY', '').strip()
             if key_header:
-                cache_key = f"idempotency:{hashlib.sha256(key_header.encode()).hexdigest()}"
+                scope = _idempotency_scope(request)
+                digest = hashlib.sha256(key_header.encode()).hexdigest()
+                cache_key = f"idempotency:{scope}:{digest}"
                 cached = cache.get(cache_key)
                 if cached is not None:
                     log_security.warning(

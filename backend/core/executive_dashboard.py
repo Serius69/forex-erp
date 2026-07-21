@@ -44,8 +44,20 @@ class ExecutiveDashboardView(APIView):
 
     def get(self, request):
         force    = request.query_params.get('refresh', '').lower() == 'true'
-        branch_id = request.query_params.get('branch_id')
-        cache_key = f'executive_dashboard:{branch_id or "all"}'
+        # Aislamiento multi-tenant: sin company_id el dashboard agregaba capital,
+        # P&L, transacciones, exposición e inventario de TODAS las empresas.
+        company_id = getattr(request.user, 'company_id', None)
+        branch_id  = request.query_params.get('branch_id')
+        if branch_id:
+            from users.models import Branch
+            bqs = Branch.objects.all()
+            if company_id:
+                bqs = bqs.filter(company_id=company_id)
+            try:
+                branch_id = bqs.get(pk=branch_id).id  # valida empresa
+            except (Branch.DoesNotExist, ValueError):
+                return Response({'error': 'Sucursal no encontrada'}, status=404)
+        cache_key = f'executive_dashboard:{company_id or "all"}:{branch_id or "all"}'
 
         if not force:
             cached = cache.get(cache_key)
@@ -54,7 +66,7 @@ class ExecutiveDashboardView(APIView):
                 return Response(cached)
 
         try:
-            data = _build_dashboard(branch_id=branch_id)
+            data = _build_dashboard(branch_id=branch_id, company_id=company_id)
             cache.set(cache_key, data, CACHE_TTL)
             return Response(data)
         except Exception as exc:
@@ -62,7 +74,7 @@ class ExecutiveDashboardView(APIView):
             return Response({'error': str(exc)}, status=500)
 
 
-def _build_dashboard(branch_id=None) -> dict:
+def _build_dashboard(branch_id=None, company_id=None) -> dict:
     today = timezone.now().date()
     week_start  = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
@@ -70,24 +82,29 @@ def _build_dashboard(branch_id=None) -> dict:
     return {
         'generated_at':   timezone.now().isoformat(),
         'from_cache':     False,
-        'capital':        _get_capital(branch_id),
-        'pnl':            _get_pnl(today, week_start, month_start, branch_id),
-        'transactions':   _get_transaction_stats(today, week_start, month_start, branch_id),
-        'currencies':     _get_currency_performance(month_start, branch_id),
-        'exposure':       _get_exposure_summary(branch_id),
+        'capital':        _get_capital(branch_id, company_id),
+        'pnl':            _get_pnl(today, week_start, month_start, branch_id, company_id),
+        'transactions':   _get_transaction_stats(today, week_start, month_start, branch_id, company_id),
+        'currencies':     _get_currency_performance(month_start, branch_id, company_id),
+        'exposure':       _get_exposure_summary(branch_id, company_id),
         'rates':          _get_current_rates(),
         'ai_pricing':     _get_ai_pricing_summary(),
         'alerts':         _get_active_alerts(),
-        'inventory':      _get_inventory_summary(branch_id),
+        'inventory':      _get_inventory_summary(branch_id, company_id),
     }
+
+
+def _scope_company(qs, company_id, path='branch__company_id'):
+    """Aísla un queryset por empresa (aislamiento multi-tenant)."""
+    return qs.filter(**{path: company_id}) if company_id else qs
 
 
 # ── Capital ───────────────────────────────────────────────────────────────────
 
-def _get_capital(branch_id=None) -> dict:
+def _get_capital(branch_id=None, company_id=None) -> dict:
     try:
         from capital.models import CapitalComposicion
-        qs = CapitalComposicion.objects.all()
+        qs = _scope_company(CapitalComposicion.objects.all(), company_id)
         if branch_id:
             qs = qs.filter(branch_id=branch_id)
 
@@ -113,12 +130,12 @@ def _get_capital(branch_id=None) -> dict:
 
 # ── P&L ───────────────────────────────────────────────────────────────────────
 
-def _get_pnl(today: date, week_start: date, month_start: date, branch_id=None) -> dict:
+def _get_pnl(today: date, week_start: date, month_start: date, branch_id=None, company_id=None) -> dict:
     try:
         from analytics.models import PnLDailySnapshot
         from django.db.models import Sum
 
-        qs = PnLDailySnapshot.objects.all()
+        qs = _scope_company(PnLDailySnapshot.objects.all(), company_id)
         if branch_id:
             qs = qs.filter(branch_id=branch_id)
 
@@ -146,12 +163,12 @@ def _get_pnl(today: date, week_start: date, month_start: date, branch_id=None) -
 
 # ── Transacciones ─────────────────────────────────────────────────────────────
 
-def _get_transaction_stats(today: date, week_start: date, month_start: date, branch_id=None) -> dict:
+def _get_transaction_stats(today: date, week_start: date, month_start: date, branch_id=None, company_id=None) -> dict:
     try:
         from transactions.models import Transaction
         from django.db.models import Count, Sum
 
-        qs = Transaction.objects.filter(status='COMPLETED')
+        qs = _scope_company(Transaction.objects.filter(status='COMPLETED'), company_id)
         if branch_id:
             qs = qs.filter(branch_id=branch_id)
 
@@ -186,12 +203,12 @@ def _get_transaction_stats(today: date, week_start: date, month_start: date, bra
 
 # ── Rendimiento por divisa ────────────────────────────────────────────────────
 
-def _get_currency_performance(month_start: date, branch_id=None) -> dict:
+def _get_currency_performance(month_start: date, branch_id=None, company_id=None) -> dict:
     try:
         from analytics.models import TransactionProfitLedger
         from django.db.models import Sum
 
-        qs = TransactionProfitLedger.objects.filter(fecha__gte=month_start)
+        qs = _scope_company(TransactionProfitLedger.objects.filter(fecha__gte=month_start), company_id)
         if branch_id:
             qs = qs.filter(branch_id=branch_id)
 
@@ -216,14 +233,14 @@ def _get_currency_performance(month_start: date, branch_id=None) -> dict:
 
 # ── Exposición ────────────────────────────────────────────────────────────────
 
-def _get_exposure_summary(branch_id=None) -> dict:
+def _get_exposure_summary(branch_id=None, company_id=None) -> dict:
     try:
         from analytics.models import ExposureSnapshot
         from django.db.models import Sum
         from django.utils import timezone as tz
 
         cutoff = tz.now() - timedelta(hours=1)
-        qs     = ExposureSnapshot.objects.filter(timestamp__gte=cutoff)
+        qs     = _scope_company(ExposureSnapshot.objects.filter(timestamp__gte=cutoff), company_id)
         if branch_id:
             qs = qs.filter(branch_id=branch_id)
 
@@ -335,10 +352,10 @@ def _get_active_alerts() -> list:
 
 # ── Inventario ────────────────────────────────────────────────────────────────
 
-def _get_inventory_summary(branch_id=None) -> list:
+def _get_inventory_summary(branch_id=None, company_id=None) -> list:
     try:
         from inventory.models import CurrencyInventory
-        qs = CurrencyInventory.objects.select_related('currency', 'branch')
+        qs = _scope_company(CurrencyInventory.objects.select_related('currency', 'branch'), company_id)
         if branch_id:
             qs = qs.filter(branch_id=branch_id)
 

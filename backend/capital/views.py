@@ -805,19 +805,13 @@ def capital_at_date(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # ── Resolver sucursal ─────────────────────────────────────────────────────
-    if request.user.role == 'ADMIN':
-        branch_id = request.query_params.get('branch_id')
-        if branch_id:
-            from users.models import Branch
-            try:
-                branch = Branch.objects.get(pk=branch_id)
-            except Branch.DoesNotExist:
-                return Response({'error': 'Sucursal no encontrada'}, status=status.HTTP_404_NOT_FOUND)
-        else:
-            branch = None  # Sin filtro → snapshots globales o cualquiera
-    else:
-        branch = request.user.branch
+    # ── Resolver sucursal (valida empresa — aislamiento multi-tenant) ─────────
+    # Antes hacía Branch.objects.get(pk=branch_id) sin filtro de company para
+    # ADMIN → fuga de la posición histórica de otra empresa. _resolve_branch_scope
+    # valida company + rol y además captura branch_id no-entero (evita 500).
+    branch, error = _resolve_branch_scope(request)
+    if error is not None:
+        return error
 
     # ── Construir queryset ────────────────────────────────────────────────────
     qs = (SystemSnapshot.objects
@@ -885,14 +879,18 @@ def capital_at_date(request):
 # ════════════════════════════════════════════════════════════════════════════
 
 def _resolve_branch_id(request):
-    """Extrae branch_id del query param o del usuario autenticado."""
-    bid = request.query_params.get('branch_id')
-    if bid:
-        try:
-            return int(bid)
-        except ValueError:
-            return None
-    return getattr(request.user, 'branch_id', None)
+    """Resuelve branch_id validando la empresa (aislamiento multi-tenant).
+
+    Antes devolvía el ?branch_id= crudo sin validar la empresa → un usuario de
+    la empresa A podía leer la posición/PNL/historial de una sucursal de la
+    empresa B. Ahora delega en _resolve_branch_scope (valida company + rol).
+
+    Retorna (branch_id_or_None, error_response_or_None).
+    """
+    branch, error = _resolve_branch_scope(request)
+    if error is not None:
+        return None, error
+    return (branch.id if branch is not None else None), None
 
 
 @api_view(['GET'])
@@ -902,7 +900,9 @@ def capital_position_view(request):
     GET /api/capital/position/
     Posición en tiempo real (cache 30 s).
     """
-    branch_id = _resolve_branch_id(request)
+    branch_id, error = _resolve_branch_id(request)
+    if error is not None:
+        return error
     if not branch_id:
         return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -926,7 +926,9 @@ def capital_pnl_view(request):
     GET /api/capital/pnl/?start=YYYY-MM-DD&end=YYYY-MM-DD
     P&L del período desaglosado.
     """
-    branch_id = _resolve_branch_id(request)
+    branch_id, error = _resolve_branch_id(request)
+    if error is not None:
+        return error
     if not branch_id:
         return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -968,7 +970,9 @@ def capital_history_view(request):
     GET /api/capital/history/?days=30&currency=USD
     Serie temporal de snapshots de posición diarios.
     """
-    branch_id = _resolve_branch_id(request)
+    branch_id, error = _resolve_branch_id(request)
+    if error is not None:
+        return error
     if not branch_id:
         return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1015,7 +1019,9 @@ def capital_alerts_view(request):
     Umbrales configurables desde settings.py:
       CAPITAL_MIN_BOB, CAPITAL_MAX_CONCENTRATION, CAPITAL_MIN_PNL_DAILY
     """
-    branch_id = _resolve_branch_id(request)
+    branch_id, error = _resolve_branch_id(request)
+    if error is not None:
+        return error
     if not branch_id:
         return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1093,7 +1099,9 @@ def capital_kpis_view(request):
     GET /api/capital/metrics/kpis/
     KPIs de negocio: ROE, rotación, WACC, break-even spread, etc.
     """
-    branch_id = _resolve_branch_id(request)
+    branch_id, error = _resolve_branch_id(request)
+    if error is not None:
+        return error
     if not branch_id:
         return Response({'error': 'branch_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
 

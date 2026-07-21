@@ -79,6 +79,15 @@ class IsCashierOwnBranch(BasePermission):
         return obj_branch == request.user.branch_id
 
 
-class IsCompanyAdmin(IsAuthenticated, IsCompanyMember, IsAdminRole):
-    """Shorthand: authenticated + company member + ADMIN role."""
-    pass
+class IsCompanyAdmin(BasePermission):
+    """Shorthand: authenticated + company member + ADMIN role.
+
+    OJO: NO usar herencia múltiple de las 3 clases — DRF llama un solo
+    has_permission() y por MRO ganaría IsAuthenticated, saltándose los checks de
+    company y de rol (cualquier autenticado pasaría). Se aplica AND explícito.
+    """
+    message = 'Se requiere rol ADMIN de la empresa.'
+
+    def has_permission(self, request, view):
+        return all(p().has_permission(request, view)
+                   for p in (IsAuthenticated, IsCompanyMember, IsAdminRole))

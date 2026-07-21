@@ -119,6 +119,28 @@ def get_rate_limit_status(identifier: str, requests: int, window: int) -> dict:
 
 # ── Helpers internos ──────────────────────────────────────────────────────────
 
+def _client_ip(request) -> str:
+    """IP del cliente resistente a spoofing de X-Forwarded-For.
+
+    Tomar XFF[0] (el valor más a la izquierda) es inseguro: el cliente lo
+    controla y podía enviar una IP distinta por request para evadir el rate
+    limit de login/signup. Se prefiere CF-Connecting-IP (el stack va tras
+    Cloudflare Tunnel + nginx; Cloudflare lo fija y no es spoofeable a través de
+    CF); en su defecto, el elemento a `TRUSTED_PROXY_COUNT` posiciones desde la
+    derecha de XFF (el que conectó a nuestro proxy de confianza); si no, REMOTE_ADDR.
+    """
+    from django.conf import settings
+    cf = request.META.get('HTTP_CF_CONNECTING_IP', '').strip()
+    if cf:
+        return cf
+    depth = int(getattr(settings, 'TRUSTED_PROXY_COUNT', 1))
+    chain = [p.strip() for p in request.META.get('HTTP_X_FORWARDED_FOR', '').split(',') if p.strip()]
+    if chain:
+        idx = len(chain) - depth
+        return chain[idx] if 0 <= idx < len(chain) else chain[0]
+    return request.META.get('REMOTE_ADDR', 'unknown')
+
+
 def _get_identifier(request, scope: str) -> str:
     """Genera el identificador para el rate limit según el scope."""
     parts = []
@@ -130,8 +152,7 @@ def _get_identifier(request, scope: str) -> str:
             parts.append("u:anon")
 
     if scope in ('ip', 'both') or not parts:
-        x_forward = request.META.get('HTTP_X_FORWARDED_FOR', '')
-        ip = x_forward.split(',')[0].strip() if x_forward else request.META.get('REMOTE_ADDR', 'unknown')
+        ip = _client_ip(request)
         ip_hash = hashlib.md5(ip.encode()).hexdigest()[:12]
         parts.append(f"ip:{ip_hash}")
 

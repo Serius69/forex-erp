@@ -220,9 +220,16 @@ class TransactionViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Validar PIN contra todos los supervisores/admins
+            # Validar PIN contra los supervisores/admins DE LA MISMA EMPRESA.
+            # Sin el filtro por company, el PIN podía coincidir con un supervisor
+            # de otra empresa → aprobación cross-tenant y aprobador ajeno en la
+            # auditoría/RTE ASFI. La granularidad correcta es company (no branch:
+            # un ADMIN suele tener branch=None y aprueba en varias sucursales).
             from users.models import User as UserModel
-            for sup in UserModel.objects.filter(role__in=('ADMIN', 'SUPERVISOR')):
+            for sup in UserModel.objects.filter(
+                role__in=('ADMIN', 'SUPERVISOR'),
+                company_id=request.user.company_id,
+            ):
                 if sup.check_pin(raw_pin):
                     supervisor_instance = sup
                     break

@@ -20,11 +20,12 @@ class DashboardChartsView(APIView):
         # Clave por rol/sucursal (multi-tenant: branch_id es único global; ADMIN='all',
         # mismo alcance que las agregaciones de _base_qs). `?refresh=true` fuerza recálculo.
         force = request.query_params.get('refresh', '').lower() == 'true'
+        company_id = getattr(request.user, 'company_id', None)
         if request.user.role == 'ADMIN':
             scope = 'all'
         else:
             scope = f'branch:{request.user.branch_id}'
-        cache_key = f'dashboard_charts:{scope}'
+        cache_key = f'dashboard_charts:{company_id or "all"}:{scope}'
 
         if not force:
             cached = cache.get(cache_key)
@@ -37,14 +38,14 @@ class DashboardChartsView(APIView):
 
         revenue_30d = self._revenue_30d(request, days_30_ago)
         volume_by_currency = self._volume_by_currency(request, month_start)
-        self._enrich_with_profit(volume_by_currency, revenue_30d, month_start, days_30_ago)
-        capital_timeline = self._capital_timeline()
+        self._enrich_with_profit(volume_by_currency, revenue_30d, month_start, days_30_ago, company_id)
+        capital_timeline = self._capital_timeline(company_id)
         income_distribution = [
             {'name': item['currency'], 'value': item['volume']}
             for item in volume_by_currency
             if item.get('currency') and item['currency'] not in ('?', '')
         ]
-        alerts = self._inventory_alerts()
+        alerts = self._inventory_alerts(company_id)
 
         data = {
             'revenue_30d': revenue_30d,
@@ -61,6 +62,9 @@ class DashboardChartsView(APIView):
     def _base_qs(self, request):
         from transactions.models import Transaction
         qs = Transaction.objects.filter(status='COMPLETED')
+        # Aislamiento por empresa SIEMPRE (antes solo se filtraba por sucursal).
+        if getattr(request.user, 'company_id', None):
+            qs = qs.filter(branch__company_id=request.user.company_id)
         if request.user.role != 'ADMIN':
             qs = qs.filter(branch=request.user.branch)
         return qs
@@ -110,13 +114,17 @@ class DashboardChartsView(APIView):
         except Exception:
             return []
 
-    def _enrich_with_profit(self, volume_by_currency, revenue_30d, month_start, days_30_ago):
+    def _enrich_with_profit(self, volume_by_currency, revenue_30d, month_start, days_30_ago, company_id=None):
         try:
             from analytics.models import TransactionProfitLedger
 
+            base = TransactionProfitLedger.objects.all()
+            if company_id:   # aislamiento por empresa
+                base = base.filter(branch__company_id=company_id)
+
             # Profit per currency (month)
             cur_profit = (
-                TransactionProfitLedger.objects
+                base
                 .filter(fecha__gte=month_start)
                 .values('currency_code')
                 .annotate(profit=Sum('profit_bob'))
@@ -131,7 +139,7 @@ class DashboardChartsView(APIView):
 
             # Replace revenue_30d amounts with real profit
             day_profit = (
-                TransactionProfitLedger.objects
+                base
                 .filter(fecha__gte=days_30_ago)
                 .values('fecha')
                 .annotate(profit=Sum('profit_bob'))
@@ -143,7 +151,7 @@ class DashboardChartsView(APIView):
         except Exception:
             pass
 
-    def _capital_timeline(self):
+    def _capital_timeline(self, company_id=None):
         try:
             from capital.models import CapitalSnapshot
             # OJO: el campo es total_bob (Sum('total_capital') lanzaba FieldError
@@ -152,9 +160,11 @@ class DashboardChartsView(APIView):
             # no sumarlos (doble conteo).
             # Acotado a los últimos N días para no escanear todo el histórico.
             cutoff = timezone.now().date() - timedelta(days=CAPITAL_TIMELINE_DAYS)
+            qs = CapitalSnapshot.objects.filter(fecha__gte=cutoff)
+            if company_id:   # aislamiento por empresa
+                qs = qs.filter(branch__company_id=company_id)
             rows = (
-                CapitalSnapshot.objects
-                .filter(fecha__gte=cutoff)
+                qs
                 .order_by('fecha', 'created_at')
                 .values('fecha', 'total_bob')
             )
@@ -168,15 +178,14 @@ class DashboardChartsView(APIView):
         except Exception:
             return []
 
-    def _inventory_alerts(self):
+    def _inventory_alerts(self, company_id=None):
         alerts = []
         try:
             from inventory.models import CurrencyInventory
-            low = (
-                CurrencyInventory.objects
-                .filter(physical_balance__lt=F('minimum_stock'))
-                .select_related('currency')[:5]
-            )
+            qs = CurrencyInventory.objects.filter(physical_balance__lt=F('minimum_stock'))
+            if company_id:   # aislamiento por empresa
+                qs = qs.filter(branch__company_id=company_id)
+            low = qs.select_related('currency')[:5]
             for inv in low:
                 alerts.append({
                     'id': f'inv-{inv.id}',

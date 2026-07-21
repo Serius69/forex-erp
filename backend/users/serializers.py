@@ -54,6 +54,14 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['date_joined', 'last_login', 'is_verified', 'company', 'company_id']
 
+    def validate_branch_id(self, branch):
+        request = self.context.get('request')
+        if branch is not None and request is not None:
+            company_id = getattr(request.user, 'company_id', None)
+            if company_id is not None and branch.company_id != company_id:
+                raise serializers.ValidationError('La sucursal no pertenece a tu empresa.')
+        return branch
+
     def create(self, validated_data):
         password = validated_data.pop('password', None)
         user = super().create(validated_data)
@@ -73,6 +81,17 @@ class UserCreateSerializer(serializers.ModelSerializer):
         model  = User
         fields = ['username', 'first_name', 'last_name', 'email',
                   'password', 'role', 'branch_id', 'phone']
+
+    def validate_branch_id(self, branch):
+        # No permitir asignar una sucursal de OTRA empresa (rompería el
+        # aislamiento por sucursal). Se valida explícito porque el queryset del
+        # campo es Branch.objects.all() y company se fija en perform_create.
+        request = self.context.get('request')
+        if branch is not None and request is not None:
+            company_id = getattr(request.user, 'company_id', None)
+            if company_id is not None and branch.company_id != company_id:
+                raise serializers.ValidationError('La sucursal no pertenece a tu empresa.')
+        return branch
 
     def create(self, validated_data):
         password = validated_data.pop('password')

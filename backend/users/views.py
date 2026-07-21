@@ -272,6 +272,16 @@ class UserViewSet(viewsets.ModelViewSet):
 
         return qs
 
+    def get_permissions(self):
+        # ALTA/EDICIÓN/BAJA de usuarios: solo ADMIN. Sin este gate, como el
+        # serializer expone 'role', un CASHIER podía PATCH-earse a role=ADMIN
+        # (escalada de privilegios). El self-service (password/PIN/2FA) va por
+        # @actions dedicadas, no por el update genérico.
+        from tenants.permissions import IsAdminRole
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [IsAuthenticated(), IsAdminRole()]
+        return [IsAuthenticated()]
+
     def perform_create(self, serializer):
         serializer.save(company=self.request.user.company)
 
