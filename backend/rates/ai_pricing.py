@@ -75,13 +75,19 @@ class AIPricingEngine:
                 raw[s.source_type] = Decimal('0')
             raw[s.source_type] = max(raw[s.source_type], Decimal(str(s.weight)))
 
-        # Mapeo: source_type → componente del motor
+        # Mapeo: source_type → componente del motor.
+        # 'digital' y 'parallel'/'paralelo_digital' son EL MISMO mercado
+        # (paralelo digital) — antes se mapeaban a dos componentes distintos
+        # ('binance' y 'dolarblue') y _get_rate_binance/_get_rate_dolarblue
+        # ejecutaban la MISMA consulta, contando la tasa digital como 2 fuentes
+        # independientes y duplicando su peso efectivo. Se colapsan en UN solo
+        # componente 'binance' (nombre legado del tier digital).
         mapping = {
-            'digital':  'binance',    # Binance/Takenos/Airtm son "digital"
-            'parallel': 'dolarblue',  # Mercado paralelo (DolarBlue Bolivia)
-            'paralelo_digital': 'dolarblue',
+            'digital':          'binance',
+            'parallel':         'binance',
+            'paralelo_digital': 'binance',
         }
-        result: dict[str, Decimal] = {'binance': Decimal('0'), 'dolarblue': Decimal('0'),
+        result: dict[str, Decimal] = {'binance': Decimal('0'),
                                        'historical': Decimal('0.25'), 'competition': Decimal('0')}
         for st, w in raw.items():
             component = mapping.get(st)
@@ -93,7 +99,7 @@ class AIPricingEngine:
         if total > 0:
             result = {k: _q(v / total, '0.0001') for k, v in result.items()}
         else:
-            result = {'binance': Decimal('0.40'), 'dolarblue': Decimal('0.35'),
+            result = {'binance': Decimal('0.75'),
                       'historical': Decimal('0.15'), 'competition': Decimal('0.10')}
 
         self._source_weights = result
@@ -286,10 +292,11 @@ class AIPricingEngine:
         """
         weights = self._get_source_weights()
 
-        # Obtener tasas disponibles
+        # Obtener tasas disponibles. UN solo componente digital ('binance'): antes
+        # se incluía además 'dolarblue' con la MISMA consulta/valor, contando la
+        # tasa paralelo_digital dos veces en el promedio ponderado.
         rates = {
             'binance':     self._get_rate_binance(currency_code),
-            'dolarblue':   self._get_rate_dolarblue(currency_code),
             'historical':  self._get_rate_historical(currency_code),
             'competition': self._get_rate_competition(currency_code),
         }

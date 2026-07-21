@@ -22,11 +22,75 @@ from .fetchers.normalizer import RateNormalizer, NormalizedResult
 log = logging.getLogger('kapitalya.rates.aggregator')
 
 # Prioridad de mercado (mayor número = más confiable para el negocio)
+#
+# DESEMPATE DETERMINISTA (fix flip is_primary): antes 'paralelo_digital' y
+# 'paralelo_fisico_empresa' compartían prioridad 5, así que la tasa primaria
+# oscilaba entre ambos según qué ruta corriera último (ver select_primary_rate).
+# Se rompe el empate a favor de 'paralelo_digital' — es la señal de mercado en
+# TIEMPO REAL que debe cotizar el cajero; 'paralelo_fisico_empresa' es la serie
+# DERIVADA retrospectivamente de las transacciones (mediana diaria, rezagada),
+# se conserva como candidato/segunda opción pero NO gana el desempate ni se
+# descarta.
+#
+# 'reference' (open.er-api / exchangerate-api / Fixer): tasas de referencia
+# cross-rate. Prioridad DEBAJO de paralelo_digital para que el P2P real siempre
+# gane y la referencia solo se use como fallback por divisa cuando no hay ninguna
+# fuente P2P (p.ej. BRL). Nunca se persiste con este market_type: al guardar se
+# mapea a 'paralelo_digital' (ver _PERSIST_MARKET_TYPE) porque no es un choice del
+# modelo.
 MARKET_PRIORITY = {
     'paralelo_digital':            5,
-    'paralelo_fisico_empresa':     5,
-    'paralelo_fisico_competencia': 4,
+    'paralelo_fisico_empresa':     4,
+    'paralelo_fisico_competencia': 3,
+    'reference':                   2,
 }
+
+# Traducción market_type interno → market_type persistible (choice del modelo).
+# 'reference' es un tier lógico de agregación, no un MARKET_TYPE_CHOICES.
+_PERSIST_MARKET_TYPE = {
+    'reference': 'paralelo_digital',
+}
+
+
+def select_primary_rate(candidates):
+    """
+    Elige DETERMINÍSTICAMENTE la tasa primaria de un par a partir del conjunto
+    COMPLETO de tasas activas (valid_until IS NULL) del par currency_from/_to.
+
+    UNIFICACIÓN (fix flip is_primary): antes existían dos rutas con criterios y
+    conjuntos de candidatos DISTINTOS —
+      · RateAggregator._mark_primary_rates miraba solo el lote recién agregado
+        (siempre paralelo_digital) → marcaba DIGITAL.
+      · rates.mark_primary_rates_task miraba TODAS las activas con un score
+        aditivo (confianza + prioridad·0.1) → marcaba EMPRESA (misma prioridad 5,
+        mayor confianza).
+    Resultado: is_primary oscilaba entre paralelo_digital y
+    paralelo_fisico_empresa según la ventana temporal (~2% de salto en la tasa
+    cobrada sin que el mercado se moviera). Ahora AMBAS rutas llaman a esta única
+    función sobre el MISMO conjunto de candidatos.
+
+    Regla:
+      1. Excluir INFERENCE salvo que sea el único candidato disponible.
+      2. Ordenar por (market_priority, confidence, pk) descendente — orden
+         lexicográfico TOTAL y estable:
+           · market_priority ya no empata digital/empresa (digital gana).
+           · confidence desempata DENTRO de un mismo market_type (elige la fuente
+             más confiable, p.ej. la API por encima del fallback MANUAL).
+           · pk desempata de forma estable si todo lo demás coincide.
+    """
+    if not candidates:
+        return None
+    eligible = [r for r in candidates if r.source_method != 'INFERENCE']
+    if not eligible:
+        eligible = list(candidates)
+    return max(
+        eligible,
+        key=lambda r: (
+            MARKET_PRIORITY.get(r.market_type, 0),
+            float(r.confidence),
+            r.pk,
+        ),
+    )
 
 
 class AggregatedRate:
@@ -242,9 +306,12 @@ class RateAggregator:
 
             # Las estimaciones (INFERENCE) solo cuentan si NO hay ninguna fuente
             # real en el mercado — jamás se promedian junto a datos reales.
-            # Señal: los estimadores marcan raw_data.method='estimated*' /
-            # warning='NOT_REAL_TIME' (NormalizedResult no conserva source_method).
+            # Señal PRIMARIA: source_method == 'INFERENCE' (ahora conservado por
+            # NormalizedResult). Cinturón-y-tirantes con los marcadores de
+            # raw_data por si algún fetcher estima sin fijar source_method.
             def _is_estimate(r):
+                if getattr(r, 'source_method', '') == 'INFERENCE':
+                    return True
                 rd = getattr(r, 'raw_data', None) or {}
                 return (str(rd.get('method', '')).startswith('estimated')
                         or rd.get('warning') == 'NOT_REAL_TIME')
@@ -468,11 +535,17 @@ class RateAggregator:
 
             source_obj = self._get_or_none_source(rate.sources)
 
+            # 'reference' es un tier lógico de agregación, no un choice del modelo:
+            # se persiste como 'paralelo_digital' (comportamiento previo para las
+            # divisas sin P2P, p.ej. BRL). Para las que SÍ tienen P2P el tier
+            # 'reference' nunca gana la agregación, así que no contamina.
+            persist_market = _PERSIST_MARKET_TYPE.get(rate.market_type, rate.market_type)
+
             # Cerrar tasas activas previas del mismo tipo de mercado
             ExchangeRate.objects.filter(
                 currency_from = currency_from,
                 currency_to   = bob_currency,
-                market_type   = rate.market_type,
+                market_type   = persist_market,
                 valid_until__isnull = True,
             ).update(valid_until=now, is_primary=False)
 
@@ -482,7 +555,7 @@ class RateAggregator:
                 new_rate = ExchangeRate(
                     currency_from = currency_from,
                     currency_to   = bob_currency,
-                    market_type   = rate.market_type,
+                    market_type   = persist_market,
                     rate_source   = source_obj,
                     official_rate = rate.official_rate,
                     buy_rate      = rate.buy_rate,
@@ -525,45 +598,39 @@ class RateAggregator:
         bob_currency,
     ) -> None:
         """
-        For each currency, select the single best rate to be is_primary=True.
-
-        Selection criteria (in order):
-          1. NOT INFERENCE source_method
-          2. Highest confidence
-          3. Market priority: paralelo_digital > paralelo_fisico > digital
+        Para cada divisa TOCADA en este lote, marca la tasa primaria usando la
+        MISMA función determinista (select_primary_rate) y el MISMO conjunto de
+        candidatos que rates.mark_primary_rates_task: TODAS las tasas activas del
+        par, no solo el lote recién agregado. Así ambas rutas coinciden y
+        is_primary deja de oscilar entre paralelo_digital y
+        paralelo_fisico_empresa.
         """
         from .models import Currency, ExchangeRate as ER
 
-        by_currency: dict[str, list] = {}
-        for code, rate in saved_rates:
-            by_currency.setdefault(code, []).append(rate)
-
-        # Also consider existing active non-primary rates for currencies
-        # not updated in this batch
-        for code, candidates in by_currency.items():
+        codes = {code for code, _ in saved_rates}
+        for code in codes:
             try:
                 cur = Currency.objects.get(code=code)
             except Currency.DoesNotExist:
                 continue
 
-            # Clear existing primary for this currency pair
+            active = list(
+                ER.objects.filter(
+                    currency_from       = cur,
+                    currency_to         = bob_currency,
+                    valid_until__isnull = True,
+                )
+            )
+            best = select_primary_rate(active)
+            if best is None:
+                continue
+
+            # Clear existing primary for this pair, then set the chosen one.
             ER.objects.filter(
                 currency_from = cur,
                 currency_to   = bob_currency,
                 is_primary    = True,
             ).update(is_primary=False)
-
-            # Filter out INFERENCE
-            eligible = [r for r in candidates if r.source_method != 'INFERENCE']
-            if not eligible:
-                eligible = candidates  # all are inference, pick best anyway
-
-            # Score: confidence (0–1) + market_priority_bonus
-            def _score(r):
-                mp = MARKET_PRIORITY.get(r.market_type, 0)
-                return float(r.confidence) + mp * 0.1
-
-            best = max(eligible, key=_score)
             ER.objects.filter(pk=best.pk).update(is_primary=True)
             log.info(
                 "PRIMARY_RATE_SET code=%s market=%s conf=%.2f method=%s id=%d",

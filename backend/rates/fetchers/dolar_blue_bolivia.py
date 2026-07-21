@@ -851,9 +851,15 @@ class DolarBlueBoliviaFetcher(BaseFetcher):
                     official_rate = (buy + sell) / Decimal('2'),
                     valid_from    = fetched_at,
                     valid_until   = None,
-                    source_method = 'MANUAL',
+                    # INFERENCE (no MANUAL): nadie ingresó este dato a mano, es la
+                    # última tasa conocida re-emitida por fallo de scraping.
+                    source_method = 'INFERENCE',
                     source_url    = SOURCE_URL,
-                    fetched_at    = fetched_at,
+                    # fetched_at del DATO SUBYACENTE (no 'ahora'): re-estamparlo a
+                    # ahora anulaba el guardia de frescura (_rate_is_stale) y hacía
+                    # aparecer fresca una tasa de hace días. valid_from sigue siendo
+                    # 'ahora' (cuándo entró en vigencia esta fila).
+                    fetched_at    = (last.fetched_at or last.valid_from),
                     confidence    = Decimal('0.500'),
                     is_validated  = False,
                 )

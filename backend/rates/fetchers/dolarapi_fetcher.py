@@ -26,13 +26,35 @@ log = logging.getLogger('kapitalya.rates.fetcher.external_api')
 _SCALE = {'USD': 1, 'EUR': 1, 'BRL': 1, 'PEN': 1, 'ARS': 1000, 'CLP': 1000}
 _TARGET_CURRENCIES = {'USD', 'EUR', 'BRL', 'ARS', 'CLP', 'PEN'}
 
+# Estos son proveedores de tipo de cambio de REFERENCIA (cross-rate mid-market),
+# NO cotizaciones del mercado paralelo boliviano. Se etiquetan 'reference' para
+# que el aggregator los trate como tier de MENOR prioridad que el P2P real
+# (ver MARKET_PRIORITY): solo se usan como fallback por divisa cuando no existe
+# ninguna fuente P2P (p.ej. BRL). Antes iban hard-codeados como
+# 'paralelo_digital' y contaminaban el consenso de la tasa USD transaccionable.
+_REFERENCE_MARKET = 'reference'
+
+# La tasa USD/BOB paralela está ESTRUCTURALMENTE por encima del ancla oficial
+# (~6.96). Si un proveedor de referencia revierte a reportar el oficial/anclado,
+# arrastraría a la baja la tasa transaccionable. Piso de sanidad: rechazar USD
+# por debajo de este valor (claramente oficial, no paralelo).
+USD_PARALLEL_FLOOR = Decimal('7.50')
+
+
+def _is_near_official_peg(code: str, bob_per_unit: Decimal) -> bool:
+    """True si el valor USD/BOB está en/cerca del ancla oficial (no es paralelo)."""
+    try:
+        return code == 'USD' and bob_per_unit < USD_PARALLEL_FLOOR
+    except Exception:
+        return False
+
 
 def _make_fetch_result(
     code: str,
     mid_rate_per_unit: Decimal,
     source_name: str,
     source_url: str,
-    market_type: str = 'paralelo_digital',
+    market_type: str = _REFERENCE_MARKET,
     confidence: float = 0.88,
 ) -> FetchResult:
     """
@@ -69,7 +91,7 @@ class OpenExchangeRatesFetcher(BaseFetcher):
     Returns rates relative to BOB (inverted to get X/BOB).
     """
     source_name = 'OPEN_ER_API'
-    market_type = 'paralelo_digital'
+    market_type = _REFERENCE_MARKET
 
     _URL = 'https://open.er-api.com/v6/latest/BOB'
 
@@ -100,10 +122,13 @@ class OpenExchangeRatesFetcher(BaseFetcher):
                 # rates[code] = BOB per 1 unit of code ... wait, base=BOB so:
                 # rates[USD] = how many USD per 1 BOB → invert to get BOB per USD
                 bob_per_unit = Decimal('1') / Decimal(str(raw))
+                if _is_near_official_peg(code, bob_per_unit):
+                    log.warning('OPEN_ER_API USD near peg (%s) — rechazado', bob_per_unit)
+                    continue
                 results.append(
                     _make_fetch_result(
                         code, bob_per_unit, self.source_name, self._URL,
-                        confidence=0.88,
+                        market_type=self.market_type, confidence=0.88,
                     )
                 )
             except Exception as exc:
@@ -119,7 +144,7 @@ class ExchangeRateAPIFetcher(BaseFetcher):
     Endpoint: https://api.exchangerate-api.com/v4/latest/USD
     """
     source_name = 'EXCHANGERATE_API'
-    market_type = 'paralelo_digital'
+    market_type = _REFERENCE_MARKET
 
     _URL = 'https://api.exchangerate-api.com/v4/latest/USD'
 
@@ -153,10 +178,13 @@ class ExchangeRateAPIFetcher(BaseFetcher):
                     # → 1 code = (1/rates[code]) USD = (bob_per_usd / rates[code]) BOB
                     bob_per_unit = bob_per_usd / usd_per_code
 
+                if _is_near_official_peg(code, bob_per_unit):
+                    log.warning('EXCHANGERATE_API USD near peg (%s) — rechazado', bob_per_unit)
+                    continue
                 results.append(
                     _make_fetch_result(
                         code, bob_per_unit, self.source_name, self._URL,
-                        confidence=0.85,
+                        market_type=self.market_type, confidence=0.85,
                     )
                 )
             except Exception as exc:
@@ -171,7 +199,7 @@ class FixerIOFetcher(BaseFetcher):
     Disabled automatically if no key is configured.
     """
     source_name = 'FIXER_IO'
-    market_type = 'paralelo_digital'
+    market_type = _REFERENCE_MARKET
 
     def _fetch(self) -> list[FetchResult]:
         api_key = getattr(settings, 'FIXER_API_KEY', '') or ''
@@ -205,6 +233,10 @@ class FixerIOFetcher(BaseFetcher):
                     bob_per_unit = bob_per_eur
                 else:
                     bob_per_unit = bob_per_eur / eur_units
+
+                if _is_near_official_peg(code, bob_per_unit):
+                    log.warning('FIXER_IO USD near peg (%s) — rechazado', bob_per_unit)
+                    continue
 
                 from django.utils import timezone
                 scale = _SCALE.get(code, 1)

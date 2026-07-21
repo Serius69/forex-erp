@@ -305,8 +305,7 @@ def mark_primary_rates_task(self):
     Criterio: mayor confianza + NOT INFERENCE + mayor prioridad de mercado.
     """
     from .models import Currency, ExchangeRate
-    from .aggregator import MARKET_PRIORITY
-    from decimal import Decimal as _D
+    from .aggregator import select_primary_rate
 
     log.info('TASK_START rates.mark_primary_rates')
     try:
@@ -322,28 +321,21 @@ def mark_primary_rates_task(self):
                     currency_to      = bob,
                     valid_until__isnull = True,
                 )
-                .order_by('-confidence', '-valid_from')
             )
 
-            if not active:
+            # Selección UNIFICADA y determinista (misma función y mismo conjunto
+            # de candidatos que RateAggregator._mark_primary_rates → sin flip).
+            best = select_primary_rate(active)
+            if best is None:
                 continue
 
-            # Clear existing primary
+            # Clear existing primary, then set the chosen one
             ExchangeRate.objects.filter(
                 currency_from    = cur,
                 currency_to      = bob,
                 is_primary       = True,
             ).update(is_primary=False)
 
-            eligible = [r for r in active if r.source_method != 'INFERENCE']
-            if not eligible:
-                eligible = active
-
-            def _score(r):
-                mp = MARKET_PRIORITY.get(r.market_type, 0)
-                return float(r.confidence) + mp * 0.1
-
-            best = max(eligible, key=_score)
             ExchangeRate.objects.filter(pk=best.pk).update(is_primary=True)
             marked += 1
             log.debug(

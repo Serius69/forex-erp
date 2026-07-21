@@ -46,6 +46,7 @@ class NormalizedResult(NamedTuple):
     spread_pct:     float
     fetched_at:     datetime
     raw_data:       dict
+    source_method:  str          # API | SCRAP | MANUAL | INFERENCE (trazabilidad)
 
 
 class RateNormalizer:
@@ -150,6 +151,7 @@ class RateNormalizer:
             spread_pct    = spread_pct,
             fetched_at    = now,
             raw_data      = r.raw_data or {},
+            source_method = str(getattr(r, 'source_method', 'SCRAP') or 'SCRAP'),
         )
 
     def group_by_currency(
