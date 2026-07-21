@@ -16,6 +16,7 @@ PRINCIPIOS:
   - Separación estricta lectura/escritura
 """
 import logging
+import zoneinfo
 from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction as db_transaction
 from django.db.models import Sum, Count, Avg, Q
@@ -23,6 +24,23 @@ from django.utils import timezone
 from datetime import date, timedelta
 
 log = logging.getLogger('analytics')
+
+# Zona horaria del negocio: la fecha contable de una transacción es el día
+# calendario en La Paz de su created_at, NO el día en que se inserta el ledger.
+LA_PAZ = zoneinfo.ZoneInfo('America/La_Paz')
+
+
+def _fecha_contable(transaction) -> date:
+    """Día contable de la transacción (La Paz), consistente con backfill_profit_ledger.
+
+    Antes se usaba ``timezone.localdate()`` (día de inserción): una tx cargada
+    tarde contabilizaba su P&L en el día equivocado y descuadraba el snapshot
+    diario frente a las filas reconstruidas por el backfill. Fallback a hoy si
+    ``created_at`` faltara (no debería en tx COMPLETED)."""
+    created = getattr(transaction, 'created_at', None)
+    if created is None:
+        return timezone.localdate()
+    return created.astimezone(LA_PAZ).date()
 
 # ── Cuantizadores ──────────────────────────────────────────────────────────────
 MONEY_Q   = Decimal('0.01')
@@ -141,12 +159,13 @@ class ProfitEngine:
             _pct_max = Decimal('9999.9999')
             profit_pct = max(-_pct_max, min(_pct_max, profit_pct))
 
+        fecha_tx = _fecha_contable(transaction)
         ledger = TransactionProfitLedger.objects.create(
             transaction          = transaction,
             transaction_type     = transaction.transaction_type,
             currency_code        = foreign_currency.code,
             branch               = transaction.branch,
-            fecha                = timezone.localdate(),
+            fecha                = fecha_tx,
             amount_foreign       = amount_foreign,
             exchange_rate        = exchange_rate,
             amount_bob           = amount_bob,
@@ -168,8 +187,9 @@ class ProfitEngine:
             float(spread_bob),
         )
 
-        # Invalidar/actualizar el snapshot P&L del día
-        PnLService.recalcular_snapshot_hoy(transaction.branch)
+        # Invalidar/actualizar el snapshot P&L del día CONTABLE de la tx
+        # (no el de hoy: si la tx es de otra fecha, ese es el snapshot afectado).
+        PnLService.recalcular_snapshot_hoy(transaction.branch, fecha=fecha_tx)
 
         return ledger
 

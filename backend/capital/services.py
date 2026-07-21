@@ -503,7 +503,7 @@ class GananciaService:
 
     @staticmethod
     def resumen_financiero(date_from: date, date_to: date, branch=None) -> dict:
-        from .models import Gasto
+        from .models import Gasto, IngresoExtra
         from tarjetas.models import VentaTarjeta
 
         ganancias_div = GananciaService.ganancia_por_divisa(date_from, date_to, branch)
@@ -535,8 +535,23 @@ class GananciaService:
             .order_by('-total')
         )
 
+        # Ingresos extra: simétrico a los gastos. Antes se registraban en su
+        # propia pestaña pero NUNCA entraban al P&L (asimetría: el gasto bajaba
+        # la utilidad neta pero el ingreso extra no la subía). Ahora suman.
+        ingreso_qs = IngresoExtra.objects.filter(fecha__gte=date_from, fecha__lte=date_to)
+        if branch:
+            ingreso_qs = ingreso_qs.filter(branch=branch)
+        ingreso_agg = ingreso_qs.aggregate(total=Sum('monto_bob'), count=Count('id'))
+        total_ingresos_extra = _q(ingreso_agg['total'] or 0)
+
+        ingresos_tipo = list(
+            ingreso_qs.values('tipo')
+            .annotate(total=Sum('monto_bob'), count=Count('id'))
+            .order_by('-total')
+        )
+
         ganancia_bruta = _q(total_div + total_tarjetas)
-        ganancia_neta  = _q(ganancia_bruta - total_gastos)
+        ganancia_neta  = _q(ganancia_bruta - total_gastos + total_ingresos_extra)
 
         return {
             'periodo':             {'desde': str(date_from), 'hasta': str(date_to)},
@@ -550,6 +565,11 @@ class GananciaService:
                 'total':         str(total_gastos),
                 'count':         gasto_agg['count'] or 0,
                 'por_categoria': [{**g, 'total': str(_q(g['total']))} for g in gastos_cat],
+            },
+            'ingresos_extra': {
+                'total':     str(total_ingresos_extra),
+                'count':     ingreso_agg['count'] or 0,
+                'por_tipo':  [{**i, 'total': str(_q(i['total']))} for i in ingresos_tipo],
             },
             'ganancia_bruta': str(ganancia_bruta),
             'ganancia_neta':  str(ganancia_neta),

@@ -52,6 +52,11 @@ interface ResumenFinanciero {
     count:          number;
     por_categoria:  { categoria: string; total: string; count: number }[];
   };
+  ingresos_extra?: {
+    total:    string;
+    count:    number;
+    por_tipo: { tipo: string; total: string; count: number }[];
+  };
   ganancia_bruta: string;
   ganancia_neta:  string;
 }
@@ -178,6 +183,13 @@ const Ganancias: React.FC = () => {
             value: formatCurrency(parseFloat(resumen?.gastos?.total ?? '0')),
             color: '#c62828',
             icon: <TrendingDown />,
+          },
+          {
+            label: 'Ingresos Extra',
+            value: formatCurrency(parseFloat(resumen?.ingresos_extra?.total ?? '0')),
+            sub: `${resumen?.ingresos_extra?.count ?? 0} registros`,
+            color: '#00897b',
+            icon: <AttachMoney />,
           },
           {
             label: 'Ganancia Neta',
