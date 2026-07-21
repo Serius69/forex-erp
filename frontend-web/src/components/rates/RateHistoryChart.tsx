@@ -21,12 +21,28 @@ import { formatRate, formatNumber } from '../../utils/formatters';
 
 const CURRENCIES = ['USD', 'EUR', 'CLP', 'PEN', 'BRL', 'ARS', 'GBP'];
 const DAYS_OPTIONS = [7, 14, 30, 60, 90, 180, 365];
+
+// Valores canónicos de ExchangeRate.MARKET_TYPE_CHOICES (rates/models.py).
+// Los alias legacy 'parallel'/'digital' se consolidaron en 'paralelo_digital'
+// (data migration 0024) y NO existen en la BD → el default 'parallel' anterior
+// dejaba el gráfico SIEMPRE vacío.
 const MARKET_OPTIONS = [
-  { value: '', label: 'Todos los mercados' },
-  { value: 'paralelo_digital', label: 'Mercado paralelo' },
-  { value: 'parallel', label: 'Paralelo (legacy)' },
-  { value: 'digital', label: 'Digital' },
+  { value: '',                            label: 'Todos los mercados' },
+  { value: 'paralelo_digital',            label: 'Paralelo digital' },
+  { value: 'paralelo_fisico_competencia', label: 'Físico — competencia' },
+  { value: 'paralelo_fisico_empresa',     label: 'Físico — empresa' },
+  { value: 'official',                    label: 'Oficial (BCB)' },
 ];
+
+// Metadatos por mercado para el modo "Todos" (una línea de venta por mercado,
+// coloreada, para comparar niveles de precio entre mercados).
+const MARKET_META: Record<string, { label: string; buy: string; sell: string }> = {
+  paralelo_digital:            { label: 'Digital',     buy: '#2e7d32', sell: '#1976d2' },
+  paralelo_fisico_competencia: { label: 'Competencia', buy: '#ed6c02', sell: '#9c27b0' },
+  paralelo_fisico_empresa:     { label: 'Empresa',     buy: '#00897b', sell: '#c62828' },
+  official:                    { label: 'Oficial',     buy: '#607d8b', sell: '#455a64' },
+};
+const DEFAULT_MARKET = 'paralelo_digital';
 
 interface HistoryPoint {
   period: string;
@@ -70,7 +86,7 @@ const CustomTooltip = ({ active, payload, label, currency, scaleFactor }: any) =
 const RateHistoryChart: React.FC = () => {
   const [currency,    setCurrency]    = useState('USD');
   const [days,        setDays]        = useState(30);
-  const [market,      setMarket]      = useState('parallel');
+  const [market,      setMarket]      = useState(DEFAULT_MARKET);
   const [chartType,   setChartType]   = useState<'area' | 'line'>('area');
   const [data,        setData]        = useState<HistoryResponse | null>(null);
   const [loading,     setLoading]     = useState(false);
@@ -120,18 +136,35 @@ const RateHistoryChart: React.FC = () => {
       }));
   }, [data]);
 
-  // Determine which lines to show based on selected market
-  const marketKey = market || 'parallel';
-  const hasData = chartData.length > 0 && chartData.some(
-    d => d[`${marketKey}_buy`] || d[`${marketKey}_sell`]
+  // Mercados realmente presentes en la respuesta (por si un mercado no tiene
+  // datos para la divisa/período elegidos).
+  const presentMarkets = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const p of data?.aggregated ?? []) set.add(p.market_type);
+    // orden estable según MARKET_META, extras al final
+    const known = Object.keys(MARKET_META).filter(m => set.has(m));
+    const extra = [...set].filter(m => !(m in MARKET_META));
+    return [...known, ...extra];
+  }, [data]);
+
+  // Mercado con más cobertura (para KPIs cuando se ve "Todos").
+  const primaryMarket = market || presentMarkets[0] || DEFAULT_MARKET;
+
+  // Series a dibujar: si hay mercado elegido → compra+venta de ese; si "Todos"
+  // → la venta de cada mercado presente (comparación de niveles).
+  const activeMarkets = market ? [market] : presentMarkets;
+  const showBuyAndSell = Boolean(market);
+
+  const hasData = chartData.length > 0 && activeMarkets.some(
+    mk => chartData.some(d => d[`${mk}_buy`] != null || d[`${mk}_sell`] != null)
   );
 
-  // Summary stats
+  // Summary stats (siempre sobre el mercado primario)
   const lastPoint = chartData[chartData.length - 1];
   const firstPoint = chartData[0];
-  const currentBuy  = lastPoint?.[`${marketKey}_buy`]  || 0;
-  const currentSell = lastPoint?.[`${marketKey}_sell`] || 0;
-  const changeBuy   = firstPoint ? currentBuy - (firstPoint[`${marketKey}_buy`] || currentBuy) : 0;
+  const currentBuy  = lastPoint?.[`${primaryMarket}_buy`]  || 0;
+  const currentSell = lastPoint?.[`${primaryMarket}_sell`] || 0;
+  const changeBuy   = firstPoint ? currentBuy - (firstPoint[`${primaryMarket}_buy`] || currentBuy) : 0;
   const spread      = currentSell - currentBuy;
   const scaleFactor = data?.scale_factor || 1;
 
@@ -278,26 +311,45 @@ const RateHistoryChart: React.FC = () => {
                 content={<CustomTooltip currency={currency} scaleFactor={scaleFactor} />}
               />
               <Legend />
-              <DataComponent
-                type="monotone"
-                dataKey={`${marketKey}_buy`}
-                name="Compra"
-                stroke="#2e7d32"
-                strokeWidth={2}
-                fill={chartType === 'area' ? 'url(#buyGrad)' : undefined}
-                dot={false}
-                connectNulls
-              />
-              <DataComponent
-                type="monotone"
-                dataKey={`${marketKey}_sell`}
-                name="Venta"
-                stroke="#1976d2"
-                strokeWidth={2}
-                fill={chartType === 'area' ? 'url(#sellGrad)' : undefined}
-                dot={false}
-                connectNulls
-              />
+              {showBuyAndSell ? (
+                // Un mercado: compra + venta con gradiente
+                [
+                  { suffix: 'buy',  name: 'Compra', color: '#2e7d32', grad: 'url(#buyGrad)' },
+                  { suffix: 'sell', name: 'Venta',  color: '#1976d2', grad: 'url(#sellGrad)' },
+                ].map(s => (
+                  <DataComponent
+                    key={s.suffix}
+                    type="monotone"
+                    dataKey={`${activeMarkets[0]}_${s.suffix}`}
+                    name={s.name}
+                    stroke={s.color}
+                    strokeWidth={2}
+                    fill={chartType === 'area' ? s.grad : undefined}
+                    fillOpacity={chartType === 'area' ? 1 : 0}
+                    dot={false}
+                    connectNulls
+                  />
+                ))
+              ) : (
+                // Todos: la venta de cada mercado presente, para comparar niveles
+                activeMarkets.map(mk => {
+                  const meta = MARKET_META[mk] ?? { label: mk, sell: '#888' };
+                  return (
+                    <DataComponent
+                      key={mk}
+                      type="monotone"
+                      dataKey={`${mk}_sell`}
+                      name={meta.label}
+                      stroke={meta.sell}
+                      strokeWidth={2}
+                      fill={meta.sell}
+                      fillOpacity={chartType === 'area' ? 0.08 : 0}
+                      dot={false}
+                      connectNulls
+                    />
+                  );
+                })
+              )}
             </ChartComponent>
           </ResponsiveContainer>
         )}

@@ -298,8 +298,15 @@ const Predictions: React.FC = () => {
     if (!mlPredictions?.predictions) return [];
     const allDates = new Set<string>();
     Object.values(mlPredictions.predictions).forEach(pts => pts.forEach(p => allDates.add(p.date as string)));
-    return Array.from(allDates).sort().map(dateStr => {
-      const point: any = { date: format(parseISO(dateStr), 'HH:mm', { locale: es }), full_date: dateStr };
+    const sorted = Array.from(allDates).sort();
+    // Eje adaptativo: si la ventana cruza más de 24h, 'HH:mm' repetiría la hora
+    // (p.ej. al pasar medianoche) → incluir el día para no duplicar etiquetas.
+    const spanMs = sorted.length > 1
+      ? new Date(sorted[sorted.length - 1]).getTime() - new Date(sorted[0]).getTime()
+      : 0;
+    const labelFmt = spanMs > 24 * 3_600_000 ? 'dd/MM HH:mm' : 'HH:mm';
+    return sorted.map(dateStr => {
+      const point: any = { date: format(parseISO(dateStr), labelFmt, { locale: es }), full_date: dateStr };
       Object.entries(mlPredictions.predictions).forEach(([modelType, pts]) => {
         const m = pts.find(p => p.date === dateStr);
         if (m) {

@@ -56,8 +56,15 @@ const predAtHorizon = (
 const ForecastSparkline: React.FC<{ data: ForecastResult['predictions']; color: string; isInference?: boolean }> = ({ data, color, isInference = false }) => {
   if (!data.length) return null;
 
+  // Eje adaptativo: si el pronóstico abarca más de ~24h (horizonte 7d), 'HH:mm'
+  // repetiría la misma hora cada día → mostrar el día. Bajo 24h, solo la hora.
+  const spanMs = data.length > 1
+    ? new Date(data[data.length - 1].datetime).getTime() - new Date(data[0].datetime).getTime()
+    : 0;
+  const labelFmt = spanMs > 24 * 3_600_000 ? 'dd/MM HH:mm' : 'HH:mm';
+
   const chartData = data.map(p => ({
-    t:     format(parseISO(p.datetime), 'HH:mm', { locale: es }),
+    t:     format(parseISO(p.datetime), labelFmt, { locale: es }),
     rate:  p.rate,
     lower: p.lower,
     upper: p.upper,
@@ -199,6 +206,24 @@ const PredictionCard: React.FC<PredictionCardProps> = ({
   const modColor = dominantModel ? (MODEL_COLORS[dominantModel] ?? color) : color;
   const isInference = data?.data_freshness === 'INFERENCE';
 
+  // Mostrar solo el tramo hacia ADELANTE. Las series físicas (competencia/
+  // empresa) se anclan a un punto DIARIO, así que un pronóstico horario desde
+  // ahí arrastra horas ya pasadas y "el forecast queda en el pasado". Filtramos
+  // a >= inicio de la hora actual (con 1h de gracia para continuidad). Si TODO
+  // el pronóstico es pasado (serie desactualizada) caemos a la serie completa
+  // para no dejar el gráfico vacío.
+  const forecastData = React.useMemo(() => {
+    const pts = data?.predictions ?? [];
+    if (pts.length < 2) return pts;
+    const floor = Date.now() - 3_600_000;
+    const fwd = pts.filter(p => new Date(p.datetime).getTime() >= floor);
+    return fwd.length >= 2 ? fwd : pts;
+  }, [data]);
+  const forecastStale = Boolean(
+    data?.predictions?.length && forecastData.length &&
+    new Date(forecastData[forecastData.length - 1].datetime).getTime() < Date.now()
+  );
+
   // ── Loading ──────────────────────────────────────────────────────────────
   if (loading) return (
     <Card sx={{ border: '1px solid', borderColor: 'divider', minHeight: 260 }}>
@@ -304,20 +329,25 @@ const PredictionCard: React.FC<PredictionCardProps> = ({
         )}
 
         {/* Sparkline */}
-        {data.predictions.length > 0 && (
+        {forecastData.length > 0 && (
           <Box mx={-0.5} mb={1}>
-            <ForecastSparkline data={data.predictions} color={modColor} isInference={isInference} />
+            <ForecastSparkline data={forecastData} color={modColor} isInference={isInference || forecastStale} />
           </Box>
+        )}
+        {forecastStale && (
+          <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.6rem', display: 'block', mb: 0.5 }}>
+            ⚠ Serie sin dato de hoy — proyección desde el último cierre
+          </Typography>
         )}
 
         <Divider sx={{ my: 0.75, opacity: 0.5 }} />
 
         {/* Horizontes */}
         <Box display="flex" flexDirection="column" gap={0.5}>
-          <HorizonRow label="1h"  hours={1}  predictions={data.predictions} color={modColor} />
-          <HorizonRow label="4h"  hours={4}  predictions={data.predictions} color={modColor} />
-          <HorizonRow label="8h"  hours={8}  predictions={data.predictions} color={modColor} />
-          <HorizonRow label="24h" hours={24} predictions={data.predictions} color={modColor} />
+          <HorizonRow label="1h"  hours={1}  predictions={forecastData} color={modColor} />
+          <HorizonRow label="4h"  hours={4}  predictions={forecastData} color={modColor} />
+          <HorizonRow label="8h"  hours={8}  predictions={forecastData} color={modColor} />
+          <HorizonRow label="24h" hours={24} predictions={forecastData} color={modColor} />
         </Box>
 
         {/* Pesos de modelos */}
