@@ -583,7 +583,8 @@ class ASFIReportService:
         log.total_buy_bob      = agg['total_buy']  or Decimal('0')
         log.total_sell_bob     = agg['total_sell'] or Decimal('0')
         log.total_profit_bob   = log.total_sell_bob - log.total_buy_bob
-        log.rte_count = CashTransactionReport.objects.filter(report_date=log_date).count()
+        log.rte_count = CashTransactionReport.objects.filter(
+            report_date=log_date, transaction__branch_id=branch_id).count()
 
         excel_path = cls._daily_excel(log, txs, log_date)
         pdf_path   = cls._daily_pdf(log, txs, log_date)

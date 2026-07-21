@@ -492,8 +492,7 @@ class AlertGenerator:
             }
             tasa = (
                 tasas.get('paralelo_fisico_empresa')
-                or tasas.get('parallel')
-                or tasas.get('digital')
+                or tasas.get('paralelo_digital')
             )
             if not tasa:
                 return alertas
@@ -557,7 +556,7 @@ class AlertGenerator:
                         alertas.append(a)
 
             # ── Comparación vs competencia ─────────────────────────────────
-            mt_comp = 'parallel' if tasa.market_type != 'parallel' else 'paralelo_fisico_empresa'
+            mt_comp = 'paralelo_fisico_competencia'
             tasa_comp = tasas.get(mt_comp)
             if tasa_comp:
                 sell_comp = Decimal(str(tasa_comp.sell_rate)) / scale

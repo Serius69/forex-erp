@@ -97,6 +97,7 @@ class ManagementReportService:
     def generate_pnl(cls, date_from, date_to, period='daily', user=None):
         from transactions.models import Transaction
         from reports.models import GeneratedReport
+        from analytics.services import PnLService
         from django.db.models.functions import TruncDate
 
         _lo, _hi = _day_bounds(date_from, date_to)
@@ -111,10 +112,28 @@ class ManagementReportService:
                             count=Count('id'))
                         .order_by('day'))
 
-        tb  = float(txs.filter(transaction_type='BUY').aggregate(s=Sum('amount_to'))['s'] or 0)
-        ts  = float(txs.filter(transaction_type='SELL').aggregate(s=Sum('amount_to'))['s'] or 0)
-        tp  = ts - tb
-        mgn = round((tp/ts*100) if ts else 0, 2)
+        # ── Utilidad REAL de trading (spread/WAC), NO el flujo bruto de caja ────
+        # Antes se reportaba `ventas_bob - compras_bob` como "Utilidad", lo que da
+        # pérdidas/ganancias irreales cuando el volumen comprado != vendido
+        # (acumulación o liquidación de inventario). La ganancia real de trading
+        # vive en PnLDailySnapshot.ganancia_bruta_bob (ingreso de ventas - costo
+        # WAC de lo vendido), reconstruida por `backfill_profit_ledger`. Se agrega
+        # sobre todas las sucursales (branch=None), consistente con el alcance
+        # global de este reporte.
+        serie_real = {
+            r['fecha']: Decimal(str(r['ganancia_bruta_bob'] or 0))
+            for r in PnLService.series_pnl(None, date_from, date_to)
+        }
+        for d in daily:
+            d['profit'] = float(serie_real.get(d['day'], Decimal('0')))
+
+        tb = float(txs.filter(transaction_type='BUY').aggregate(s=Sum('amount_to'))['s'] or 0)
+        ts = float(txs.filter(transaction_type='SELL').aggregate(s=Sum('amount_to'))['s'] or 0)
+
+        resumen = PnLService.resumen_periodo(None, date_from, date_to)
+        tp      = float(resumen.get('ganancia_bruta_bob') or 0)   # utilidad de trading real
+        ingreso = float(resumen.get('ingreso_ventas_bob') or 0)
+        mgn     = round((tp / ingreso * 100) if ingreso else 0, 2)
 
         ep = cls._pnl_excel(daily, tb, ts, tp, mgn, date_from, date_to)
         pp = cls._pnl_pdf(daily, tb, ts, tp, mgn, date_from, date_to, period)
@@ -132,6 +151,7 @@ class ManagementReportService:
         return dict(date_from=str(date_from), date_to=str(date_to),
                     total_buy_bob=tb, total_sell_bob=ts,
                     gross_profit_bob=tp, margin_pct=mgn,
+                    net_cash_flow_bob=ts - tb,
                     total_transactions=txs.count(),
                     excel_path=ep, pdf_path=pp)
 
@@ -157,7 +177,7 @@ class ManagementReportService:
         _xl_header(ws,6,['Fecha','Compras (BOB)','Ventas (BOB)','Utilidad (BOB)','Margen %','Trans.'])
         for row_i,d in enumerate(daily,7):
             buy=float(d['buy'] or 0); sell=float(d['sell'] or 0)
-            profit=sell-buy; margin=round((profit/sell*100) if sell else 0,2)
+            profit=float(d.get('profit') or 0); margin=round((profit/sell*100) if sell else 0,2)
             for col,v in enumerate([d['day'].strftime('%d/%m/%Y'),f'{buy:,.2f}',
                                      f'{sell:,.2f}',f'{profit:,.2f}',f'{margin}%',d['count']],1):
                 cell=ws.cell(row=row_i,column=col,value=v)
@@ -202,7 +222,7 @@ class ManagementReportService:
         story.append(Paragraph('DETALLE POR DIA',h2))
         d_data=[['Fecha','Compras','Ventas','Utilidad','Margen %','Trans.']]
         for d in daily:
-            buy=float(d['buy'] or 0); sell=float(d['sell'] or 0); p=sell-buy
+            buy=float(d['buy'] or 0); sell=float(d['sell'] or 0); p=float(d.get('profit') or 0)
             m=round((p/sell*100) if sell else 0,2)
             d_data.append([d['day'].strftime('%d/%m/%Y'),f'{buy:,.2f}',
                            f'{sell:,.2f}',f'{p:,.2f}',f'{m}%',str(d['count'])])
@@ -260,9 +280,9 @@ class ManagementReportService:
         ca=Alignment(horizontal='center')
         ws1=wb.active; ws1.title='Por Divisa'
         ws1.merge_cells('A1:F1')
-        ws1['A1']=f'RENTABILIDAD POR DIVISA - {df.strftime("%d/%m/%Y")} al {dt.strftime("%d/%m/%Y")}'
+        ws1['A1']=f'FLUJO BOB POR DIVISA (Ventas - Compras) - {df.strftime("%d/%m/%Y")} al {dt.strftime("%d/%m/%Y")}'
         ws1['A1'].font=Font(bold=True,size=13,color='1E3A5F')
-        _xl_header(ws1,3,['Divisa','Compras (BOB)','Ventas (BOB)','Utilidad','Margen %','Trans.'])
+        _xl_header(ws1,3,['Divisa','Compras (BOB)','Ventas (BOB)','Flujo (V-C)','Margen flujo %','Trans.'])
         for i,r in enumerate(sorted(by_currency,key=lambda x:-x['profit']),4):
             for col,v in enumerate([r['currency'],f"{r['buy_bob']:,.2f}",
                                      f"{r['sell_bob']:,.2f}",f"{r['profit']:,.2f}",
@@ -273,9 +293,9 @@ class ManagementReportService:
             ws1.column_dimensions[get_column_letter(i)].width=w
         ws2=wb.create_sheet('Por Sucursal')
         ws2.merge_cells('A1:E1')
-        ws2['A1']='RENTABILIDAD POR SUCURSAL'
+        ws2['A1']='FLUJO BOB POR SUCURSAL (Ventas - Compras)'
         ws2['A1'].font=Font(bold=True,size=13,color='1E3A5F')
-        _xl_header(ws2,3,['Sucursal','Compras (BOB)','Ventas (BOB)','Utilidad','Trans.'])
+        _xl_header(ws2,3,['Sucursal','Compras (BOB)','Ventas (BOB)','Flujo (V-C)','Trans.'])
         for i,r in enumerate(sorted(by_branch,key=lambda x:-x['profit']),4):
             for col,v in enumerate([r['branch'],f"{r['buy_bob']:,.2f}",
                                      f"{r['sell_bob']:,.2f}",f"{r['profit']:,.2f}",r['count']],1):
@@ -289,19 +309,19 @@ class ManagementReportService:
         path=os.path.join(_ensure(REPORTS_DIR),
                           f'Rentabilidad_{df.strftime("%Y%m%d")}_{dt.strftime("%Y%m%d")}.pdf')
         doc=_pdf_doc(path); h1,h2,body,footer,sub=_pdf_styles(); story=[]
-        story.append(Paragraph('RENTABILIDAD POR DIVISA Y SUCURSAL',h1))
+        story.append(Paragraph('FLUJO BOB POR DIVISA Y SUCURSAL (Ventas - Compras)',h1))
         story.append(Paragraph(f'{df.strftime("%d/%m/%Y")} - {dt.strftime("%d/%m/%Y")}',sub))
         story.append(HRFlowable(width='100%',thickness=2,color=CORP_DARK))
         story.append(Spacer(1,0.3*cm))
         story.append(Paragraph('POR DIVISA',h2))
-        t1=Table([['Divisa','Compras','Ventas','Utilidad','Margen %','Trans.']]+
+        t1=Table([['Divisa','Compras','Ventas','Flujo (V-C)','Margen flujo %','Trans.']]+
                  [[r['currency'],f"{r['buy_bob']:,.2f}",f"{r['sell_bob']:,.2f}",
                    f"{r['profit']:,.2f}",f"{r['margin_pct']}%",r['count']]
                   for r in sorted(by_currency,key=lambda x:-x['profit'])],
                  colWidths=[2*cm,3.2*cm,3.2*cm,3.2*cm,2.2*cm,1.8*cm],repeatRows=1)
         t1.setStyle(_pdf_ts()); story.append(t1); story.append(Spacer(1,0.4*cm))
         story.append(Paragraph('POR SUCURSAL',h2))
-        t2=Table([['Sucursal','Compras','Ventas','Utilidad','Trans.']]+
+        t2=Table([['Sucursal','Compras','Ventas','Flujo (V-C)','Trans.']]+
                  [[r['branch'],f"{r['buy_bob']:,.2f}",f"{r['sell_bob']:,.2f}",
                    f"{r['profit']:,.2f}",r['count']]
                   for r in sorted(by_branch,key=lambda x:-x['profit'])],
@@ -441,7 +461,7 @@ class ManagementReportService:
         for row_i,(lbl,cv,pv,pct) in enumerate([
             ('Compras (BOB)', curr['buy'],    prev['buy'],    chg['buy_pct']),
             ('Ventas (BOB)',  curr['sell'],   prev['sell'],   chg['sell_pct']),
-            ('Utilidad (BOB)',curr['profit'], prev['profit'], chg['profit_pct']),
+            ('Flujo V-C (BOB)',curr['profit'], prev['profit'], chg['profit_pct']),
             ('Transacciones', curr['count'],  prev['count'],  chg['count_pct']),
         ],4):
             diff=cv-pv
@@ -468,7 +488,7 @@ class ManagementReportService:
              f"{curr['buy']-prev['buy']:+,.2f}",   f"{chg['buy_pct']:+.2f}%"],
             ['Ventas',   f"{curr['sell']:,.2f}",  f"{prev['sell']:,.2f}",
              f"{curr['sell']-prev['sell']:+,.2f}", f"{chg['sell_pct']:+.2f}%"],
-            ['Utilidad', f"{curr['profit']:,.2f}",f"{prev['profit']:,.2f}",
+            ['Flujo V-C', f"{curr['profit']:,.2f}",f"{prev['profit']:,.2f}",
              f"{curr['profit']-prev['profit']:+,.2f}",f"{chg['profit_pct']:+.2f}%"],
             ['Trans.',   str(curr['count']),str(prev['count']),
              f"{curr['count']-prev['count']:+d}", f"{chg['count_pct']:+.2f}%"],
@@ -547,7 +567,7 @@ class ManagementReportService:
         ws.merge_cells('A1:E1')
         ws['A1']=f'PROYECCION DE FLUJO DE CAJA - Base: {base_date} + {days_ahead} dias'
         ws['A1'].font=Font(bold=True,size=13,color='1E3A5F')
-        _xl_header(ws,3,['Fecha','Compras Proy.','Ventas Proy.','Utilidad Proy.','Fin de semana'])
+        _xl_header(ws,3,['Fecha','Compras Proy.','Ventas Proy.','Flujo Proy. (V-C)','Fin de semana'])
         for i,r in enumerate(projection,4):
             for col,v in enumerate([r['date'],f"{r['projected_buy']:,.2f}",
                                      f"{r['projected_sell']:,.2f}",
@@ -576,7 +596,7 @@ class ManagementReportService:
             f'Prom. diario: Bs. {avg_p:,.2f} | Tendencia: {trend:+.2f}/dia',sub))
         story.append(HRFlowable(width='100%',thickness=2,color=CORP_DARK))
         story.append(Spacer(1,0.3*cm))
-        t_data=[['Fecha','Compras Proy.','Ventas Proy.','Utilidad Proy.']]
+        t_data=[['Fecha','Compras Proy.','Ventas Proy.','Flujo Proy. (V-C)']]
         for r in projection[:20]:
             t_data.append([r['date'],f"{r['projected_buy']:,.2f}",
                            f"{r['projected_sell']:,.2f}",f"{r['projected_profit']:,.2f}"])

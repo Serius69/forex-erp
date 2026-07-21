@@ -92,7 +92,11 @@ class RTEService:
         Si la divisa es USD el equivalente es directo; si no, se convierte el
         contravalor BOB con la tasa USD/BOB paralela vigente.
         """
-        if tx.transaction_type == 'BUY':
+        # En este sistema BUY y SELL registran divisa→BOB (currency_from=divisa,
+        # currency_to=BOB). Determinar la pata extranjera como el lado que NO es
+        # BOB corrige los SELL reales y mantiene compatible la orientación
+        # invertida (BOB→divisa) que usan algunos tests/cargas legacy.
+        if tx.currency_from and tx.currency_from.code != 'BOB':
             foreign, units, bob_total = tx.currency_from, tx.amount_from, tx.amount_to
         else:
             foreign, units, bob_total = tx.currency_to, tx.amount_to, tx.amount_from
